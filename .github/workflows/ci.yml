@@ -21,7 +21,7 @@ jobs:
       - name: Install LLVM (Linux)
         if: runner.os == 'Linux'
         run: |
-          wget -O - https://apt.llvm.org/llvm.sh | sudo bash -s 17
+          wget -qO - https://apt.llvm.org/llvm.sh | sudo bash -s 17
           sudo apt-get install -y llvm-17-dev libclang-17-dev clang-17
           echo "LLVM_SYS_170_PREFIX=/usr/lib/llvm-17" >> $GITHUB_ENV
 
@@ -29,7 +29,9 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew install llvm@17
-          echo "LLVM_SYS_170_PREFIX=$(brew --prefix llvm@17)" >> $GITHUB_ENV
+          LLVM_PREFIX=$(brew --prefix llvm@17)
+          echo "LLVM_SYS_170_PREFIX=$LLVM_PREFIX" >> $GITHUB_ENV
+          echo "$LLVM_PREFIX/bin" >> $GITHUB_PATH
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -43,7 +45,8 @@ jobs:
       - name: Build release binary
         run: cargo build --release --bin hakic
 
-      - name: Smoke test
+      - name: Smoke test (Unix)
+        if: runner.os != 'Windows'
         run: |
           echo 'fn main() { print("hello from CI") }' > /tmp/smoke.haki
           ./target/release/hakic run /tmp/smoke.haki --quiet
@@ -52,7 +55,7 @@ jobs:
 
       - name: Bootstrap self-check
         run: |
-          ./target/release/hakic check haki_bootstrap/haki_compiler.haki
-          ./target/release/hakic check haki_bootstrap/haki_typeck.haki
-          ./target/release/hakic check haki_bootstrap/haki_mono.haki
-          ./target/release/hakic check haki_bootstrap/haki_cemit.haki
+          ./target/release/hakic check haki_bootstrap/haki_compiler.haki --quiet
+          ./target/release/hakic check haki_bootstrap/haki_typeck.haki --quiet
+          ./target/release/hakic check haki_bootstrap/haki_mono.haki --quiet
+          ./target/release/hakic check haki_bootstrap/haki_cemit.haki --quiet
