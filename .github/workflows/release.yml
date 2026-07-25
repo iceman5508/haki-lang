@@ -90,6 +90,17 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo build --release --bin hakic
 
+      - name: Smoke test — emit-c backend (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cat > /tmp/smoke.haki << 'HAKI'
+          fn main() {
+              print("Hello from Haki!")
+          }
+          HAKI
+          ./target/release/hakic /tmp/smoke.haki --emit-c -o /tmp/smoke_c --quiet
+          /tmp/smoke_c | grep -q "Hello from Haki!" || exit 1
+
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |

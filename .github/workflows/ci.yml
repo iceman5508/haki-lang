@@ -29,7 +29,6 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew install llvm@17
-          brew link --overwrite llvm@17 --force
           LLVM_PREFIX=$(brew --prefix llvm@17)
           echo "LLVM_SYS_170_PREFIX=$LLVM_PREFIX" >> $GITHUB_ENV
           echo "$LLVM_PREFIX/bin" >> $GITHUB_PATH
@@ -46,13 +45,19 @@ jobs:
       - name: Build release binary
         run: cargo build --release --bin hakic
 
-      - name: Smoke test (Unix)
+      - name: Smoke test — emit-c backend (Unix)
         if: runner.os != 'Windows'
         run: |
-          echo 'fn main() { print("hello from CI") }' > /tmp/smoke.haki
-          ./target/release/hakic run /tmp/smoke.haki --quiet
+          cat > /tmp/smoke.haki << 'HAKI'
+          fn main() {
+              print("Hello from Haki CI!")
+              print_int(1 + 2 + 3)
+          }
+          HAKI
           ./target/release/hakic /tmp/smoke.haki --emit-c -o /tmp/smoke_c --quiet
-          /tmp/smoke_c
+          output=$(/tmp/smoke_c)
+          echo "$output"
+          echo "$output" | grep -q "Hello from Haki CI!" || exit 1
 
       - name: Bootstrap self-check
         run: |
