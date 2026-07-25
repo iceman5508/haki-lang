@@ -156,32 +156,24 @@ jobs:
             ### Installation
 
             **macOS (Homebrew)**
-```bash
             brew tap iceman5508/tap
             brew install haki
-```
 
             **Linux / macOS (curl)**
-```bash
             curl -fsSL https://raw.githubusercontent.com/iceman5508/haki-lang/main/install.sh | sh
-```
 
             **Windows (winget)**
-```powershell
             winget install haki-lang.haki
-```
 
             ### Requirements
             - `gcc` or `clang` for `--emit-c` backend (pre-installed on most systems)
             - No LLVM or Rust required for end users
 
             ### Usage
-```bash
             hakic run hello.haki
             hakic hello.haki -o hello
             hakic hello.haki --emit-c
             hakic check hello.haki
             hakic test hello.haki
-```
           files: |
             artifacts/*
