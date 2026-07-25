@@ -1,0 +1,748 @@
+// haki_parser.haki — Haki recursive-descent parser written in Haki
+//
+// Consumes Array<Token> from haki_lexer.haki and produces an AST.
+// Import: this file assumes Token/TokenKind/tokenize are available via import.
+// For now we inline the lexer types to keep this file standalone.
+
+import "../haki_bootstrap/haki_lexer" as lex
+
+// ── AST node types ────────────────────────────────────────────────────────────
+
+enum Ty {
+    TyNamed(string)
+    TyOptional(Ty)
+    TyArray(Ty)
+    TyFn(Array<Ty>, Ty)
+}
+
+enum Expr {
+    EInt(int)
+    EBool(bool)
+    ENull
+    EString(string)
+    EIdent(string)
+    EUnary(string, Expr)
+    EBinary(string, Expr, Expr)
+    ECall(string, Array<Expr>)
+    EField(Expr, string)
+    EMethodCall(Expr, string, Array<Expr>)
+    EIndex(Expr, Expr)
+    EArray(Array<Expr>)
+    EIf(Expr, Array<Stmt>, Array<Stmt>)
+    EMatch(Expr, Array<MatchArm>)
+    EBlock(Array<Stmt>)
+    EAsync(Expr)
+}
+
+enum Stmt {
+    SLet(bool, string, Expr)        // is_mut, name, init
+    SReturn(Array<Expr>)
+    SYield(Expr)
+    SDefer(Expr)
+    SContinue
+    SBreak
+    SExpr(Expr)
+    SIf(Expr, Array<Stmt>, Array<Stmt>)
+    SWhile(Expr, Array<Stmt>)
+    SFor(string, Expr, Array<Stmt>)
+    SAssign(Expr, Expr)
+}
+
+struct Param {
+    const name: string
+    const ty:   string       // simplified: type name as string for now
+}
+
+struct FnDef {
+    const name:    string
+    const params:  Array<Param>
+    const retTy:   string
+    const body:    Array<Stmt>
+}
+
+struct MatchArm {
+    const pattern:  string
+    const bindings: Array<string>
+    const body:     Array<Stmt>
+}
+
+struct StructDef {
+    const name:   string
+    const fields: Array<Param>
+}
+
+enum Item {
+    IFn(FnDef)
+    IStruct(StructDef)
+    IImport(string, string)   // path, alias
+}
+
+// ── Parser state ──────────────────────────────────────────────────────────────
+
+struct Parser {
+    const tokens: Array<lex.Token>
+    let pos:      int
+}
+
+fn parserNew(tokens: Array<lex.Token>) -> Parser {
+    return Parser(tokens: tokens, pos: 0)
+}
+
+fn peek(p: Parser) -> lex.Token {
+    if p.pos < p.tokens.length {
+        return p.tokens[p.pos]
+    }
+    return p.tokens[p.tokens.length - 1]   // EOF
+}
+
+fn peekKind(p: Parser) -> string {
+    return lex.showKind(peek(p).kind)
+}
+
+fn advance(p: Parser) -> lex.Token {
+    const tok = peek(p)
+    if p.pos < p.tokens.length - 1 {
+        p.pos = p.pos + 1
+    }
+    return tok
+}
+
+fn eat(p: Parser, kind: string) -> bool {
+    if peekKind(p) == kind {
+        const _ = advance(p)
+        return true
+    }
+    return false
+}
+
+fn expect(p: Parser, kind: string) -> (lex.Token, Error?) {
+    const tok = peek(p)
+    if peekKind(p) != kind {
+        return tok, Error(message: "expected " + kind + " but got " + peekKind(p) +
+            " at pos " + int_to_string(p.pos))
+    }
+    const _ = advance(p)
+    return tok, null
+}
+
+// ── Type parsing ──────────────────────────────────────────────────────────────
+
+fn parseSimpleTyStr(p: Parser) -> (string, Error?) {
+    const kind = peekKind(p)
+    // Named types
+    if string_length(kind) > 6 && kind.substring(0, 6) == "Ident(" {
+        const name = kind.substring(6, string_length(kind) - 1)
+        const _ = advance(p)
+        // Check for generics like Array<int>
+        if peekKind(p) == "<" {
+            const _ = advance(p)
+            const inner, ie = parseSimpleTyStr(p)
+            if ie != null { return "", ie }
+            const _, ge = expect(p, ">")
+            if ge != null { return "", ge }
+            return name + "<" + inner + ">", null
+        }
+        if peekKind(p) == "?" {
+            const _ = advance(p)
+            return name + "?", null
+        }
+        return name, null
+    }
+    // Builtin named types
+    if kind == "int" || kind == "string" || kind == "bool" || kind == "float" {
+        const _ = advance(p)
+        if peekKind(p) == "?" {
+            const _ = advance(p)
+            return kind + "?", null
+        }
+        return kind, null
+    }
+    return "", Error(message: "expected type, got: " + kind)
+}
+
+// ── Expression parsing ────────────────────────────────────────────────────────
+
+fn parseExpr(p: Parser) -> (Expr, Error?) {
+    return parseOr(p)
+}
+
+fn parseOr(p: Parser) -> (Expr, Error?) {
+    const left, le = parseAnd(p)
+    if le != null { return left, le }
+    let result = left
+    while peekKind(p) == "||" {
+        const _ = advance(p)
+        const right, re = parseAnd(p)
+        if re != null { return result, re }
+        result = EBinary("||", result, right)
+    }
+    return result, null
+}
+
+fn parseAnd(p: Parser) -> (Expr, Error?) {
+    const left, le = parseEquality(p)
+    if le != null { return left, le }
+    let result = left
+    while peekKind(p) == "&&" {
+        const _ = advance(p)
+        const right, re = parseEquality(p)
+        if re != null { return result, re }
+        result = EBinary("&&", result, right)
+    }
+    return result, null
+}
+
+fn parseEquality(p: Parser) -> (Expr, Error?) {
+    const left, le = parseComparison(p)
+    if le != null { return left, le }
+    let result = left
+    let going = true
+    while going {
+        const k = peekKind(p)
+        if k == "==" || k == "!=" {
+            const _ = advance(p)
+            const right, re = parseComparison(p)
+            if re != null { return result, re }
+            result = EBinary(k, result, right)
+        } else {
+            going = false
+        }
+    }
+    return result, null
+}
+
+fn parseComparison(p: Parser) -> (Expr, Error?) {
+    const left, le = parseAddSub(p)
+    if le != null { return left, le }
+    let result = left
+    let going = true
+    while going {
+        const k = peekKind(p)
+        if k == "<" || k == "<=" || k == ">" || k == ">=" {
+            const _ = advance(p)
+            const right, re = parseAddSub(p)
+            if re != null { return result, re }
+            result = EBinary(k, result, right)
+        } else {
+            going = false
+        }
+    }
+    return result, null
+}
+
+fn parseAddSub(p: Parser) -> (Expr, Error?) {
+    const left, le = parseMulDiv(p)
+    if le != null { return left, le }
+    let result = left
+    let going = true
+    while going {
+        const k = peekKind(p)
+        if k == "+" || k == "-" {
+            const _ = advance(p)
+            const right, re = parseMulDiv(p)
+            if re != null { return result, re }
+            result = EBinary(k, result, right)
+        } else {
+            going = false
+        }
+    }
+    return result, null
+}
+
+fn parseMulDiv(p: Parser) -> (Expr, Error?) {
+    const left, le = parseUnary(p)
+    if le != null { return left, le }
+    let result = left
+    let going = true
+    while going {
+        const k = peekKind(p)
+        if k == "*" || k == "/" || k == "%" {
+            const _ = advance(p)
+            const right, re = parseUnary(p)
+            if re != null { return result, re }
+            result = EBinary(k, result, right)
+        } else {
+            going = false
+        }
+    }
+    return result, null
+}
+
+fn parseUnary(p: Parser) -> (Expr, Error?) {
+    const k = peekKind(p)
+    if k == "-" || k == "!" {
+        const _ = advance(p)
+        const operand, oe = parsePostfix(p)
+        if oe != null { return operand, oe }
+        return EUnary(k, operand), null
+    }
+    return parsePostfix(p)
+}
+
+fn parsePostfix(p: Parser) -> (Expr, Error?) {
+    const base, be = parsePrimary(p)
+    if be != null { return base, be }
+    let result = base
+    let going = true
+    while going {
+        const k = peekKind(p)
+        if k == "." {
+            const _ = advance(p)
+            const fieldK = peekKind(p)
+            if string_length(fieldK) > 6 && fieldK.substring(0, 6) == "Ident(" {
+                const field = fieldK.substring(6, string_length(fieldK) - 1)
+                const _ = advance(p)
+                if peekKind(p) == "(" {
+                    const _ = advance(p)
+                    const args, ae = parseArgList(p)
+                    if ae != null { return result, ae }
+                    const _, pe = expect(p, ")")
+                    if pe != null { return result, pe }
+                    result = EMethodCall(result, field, args)
+                } else {
+                    result = EField(result, field)
+                }
+            } else {
+                going = false
+            }
+        } else if k == "[" {
+            const _ = advance(p)
+            const idx, ie = parseExpr(p)
+            if ie != null { return result, ie }
+            const _, be2 = expect(p, "]")
+            if be2 != null { return result, be2 }
+            result = EIndex(result, idx)
+        } else {
+            going = false
+        }
+    }
+    return result, null
+}
+
+fn parseArgList(p: Parser) -> (Array<Expr>, Error?) {
+    let args: Array<Expr> = []
+    while peekKind(p) != ")" && peekKind(p) != "EOF" {
+        const arg, ae = parseExpr(p)
+        if ae != null { return args, ae }
+        args.append(arg)
+        const _ = eat(p, ",")
+    }
+    return args, null
+}
+
+fn parsePrimary(p: Parser) -> (Expr, Error?) {
+    const kind = peekKind(p)
+
+    // Integer literal
+    if string_length(kind) > 4 && kind.substring(0, 4) == "Int(" {
+        const nStr = kind.substring(4, string_length(kind) - 1)
+        const _ = advance(p)
+        // Parse int from string (simplified: use atoi via string ops)
+        let n = 0
+        let i = 0
+        let neg = false
+        if string_length(nStr) > 0 && nStr.substring(0, 1) == "-" {
+            neg = true
+            i = 1
+        }
+        while i < string_length(nStr) {
+            const ch = nStr.substring(i, i + 1)
+            if ch == "0" { n = n * 10 + 0 }
+            if ch == "1" { n = n * 10 + 1 }
+            if ch == "2" { n = n * 10 + 2 }
+            if ch == "3" { n = n * 10 + 3 }
+            if ch == "4" { n = n * 10 + 4 }
+            if ch == "5" { n = n * 10 + 5 }
+            if ch == "6" { n = n * 10 + 6 }
+            if ch == "7" { n = n * 10 + 7 }
+            if ch == "8" { n = n * 10 + 8 }
+            if ch == "9" { n = n * 10 + 9 }
+            i = i + 1
+        }
+        if neg { n = -n }
+        return EInt(n), null
+    }
+
+    // String literal
+    if string_length(kind) > 4 && kind.substring(0, 4) == "Str(" {
+        const s = kind.substring(4, string_length(kind) - 1)
+        const _ = advance(p)
+        return EString(s), null
+    }
+
+    // Keywords-as-values
+    if kind == "true"  { const _ = advance(p)  return EBool(true),  null }
+    if kind == "false" { const _ = advance(p)  return EBool(false), null }
+    if kind == "null"  { const _ = advance(p)  return ENull,        null }
+
+    // Identifier, call, or constructor
+    if string_length(kind) > 6 && kind.substring(0, 6) == "Ident(" {
+        const name = kind.substring(6, string_length(kind) - 1)
+        const _ = advance(p)
+        if peekKind(p) == "(" {
+            const _ = advance(p)
+            const args, ae = parseArgList(p)
+            if ae != null { return EIdent(name), ae }
+            const _, pe = expect(p, ")")
+            if pe != null { return EIdent(name), pe }
+            return ECall(name, args), null
+        }
+        return EIdent(name), null
+    }
+
+    // Grouped expression
+    if kind == "(" {
+        const _ = advance(p)
+        const e, ee = parseExpr(p)
+        if ee != null { return e, ee }
+        const _, pe = expect(p, ")")
+        if pe != null { return e, pe }
+        return e, null
+    }
+
+    // Array literal
+    if kind == "[" {
+        const _ = advance(p)
+        let elems: Array<Expr> = []
+        while peekKind(p) != "]" && peekKind(p) != "EOF" {
+            const el, ee = parseExpr(p)
+            if ee != null { return EArray(elems), ee }
+            elems.append(el)
+            const _ = eat(p, ",")
+        }
+        const _, be = expect(p, "]")
+        if be != null { return EArray(elems), be }
+        return EArray(elems), null
+    }
+
+    return EIdent("__error__"), Error(message: "unexpected token in expr: " + kind)
+}
+
+// ── Statement parsing ─────────────────────────────────────────────────────────
+
+fn parseBlock(p: Parser) -> (Array<Stmt>, Error?) {
+    const _, lbe = expect(p, "{")
+    if lbe != null { return [], lbe }
+    let stmts: Array<Stmt> = []
+    while peekKind(p) != "}" && peekKind(p) != "EOF" {
+        const stmt, se = parseStmt(p)
+        if se != null { return stmts, se }
+        stmts.append(stmt)
+    }
+    const _, rbe = expect(p, "}")
+    if rbe != null { return stmts, rbe }
+    return stmts, null
+}
+
+fn parseStmt(p: Parser) -> (Stmt, Error?) {
+    const kind = peekKind(p)
+
+    if kind == "return" {
+        const _ = advance(p)
+        let vals: Array<Expr> = []
+        // return with values, or bare return
+        if peekKind(p) != "}" && peekKind(p) != "EOF" {
+            const e, ee = parseExpr(p)
+            if ee != null { return SReturn(vals), ee }
+            vals.append(e)
+            while peekKind(p) == "," {
+                const _ = advance(p)
+                const e2, e2e = parseExpr(p)
+                if e2e != null { return SReturn(vals), e2e }
+                vals.append(e2)
+            }
+        }
+        return SReturn(vals), null
+    }
+
+    if kind == "yield" {
+        const _ = advance(p)
+        const e, ee = parseExpr(p)
+        if ee != null { return SYield(e), ee }
+        return SYield(e), null
+    }
+
+    if kind == "defer" {
+        const _ = advance(p)
+        const e, ee = parseExpr(p)
+        if ee != null { return SDefer(e), ee }
+        return SDefer(e), null
+    }
+
+    if kind == "continue" { const _ = advance(p)  return SContinue, null }
+    if kind == "break"    { const _ = advance(p)  return SBreak,    null }
+
+    if kind == "const" || kind == "let" {
+        const isMut = kind == "let"
+        const _ = advance(p)
+        // Support multi-binding: const a, b = expr
+        const firstK = peekKind(p)
+        if string_length(firstK) > 6 && firstK.substring(0, 6) == "Ident(" {
+            const name = firstK.substring(6, string_length(firstK) - 1)
+            const _ = advance(p)
+            // Skip optional type annotation
+            if peekKind(p) == ":" {
+                const _ = advance(p)
+                const _, te = parseSimpleTyStr(p)
+                if te != null { return SLet(isMut, name, ENull), te }
+            }
+            const _, eqe = expect(p, "=")
+            if eqe != null { return SLet(isMut, name, ENull), eqe }
+            const init, ie = parseExpr(p)
+            if ie != null { return SLet(isMut, name, ENull), ie }
+            return SLet(isMut, name, init), null
+        }
+        return SLet(false, "__error__", ENull), Error(message: "expected name after let/const")
+    }
+
+    if kind == "if" {
+        const s, se = parseIfStmt(p)
+        return s, se
+    }
+
+    if kind == "while" {
+        const _ = advance(p)
+        const cond, ce = parseExpr(p)
+        if ce != null { return SWhile(cond, []), ce }
+        const body, be = parseBlock(p)
+        if be != null { return SWhile(cond, body), be }
+        return SWhile(cond, body), null
+    }
+
+    if kind == "for" {
+        const _ = advance(p)
+        const varK = peekKind(p)
+        let varName = "__it__"
+        if string_length(varK) > 6 && varK.substring(0, 6) == "Ident(" {
+            varName = varK.substring(6, string_length(varK) - 1)
+            const _ = advance(p)
+        }
+        // Skip optional index var (for i, v in arr)
+        if peekKind(p) == "," {
+            const _ = advance(p)
+            const vk = peekKind(p)
+            if string_length(vk) > 6 && vk.substring(0, 6) == "Ident(" {
+                varName = vk.substring(6, string_length(vk) - 1)
+                const _ = advance(p)
+            }
+        }
+        const _, ine = expect(p, "in")
+        if ine != null { return SFor(varName, ENull, []), ine }
+        const iter, ie = parseExpr(p)
+        if ie != null { return SFor(varName, ENull, []), ie }
+        const body, be = parseBlock(p)
+        if be != null { return SFor(varName, iter, body), be }
+        return SFor(varName, iter, body), null
+    }
+
+    // Expression statement or assignment
+    const e, ee = parseExpr(p)
+    if ee != null { return SExpr(e), ee }
+
+    // Check for assignment: expr = expr
+    if peekKind(p) == "=" {
+        const _ = advance(p)
+        const rhs, re = parseExpr(p)
+        if re != null { return SExpr(e), re }
+        return SAssign(e, rhs), null
+    }
+
+    return SExpr(e), null
+}
+
+fn parseIfStmt(p: Parser) -> (Stmt, Error?) {
+    const _ = advance(p)    // consume 'if'
+    const cond, ce = parseExpr(p)
+    if ce != null { return SIf(cond, [], []), ce }
+    const then, te = parseBlock(p)
+    if te != null { return SIf(cond, then, []), te }
+    let els: Array<Stmt> = []
+    if peekKind(p) == "else" {
+        const _ = advance(p)
+        if peekKind(p) == "if" {
+            const nested, ne = parseIfStmt(p)
+            if ne != null { return SIf(cond, then, els), ne }
+            els.append(nested)
+        } else {
+            const elseBody, ee2 = parseBlock(p)
+            if ee2 != null { return SIf(cond, then, els), ee2 }
+            els = elseBody
+        }
+    }
+    return SIf(cond, then, els), null
+}
+
+// ── Top-level item parsing ────────────────────────────────────────────────────
+
+fn parseFn(p: Parser) -> (FnDef, Error?) {
+    const _, fe = expect(p, "fn")
+    if fe != null { return FnDef(name: "", params: [], retTy: "void", body: []), fe }
+
+    const nameK = peekKind(p)
+    let name = "__anonymous__"
+    if string_length(nameK) > 6 && nameK.substring(0, 6) == "Ident(" {
+        name = nameK.substring(6, string_length(nameK) - 1)
+        const _ = advance(p)
+    }
+
+    const _, lpe = expect(p, "(")
+    if lpe != null { return FnDef(name: name, params: [], retTy: "void", body: []), lpe }
+
+    let params: Array<Param> = []
+    while peekKind(p) != ")" && peekKind(p) != "EOF" {
+        const pk = peekKind(p)
+        let pname = "__param__"
+        if string_length(pk) > 6 && pk.substring(0, 6) == "Ident(" {
+            pname = pk.substring(6, string_length(pk) - 1)
+            const _ = advance(p)
+        }
+        const _, ce = expect(p, ":")
+        if ce != null { return FnDef(name: name, params: params, retTy: "void", body: []), ce }
+        const ty, te = parseSimpleTyStr(p)
+        if te != null { return FnDef(name: name, params: params, retTy: "void", body: []), te }
+        params.append(Param(name: pname, ty: ty))
+        const _ = eat(p, ",")
+    }
+
+    const _, rpe = expect(p, ")")
+    if rpe != null { return FnDef(name: name, params: params, retTy: "void", body: []), rpe }
+
+    let retTy = "void"
+    if peekKind(p) == "->" {
+        const _ = advance(p)
+        const ty, te = parseSimpleTyStr(p)
+        if te != null { return FnDef(name: name, params: params, retTy: "void", body: []), te }
+        retTy = ty
+    }
+
+    const body, be = parseBlock(p)
+    if be != null { return FnDef(name: name, params: params, retTy: retTy, body: []), be }
+
+    return FnDef(name: name, params: params, retTy: retTy, body: body), null
+}
+
+fn parseItem(p: Parser) -> (Item, Error?) {
+    const kind = peekKind(p)
+
+    if kind == "import" {
+        const _ = advance(p)
+        const pathK = peekKind(p)
+        let path = ""
+        if string_length(pathK) > 4 && pathK.substring(0, 4) == "Str(" {
+            path = pathK.substring(4, string_length(pathK) - 1)
+            const _ = advance(p)
+        }
+        let alias = path
+        if peekKind(p) == "as" {
+            const _ = advance(p)
+            const ak = peekKind(p)
+            if string_length(ak) > 6 && ak.substring(0, 6) == "Ident(" {
+                alias = ak.substring(6, string_length(ak) - 1)
+                const _ = advance(p)
+            }
+        }
+        return IImport(path, alias), null
+    }
+
+    if kind == "fn" {
+        const f, fe = parseFn(p)
+        if fe != null { return IFn(f), fe }
+        return IFn(f), null
+    }
+
+    if kind == "struct" {
+        const _ = advance(p)
+        const nk = peekKind(p)
+        let sname = "__struct__"
+        if string_length(nk) > 6 && nk.substring(0, 6) == "Ident(" {
+            sname = nk.substring(6, string_length(nk) - 1)
+            const _ = advance(p)
+        }
+        const _, lbe = expect(p, "{")
+        if lbe != null { return IStruct(StructDef(name: sname, fields: [])), lbe }
+        let fields: Array<Param> = []
+        while peekKind(p) != "}" && peekKind(p) != "EOF" {
+            // skip const/let
+            if peekKind(p) == "const" || peekKind(p) == "let" {
+                const _ = advance(p)
+            }
+            const fk = peekKind(p)
+            let fname = "__field__"
+            if string_length(fk) > 6 && fk.substring(0, 6) == "Ident(" {
+                fname = fk.substring(6, string_length(fk) - 1)
+                const _ = advance(p)
+            }
+            const _, ce = expect(p, ":")
+            if ce != null { return IStruct(StructDef(name: sname, fields: fields)), ce }
+            const ty, te = parseSimpleTyStr(p)
+            if te != null { return IStruct(StructDef(name: sname, fields: fields)), te }
+            fields.append(Param(name: fname, ty: ty))
+        }
+        const _, rbe = expect(p, "}")
+        if rbe != null { return IStruct(StructDef(name: sname, fields: fields)), rbe }
+        return IStruct(StructDef(name: sname, fields: fields)), null
+    }
+
+    return IFn(FnDef(name: "__error__", params: [], retTy: "void", body: [])),
+        Error(message: "unexpected top-level token: " + kind)
+}
+
+// ── Full parse ────────────────────────────────────────────────────────────────
+
+fn parse(src: string) -> (Array<Item>, Error?) {
+    const tokens = lex.tokenize(src)
+    let p = parserNew(tokens)
+    let items: Array<Item> = []
+
+    while peekKind(p) != "EOF" {
+        const item, ie = parseItem(p)
+        if ie != null { return items, ie }
+        items.append(item)
+    }
+
+    return items, null
+}
+
+// ── AST display (for debugging) ───────────────────────────────────────────────
+
+fn showExpr(e: Expr) -> string {
+    const s = match e {
+        EInt(n)             { yield "Int(" + int_to_string(n) + ")" }
+        EBool(b)            { yield if b { yield "true" } else { yield "false" } }
+        ENull               { yield "null" }
+        EString(s)          { yield "\"" + s + "\"" }
+        EIdent(s)           { yield s }
+        EUnary(op, operand) { yield op + showExpr(operand) }
+        EBinary(op, l, r)   { yield "(" + showExpr(l) + " " + op + " " + showExpr(r) + ")" }
+        ECall(n, args)      { yield n + "(...)" }
+        EField(recv, f)     { yield showExpr(recv) + "." + f }
+        EMethodCall(r,m,_)  { yield showExpr(r) + "." + m + "(...)" }
+        EIndex(a, i)        { yield showExpr(a) + "[" + showExpr(i) + "]" }
+        EArray(elems)       { yield "[...]" }
+        EIf(c, _, _)        { yield "if " + showExpr(c) + " {...}" }
+        EMatch(s, _)        { yield "match " + showExpr(s) + " {...}" }
+        EBlock(_)           { yield "{...}" }
+        EAsync(inner)       { yield "async " + showExpr(inner) }
+    }
+    return s
+}
+
+// ── Driver ─────────────────────────────────────────────────────────────────────
+
+fn main() {
+    const src = "fn add(a: int, b: int) -> int { return a + b }"
+    const items, err = parse(src)
+    if err != null {
+        print("parse error: " + err.message)
+        return
+    }
+    print("parsed " + int_to_string(items.length) + " item(s)")
+    for item in items {
+        const desc = match item {
+            IFn(f)         { yield "fn " + f.name }
+            IStruct(s)     { yield "struct " + s.name }
+            IImport(p, a)  { yield "import " + p }
+        }
+        print(desc)
+    }
+}

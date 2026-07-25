@@ -1,0 +1,158 @@
+// hakic.haki — Haki compiler driver written in Haki
+//
+// Pipeline: readFile → lex → parse → typecheck → report
+// Usage: hakic <source.haki>
+//
+// This is the bootstrap compiler driver. It currently implements:
+//   - Lexing + parsing (full, via haki_compiler.haki)
+//   - Type collection + basic call checking (via haki_typeck.haki)
+//
+// Not yet implemented in bootstrap:
+//   - Monomorphization
+//   - Codegen (still handled by the Rust host compiler)
+
+import "/home/claude/haki_bootstrap/haki_compiler" as compiler
+import "/home/claude/haki_bootstrap/haki_typeck" as typeck
+import "/home/claude/haki_bootstrap/haki_mono" as mono
+
+fn printUsage() {
+    print("usage: hakic <source.haki>")
+    print("       hakic check <source.haki>")
+}
+
+fn runCheck(path: string) -> (bool, Error?) {
+    // Read source file
+    const src, readErr = readFile(path)
+    if readErr != null {
+        return false, Error(message: "cannot read file: " + readErr.message)
+    }
+
+    // Lex + parse
+    const items, parseErr = compiler.parse(src)
+    if parseErr != null {
+        return false, Error(message: "parse error: " + parseErr.message)
+    }
+
+    // Typecheck
+    const sym, typeckErr = typeck.typecheck(src)
+    if typeckErr != null {
+        return false, Error(message: typeckErr.message)
+    }
+
+    // Report success
+    print("✓  " + path + " — " +
+        int_to_string(items.length) + " items, " +
+        int_to_string(sym.fns.length) + " functions")
+
+    return true, null
+}
+
+fn summarizeItems(items: Array<compiler.Item>) -> string {
+    let fnCount = 0
+    let structCount = 0
+    let importCount = 0
+    for item in items {
+        const tag = match item {
+            IFn(f)        { yield "fn" }
+            IStruct(s)    { yield "struct" }
+            IImport(p, a) { yield "import" }
+        }
+        if tag == "fn"     { fnCount = fnCount + 1 }
+        if tag == "struct" { structCount = structCount + 1 }
+        if tag == "import" { importCount = importCount + 1 }
+    }
+    return int_to_string(fnCount) + " fn(s), " +
+           int_to_string(structCount) + " struct(s), " +
+           int_to_string(importCount) + " import(s)"
+}
+
+fn main() {
+    const args = argv()
+
+    if args.length < 2 {
+        printUsage()
+        return
+    }
+
+    // Parse subcommand
+    const cmd = args[1]
+
+    if cmd == "check" {
+        if args.length < 3 {
+            print("hakic check: missing source file")
+            return
+        }
+        const path = args[2]
+        const ok, err = runCheck(path)
+        if err != null {
+            print("hakic: " + err.message)
+        }
+        return
+    }
+
+    // Default: lex + parse + typecheck the given file, print summary
+    const path = args[1]
+
+    // Read
+    const src, readErr = readFile(path)
+    if readErr != null {
+        print("hakic: cannot read '" + path + "': " + readErr.message)
+        return
+    }
+
+    // Lex + parse
+    print("[lex+parse]")
+    const items, parseErr = compiler.parse(src)
+    if parseErr != null {
+        print("parse error: " + parseErr.message)
+        return
+    }
+    print("  " + summarizeItems(items))
+
+    // Typecheck
+    print("[typecheck]")
+    const sym, typeckErr = typeck.typecheck(src)
+    if typeckErr != null {
+        print(typeckErr.message)
+        return
+    }
+    print("  " + int_to_string(sym.fns.length) + " functions collected")
+    if sym.errors.length > 0 {
+        print("  " + int_to_string(sym.errors.length) + " warning(s)")
+        for e in sym.errors {
+            print("  ! " + e)
+        }
+    }
+
+    print("")
+    print("✓  ok")
+}
+
+// ── Mono integration (upgrade from Session 24) ─────────────────────────────────
+// The driver now runs: parse → typecheck → mono → report
+
+fn runWithMono(path: string) -> (bool, Error?) {
+    const src, readErr = readFile(path)
+    if readErr != null {
+        return false, Error(message: "cannot read: " + readErr.message)
+    }
+
+    const items, parseErr = compiler.parse(src)
+    if parseErr != null {
+        return false, Error(message: "parse error: " + parseErr.message)
+    }
+
+    const sym, typeckErr = typeck.typecheck(src)
+    if typeckErr != null {
+        return false, Error(message: typeckErr.message)
+    }
+
+    const prog = mono.monomorphize(items)
+
+    print("✓  " + path)
+    print("   " + int_to_string(items.length) + " items parsed")
+    print("   " + int_to_string(sym.fns.length) + " functions typechecked")
+    print("   " + int_to_string(prog.fnCount) + " concrete functions after mono")
+    print("   " + int_to_string(prog.structs.length) + " structs after mono")
+    return true, null
+}

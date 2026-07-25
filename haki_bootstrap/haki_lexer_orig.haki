@@ -1,0 +1,417 @@
+// haki_lexer.haki — Haki lexer written in Haki
+//
+// Tokenizes Haki source text into a flat array of tokens.
+// This is Phase 2 of the bootstrap: writing the compiler in itself.
+
+// ── Token kinds ────────────────────────────────────────────────────────────────
+
+enum TokenKind {
+    // Literals
+    TkInt(int)
+    TkFloat(int)      // stored as bits for now; proper floats need stdlib
+    TkString(string)
+    TkIdent(string)
+
+    // Keywords
+    TkFn
+    TkLet
+    TkConst
+    TkReturn
+    TkIf
+    TkElse
+    TkWhile
+    TkFor
+    TkIn
+    TkMatch
+    TkYield
+    TkStruct
+    TkClass
+    TkEnum
+    TkProtocol
+    TkImpl
+    TkImport
+    TkAs
+    TkWeak
+    TkAsync
+    TkAwait
+    TkDefer
+    TkTry
+    TkTrue
+    TkFalse
+    TkNull
+
+    // Punctuation
+    TkLParen
+    TkRParen
+    TkLBrace
+    TkRBrace
+    TkLBracket
+    TkRBracket
+    TkComma
+    TkDot
+    TkColon
+    TkSemicolon
+    TkArrow        // ->
+    TkFatArrow     // =>
+    TkQuestion     // ?
+    TkUnder        // _
+    TkBang         // !
+
+    // Operators
+    TkEq           // =
+    TkEqEq         // ==
+    TkNeq          // !=
+    TkLt           // <
+    TkLtEq         // <=
+    TkGt           // >
+    TkGtEq         // >=
+    TkPlus
+    TkMinus
+    TkStar
+    TkSlash
+    TkPercent
+    TkAmpAmp       // &&
+    TkPipePipe     // ||
+
+    // Meta
+    TkEof
+    TkError(string)  // lexer error with message
+}
+
+// ── Token with span ────────────────────────────────────────────────────────────
+
+struct Token {
+    const kind: TokenKind
+    const lo:   int
+    const hi:   int
+}
+
+// ── Lexer state ────────────────────────────────────────────────────────────────
+
+struct Lexer {
+    const src: string
+    let pos:   int
+    let len:   int
+}
+
+fn lexerNew(src: string) -> Lexer {
+    return Lexer(src: src, pos: 0, len: string_length(src))
+}
+
+// ── Character helpers ──────────────────────────────────────────────────────────
+
+fn charAt(l: Lexer, i: int) -> string {
+    if i >= l.len { return "" }
+    return l.src.substring(i, i + 1)
+}
+
+fn isDigit(ch: string) -> bool {
+    if ch == "0" { return true }
+    if ch == "1" { return true }
+    if ch == "2" { return true }
+    if ch == "3" { return true }
+    if ch == "4" { return true }
+    if ch == "5" { return true }
+    if ch == "6" { return true }
+    if ch == "7" { return true }
+    if ch == "8" { return true }
+    if ch == "9" { return true }
+    return false
+}
+
+fn isAlpha(ch: string) -> bool {
+    if ch == "_" { return true }
+    if ch == "a" { return true } if ch == "A" { return true }
+    if ch == "b" { return true } if ch == "B" { return true }
+    if ch == "c" { return true } if ch == "C" { return true }
+    if ch == "d" { return true } if ch == "D" { return true }
+    if ch == "e" { return true } if ch == "E" { return true }
+    if ch == "f" { return true } if ch == "F" { return true }
+    if ch == "g" { return true } if ch == "G" { return true }
+    if ch == "h" { return true } if ch == "H" { return true }
+    if ch == "i" { return true } if ch == "I" { return true }
+    if ch == "j" { return true } if ch == "J" { return true }
+    if ch == "k" { return true } if ch == "K" { return true }
+    if ch == "l" { return true } if ch == "L" { return true }
+    if ch == "m" { return true } if ch == "M" { return true }
+    if ch == "n" { return true } if ch == "N" { return true }
+    if ch == "o" { return true } if ch == "O" { return true }
+    if ch == "p" { return true } if ch == "P" { return true }
+    if ch == "q" { return true } if ch == "Q" { return true }
+    if ch == "r" { return true } if ch == "R" { return true }
+    if ch == "s" { return true } if ch == "S" { return true }
+    if ch == "t" { return true } if ch == "T" { return true }
+    if ch == "u" { return true } if ch == "U" { return true }
+    if ch == "v" { return true } if ch == "V" { return true }
+    if ch == "w" { return true } if ch == "W" { return true }
+    if ch == "x" { return true } if ch == "X" { return true }
+    if ch == "y" { return true } if ch == "Y" { return true }
+    if ch == "z" { return true } if ch == "Z" { return true }
+    return false
+}
+
+fn isAlphaNum(ch: string) -> bool {
+    return isAlpha(ch) || isDigit(ch)
+}
+
+fn isWhitespace(ch: string) -> bool {
+    return ch == " " || ch == "\n" || ch == "\t" || ch == "\r"
+}
+
+// ── Keyword map ────────────────────────────────────────────────────────────────
+
+fn identToKeyword(s: string) -> (TokenKind, bool) {
+    if s == "fn"       { return TkFn,       true }
+    if s == "let"      { return TkLet,      true }
+    if s == "const"    { return TkConst,    true }
+    if s == "return"   { return TkReturn,   true }
+    if s == "if"       { return TkIf,       true }
+    if s == "else"     { return TkElse,     true }
+    if s == "while"    { return TkWhile,    true }
+    if s == "for"      { return TkFor,      true }
+    if s == "in"       { return TkIn,       true }
+    if s == "match"    { return TkMatch,    true }
+    if s == "yield"    { return TkYield,    true }
+    if s == "struct"   { return TkStruct,   true }
+    if s == "class"    { return TkClass,    true }
+    if s == "enum"     { return TkEnum,     true }
+    if s == "protocol" { return TkProtocol, true }
+    if s == "impl"     { return TkImpl,     true }
+    if s == "import"   { return TkImport,   true }
+    if s == "as"       { return TkAs,       true }
+    if s == "weak"     { return TkWeak,     true }
+    if s == "async"    { return TkAsync,    true }
+    if s == "await"    { return TkAwait,    true }
+    if s == "defer"    { return TkDefer,    true }
+    if s == "try"      { return TkTry,      true }
+    if s == "true"     { return TkTrue,     true }
+    if s == "false"    { return TkFalse,    true }
+    if s == "null"     { return TkNull,     true }
+    return TkEof, false   // sentinel: not a keyword
+}
+
+// ── Integer parsing ────────────────────────────────────────────────────────────
+
+fn digitVal(ch: string) -> int {
+    if ch == "0" { return 0 } if ch == "1" { return 1 }
+    if ch == "2" { return 2 } if ch == "3" { return 3 }
+    if ch == "4" { return 4 } if ch == "5" { return 5 }
+    if ch == "6" { return 6 } if ch == "7" { return 7 }
+    if ch == "8" { return 8 } if ch == "9" { return 9 }
+    return 0
+}
+
+// ── Main tokenize function ─────────────────────────────────────────────────────
+
+fn tokenize(src: string) -> Array<Token> {
+    let l = lexerNew(src)
+    let tokens: Array<Token> = []
+
+    while l.pos < l.len {
+        const ch = charAt(l, l.pos)
+        const lo = l.pos
+
+        // Whitespace
+        if isWhitespace(ch) { l.pos = l.pos + 1  continue }
+
+        // Line comments
+        if ch == "/" && charAt(l, l.pos + 1) == "/" {
+            while l.pos < l.len && charAt(l, l.pos) != "\n" {
+                l.pos = l.pos + 1
+            }
+            continue
+        }
+
+        // Integers
+        if isDigit(ch) {
+            let n = 0
+            while l.pos < l.len && isDigit(charAt(l, l.pos)) {
+                n = n * 10 + digitVal(charAt(l, l.pos))
+                l.pos = l.pos + 1
+            }
+            tokens.append(Token(kind: TkInt(n), lo: lo, hi: l.pos))
+            continue
+        }
+
+        // Identifiers and keywords
+        if isAlpha(ch) {
+            let start = l.pos
+            while l.pos < l.len && isAlphaNum(charAt(l, l.pos)) {
+                l.pos = l.pos + 1
+            }
+            const word = src.substring(start, l.pos)
+            const kw, isKw = identToKeyword(word)
+            if isKw {
+                tokens.append(Token(kind: kw, lo: lo, hi: l.pos))
+            } else {
+                tokens.append(Token(kind: TkIdent(word), lo: lo, hi: l.pos))
+            }
+            continue
+        }
+
+        // String literals
+        if ch == "\"" {
+            l.pos = l.pos + 1
+            let start = l.pos
+            let buf = ""
+            while l.pos < l.len && charAt(l, l.pos) != "\"" {
+                const c = charAt(l, l.pos)
+                if c == "\\" && l.pos + 1 < l.len {
+                    const esc = charAt(l, l.pos + 1)
+                    if esc == "n"  { buf = buf + "\n"  l.pos = l.pos + 2  continue }
+                    if esc == "t"  { buf = buf + "\t"  l.pos = l.pos + 2  continue }
+                    if esc == "\"" { buf = buf + "\""  l.pos = l.pos + 2  continue }
+                    if esc == "\\" { buf = buf + "\\"  l.pos = l.pos + 2  continue }
+                }
+                buf = buf + c
+                l.pos = l.pos + 1
+            }
+            if l.pos < l.len { l.pos = l.pos + 1 }   // consume closing "
+            tokens.append(Token(kind: TkString(buf), lo: lo, hi: l.pos))
+            continue
+        }
+
+        // Two-character operators
+        const ch2 = charAt(l, l.pos + 1)
+        if ch == "-" && ch2 == ">" { tokens.append(Token(kind: TkArrow,    lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+        if ch == "=" && ch2 == ">" { tokens.append(Token(kind: TkFatArrow, lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+        if ch == "=" && ch2 == "=" { tokens.append(Token(kind: TkEqEq,     lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+        if ch == "!" && ch2 == "=" { tokens.append(Token(kind: TkNeq,      lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+        if ch == "<" && ch2 == "=" { tokens.append(Token(kind: TkLtEq,     lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+        if ch == ">" && ch2 == "=" { tokens.append(Token(kind: TkGtEq,     lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+        if ch == "&" && ch2 == "&" { tokens.append(Token(kind: TkAmpAmp,   lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+        if ch == "|" && ch2 == "|" { tokens.append(Token(kind: TkPipePipe, lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+
+        // Single-character tokens
+        l.pos = l.pos + 1
+        if ch == "(" { tokens.append(Token(kind: TkLParen,    lo: lo, hi: l.pos))  continue }
+        if ch == ")" { tokens.append(Token(kind: TkRParen,    lo: lo, hi: l.pos))  continue }
+        if ch == "{" { tokens.append(Token(kind: TkLBrace,    lo: lo, hi: l.pos))  continue }
+        if ch == "}" { tokens.append(Token(kind: TkRBrace,    lo: lo, hi: l.pos))  continue }
+        if ch == "[" { tokens.append(Token(kind: TkLBracket,  lo: lo, hi: l.pos))  continue }
+        if ch == "]" { tokens.append(Token(kind: TkRBracket,  lo: lo, hi: l.pos))  continue }
+        if ch == "," { tokens.append(Token(kind: TkComma,     lo: lo, hi: l.pos))  continue }
+        if ch == "." { tokens.append(Token(kind: TkDot,       lo: lo, hi: l.pos))  continue }
+        if ch == ":" { tokens.append(Token(kind: TkColon,     lo: lo, hi: l.pos))  continue }
+        if ch == "?" { tokens.append(Token(kind: TkQuestion,  lo: lo, hi: l.pos))  continue }
+        if ch == "_" { tokens.append(Token(kind: TkUnder,     lo: lo, hi: l.pos))  continue }
+        if ch == "!" { tokens.append(Token(kind: TkBang,      lo: lo, hi: l.pos))  continue }
+        if ch == "=" { tokens.append(Token(kind: TkEq,        lo: lo, hi: l.pos))  continue }
+        if ch == "<" { tokens.append(Token(kind: TkLt,        lo: lo, hi: l.pos))  continue }
+        if ch == ">" { tokens.append(Token(kind: TkGt,        lo: lo, hi: l.pos))  continue }
+        if ch == "+" { tokens.append(Token(kind: TkPlus,      lo: lo, hi: l.pos))  continue }
+        if ch == "-" { tokens.append(Token(kind: TkMinus,     lo: lo, hi: l.pos))  continue }
+        if ch == "*" { tokens.append(Token(kind: TkStar,      lo: lo, hi: l.pos))  continue }
+        if ch == "/" { tokens.append(Token(kind: TkSlash,     lo: lo, hi: l.pos))  continue }
+        if ch == "%" { tokens.append(Token(kind: TkPercent,   lo: lo, hi: l.pos))  continue }
+
+        // Unknown character — emit error token
+        tokens.append(Token(kind: TkError("unexpected char: " + ch), lo: lo, hi: l.pos))
+    }
+
+    tokens.append(Token(kind: TkEof, lo: l.pos, hi: l.pos))
+    return tokens
+}
+
+// ── Token display ──────────────────────────────────────────────────────────────
+
+fn showKind(k: TokenKind) -> string {
+    const s = match k {
+        TkInt(n)    { yield "Int(" + int_to_string(n) + ")" }
+        TkString(s) { yield "Str(" + s + ")" }
+        TkIdent(s)  { yield "Ident(" + s + ")" }
+        TkError(s)  { yield "Error(" + s + ")" }
+        TkFn        { yield "fn" }       TkLet     { yield "let" }
+        TkConst     { yield "const" }    TkReturn  { yield "return" }
+        TkIf        { yield "if" }       TkElse    { yield "else" }
+        TkWhile     { yield "while" }    TkFor     { yield "for" }
+        TkIn        { yield "in" }       TkMatch   { yield "match" }
+        TkYield     { yield "yield" }    TkStruct  { yield "struct" }
+        TkClass     { yield "class" }    TkEnum    { yield "enum" }
+        TkProtocol  { yield "protocol" } TkImpl    { yield "impl" }
+        TkImport    { yield "import" }   TkAs      { yield "as" }
+        TkWeak      { yield "weak" }     TkAsync   { yield "async" }
+        TkAwait     { yield "await" }    TkDefer   { yield "defer" }
+        TkTry       { yield "try" }      TkTrue    { yield "true" }
+        TkFalse     { yield "false" }    TkNull    { yield "null" }
+        TkLParen    { yield "(" }        TkRParen  { yield ")" }
+        TkLBrace    { yield "{" }        TkRBrace  { yield "}" }
+        TkLBracket  { yield "[" }        TkRBracket{ yield "]" }
+        TkComma     { yield "," }        TkDot     { yield "." }
+        TkColon     { yield ":" }        TkQuestion{ yield "?" }
+        TkUnder     { yield "_" }        TkBang    { yield "!" }
+        TkArrow     { yield "->" }       TkFatArrow{ yield "=>" }
+        TkEq        { yield "=" }        TkEqEq    { yield "==" }
+        TkNeq       { yield "!=" }       TkLt      { yield "<" }
+        TkLtEq      { yield "<=" }       TkGt      { yield ">" }
+        TkGtEq      { yield ">=" }       TkPlus    { yield "+" }
+        TkMinus     { yield "-" }        TkStar    { yield "*" }
+        TkSlash     { yield "/" }        TkPercent { yield "%" }
+        TkAmpAmp    { yield "&&" }       TkPipePipe{ yield "||" }
+        TkEof       { yield "EOF" }      TkSemicolon{ yield ";" }
+        TkFloat(n)  { yield "Float(" + int_to_string(n) + ")" }
+    }
+    return s
+}
+
+// ── Driver ─────────────────────────────────────────────────────────────────────
+
+fn main() {
+    const src = "fn add(a: int, b: int) -> int { return a + b }"
+    const tokens = tokenize(src)
+    for tok in tokens {
+        print(showKind(tok.kind))
+    }
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────────
+
+fn test_integers() {
+    const toks = tokenize("42 0 100")
+    if toks.length != 4 { panic("expected 4 tokens") }
+    const t0 = toks[0]
+    const desc0 = showKind(t0.kind)
+    if desc0 != "Int(42)" { panic("expected Int(42), got: " + desc0) }
+}
+
+fn test_keywords() {
+    const toks = tokenize("fn let const return if else while for")
+    // 8 keywords + EOF = 9
+    if toks.length != 9 { panic("expected 9 tokens, got: " + int_to_string(toks.length)) }
+}
+
+fn test_identifiers() {
+    const toks = tokenize("hello world foo123")
+    if toks.length != 4 { panic("expected 4 tokens") }
+    const desc = showKind(toks[0].kind)
+    if desc != "Ident(hello)" { panic("expected Ident(hello), got: " + desc) }
+}
+
+fn test_operators() {
+    const toks = tokenize("-> == != <= >= && ||")
+    if toks.length != 8 { panic("expected 8 tokens, got: " + int_to_string(toks.length)) }
+    if showKind(toks[0].kind) != "->" { panic("expected ->") }
+    if showKind(toks[1].kind) != "==" { panic("expected ==") }
+}
+
+fn test_strings() {
+    const toks = tokenize("\"hello world\"")
+    if toks.length != 2 { panic("expected 2 tokens") }
+    const desc = showKind(toks[0].kind)
+    if desc != "Str(hello world)" { panic("expected Str(hello world), got: " + desc) }
+}
+
+fn test_comments() {
+    const toks = tokenize("42 // this is a comment\n99")
+    if toks.length != 3 { panic("expected 3 tokens") }
+    if showKind(toks[0].kind) != "Int(42)" { panic("first token wrong") }
+    if showKind(toks[1].kind) != "Int(99)" { panic("second token wrong") }
+}
+
+fn test_haki_snippet() {
+    const src = "fn add(a: int, b: int) -> int { return a + b }"
+    const toks = tokenize(src)
+    if toks.length != 20 { panic("expected 20 tokens, got: " + int_to_string(toks.length)) }
+    if showKind(toks[0].kind) != "fn" { panic("first token should be fn") }
+    if showKind(toks[19].kind) != "EOF" { panic("last token should be EOF") }
+}

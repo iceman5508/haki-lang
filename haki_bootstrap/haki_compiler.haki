@@ -1,0 +1,1495 @@
+// haki_lexer.haki — Haki lexer written in Haki
+//
+// Tokenizes Haki source text into a flat array of tokens.
+// This is Phase 2 of the bootstrap: writing the compiler in itself.
+
+// ── Token kinds ────────────────────────────────────────────────────────────────
+
+enum TokenKind {
+    // Literals
+    TkInt(int)
+    TkFloat(int)      // stored as bits for now; proper floats need stdlib
+    TkString(string)
+    TkIdent(string)
+
+    // Keywords
+    TkFn
+    TkLet
+    TkConst
+    TkReturn
+    TkIf
+    TkElse
+    TkWhile
+    TkFor
+    TkIn
+    TkMatch
+    TkYield
+    TkStruct
+    TkClass
+    TkEnum
+    TkProtocol
+    TkImpl
+    TkImport
+    TkAs
+    TkWeak
+    TkAsync
+    TkAwait
+    TkDefer
+    TkTry
+    TkTrue
+    TkFalse
+    TkNull
+
+    // Punctuation
+    TkLParen
+    TkRParen
+    TkLBrace
+    TkRBrace
+    TkLBracket
+    TkRBracket
+    TkComma
+    TkDot
+    TkColon
+    TkSemicolon
+    TkArrow        // ->
+    TkFatArrow     // =>
+    TkQuestion     // ?
+    TkUnder        // _
+    TkBang         // !
+
+    // Operators
+    TkEq           // =
+    TkEqEq         // ==
+    TkNeq          // !=
+    TkLt           // <
+    TkLtEq         // <=
+    TkGt           // >
+    TkGtEq         // >=
+    TkPlus
+    TkMinus
+    TkStar
+    TkSlash
+    TkPercent
+    TkAmpAmp       // &&
+    TkPipePipe     // ||
+
+    // Meta
+    TkEof
+    TkError(string)  // lexer error with message
+}
+
+// ── Token with span ────────────────────────────────────────────────────────────
+
+struct Token {
+    const kind: TokenKind
+    const lo:   int
+    const hi:   int
+}
+
+// ── Lexer state ────────────────────────────────────────────────────────────────
+
+struct Lexer {
+    const src: string
+    let pos:   int
+    let len:   int
+}
+
+fn lexerNew(src: string) -> Lexer {
+    return Lexer(src: src, pos: 0, len: string_length(src))
+}
+
+// ── Character helpers ──────────────────────────────────────────────────────────
+
+fn charAt(l: Lexer, i: int) -> string {
+    if i >= l.len { return "" }
+    return l.src.substring(i, i + 1)
+}
+
+fn isDigit(ch: string) -> bool {
+    if ch == "0" { return true }
+    if ch == "1" { return true }
+    if ch == "2" { return true }
+    if ch == "3" { return true }
+    if ch == "4" { return true }
+    if ch == "5" { return true }
+    if ch == "6" { return true }
+    if ch == "7" { return true }
+    if ch == "8" { return true }
+    if ch == "9" { return true }
+    return false
+}
+
+fn isAlpha(ch: string) -> bool {
+    if ch == "_" { return true }
+    if ch == "a" { return true } if ch == "A" { return true }
+    if ch == "b" { return true } if ch == "B" { return true }
+    if ch == "c" { return true } if ch == "C" { return true }
+    if ch == "d" { return true } if ch == "D" { return true }
+    if ch == "e" { return true } if ch == "E" { return true }
+    if ch == "f" { return true } if ch == "F" { return true }
+    if ch == "g" { return true } if ch == "G" { return true }
+    if ch == "h" { return true } if ch == "H" { return true }
+    if ch == "i" { return true } if ch == "I" { return true }
+    if ch == "j" { return true } if ch == "J" { return true }
+    if ch == "k" { return true } if ch == "K" { return true }
+    if ch == "l" { return true } if ch == "L" { return true }
+    if ch == "m" { return true } if ch == "M" { return true }
+    if ch == "n" { return true } if ch == "N" { return true }
+    if ch == "o" { return true } if ch == "O" { return true }
+    if ch == "p" { return true } if ch == "P" { return true }
+    if ch == "q" { return true } if ch == "Q" { return true }
+    if ch == "r" { return true } if ch == "R" { return true }
+    if ch == "s" { return true } if ch == "S" { return true }
+    if ch == "t" { return true } if ch == "T" { return true }
+    if ch == "u" { return true } if ch == "U" { return true }
+    if ch == "v" { return true } if ch == "V" { return true }
+    if ch == "w" { return true } if ch == "W" { return true }
+    if ch == "x" { return true } if ch == "X" { return true }
+    if ch == "y" { return true } if ch == "Y" { return true }
+    if ch == "z" { return true } if ch == "Z" { return true }
+    return false
+}
+
+fn isAlphaNum(ch: string) -> bool {
+    return isAlpha(ch) || isDigit(ch)
+}
+
+fn isWhitespace(ch: string) -> bool {
+    return ch == " " || ch == "\n" || ch == "\t" || ch == "\r"
+}
+
+// ── Keyword map ────────────────────────────────────────────────────────────────
+
+fn identToKeyword(s: string) -> (TokenKind, bool) {
+    if s == "fn"       { return TkFn,       true }
+    if s == "let"      { return TkLet,      true }
+    if s == "const"    { return TkConst,    true }
+    if s == "return"   { return TkReturn,   true }
+    if s == "if"       { return TkIf,       true }
+    if s == "else"     { return TkElse,     true }
+    if s == "while"    { return TkWhile,    true }
+    if s == "for"      { return TkFor,      true }
+    if s == "in"       { return TkIn,       true }
+    if s == "match"    { return TkMatch,    true }
+    if s == "yield"    { return TkYield,    true }
+    if s == "struct"   { return TkStruct,   true }
+    if s == "class"    { return TkClass,    true }
+    if s == "enum"     { return TkEnum,     true }
+    if s == "protocol" { return TkProtocol, true }
+    if s == "impl"     { return TkImpl,     true }
+    if s == "import"   { return TkImport,   true }
+    if s == "as"       { return TkAs,       true }
+    if s == "weak"     { return TkWeak,     true }
+    if s == "async"    { return TkAsync,    true }
+    if s == "await"    { return TkAwait,    true }
+    if s == "defer"    { return TkDefer,    true }
+    if s == "try"      { return TkTry,      true }
+    if s == "true"     { return TkTrue,     true }
+    if s == "false"    { return TkFalse,    true }
+    if s == "null"     { return TkNull,     true }
+    return TkEof, false   // sentinel: not a keyword
+}
+
+// ── Integer parsing ────────────────────────────────────────────────────────────
+
+fn digitVal(ch: string) -> int {
+    if ch == "0" { return 0 } if ch == "1" { return 1 }
+    if ch == "2" { return 2 } if ch == "3" { return 3 }
+    if ch == "4" { return 4 } if ch == "5" { return 5 }
+    if ch == "6" { return 6 } if ch == "7" { return 7 }
+    if ch == "8" { return 8 } if ch == "9" { return 9 }
+    return 0
+}
+
+// ── Main tokenize function ─────────────────────────────────────────────────────
+
+fn tokenize(src: string) -> Array<Token> {
+    let l = lexerNew(src)
+    let tokens: Array<Token> = []
+
+    while l.pos < l.len {
+        const ch = charAt(l, l.pos)
+        const lo = l.pos
+
+        // Whitespace
+        if isWhitespace(ch) { l.pos = l.pos + 1  continue }
+
+        // Line comments
+        if ch == "/" && charAt(l, l.pos + 1) == "/" {
+            while l.pos < l.len && charAt(l, l.pos) != "\n" {
+                l.pos = l.pos + 1
+            }
+            continue
+        }
+
+        // Integers
+        if isDigit(ch) {
+            let n = 0
+            while l.pos < l.len && isDigit(charAt(l, l.pos)) {
+                n = n * 10 + digitVal(charAt(l, l.pos))
+                l.pos = l.pos + 1
+            }
+            tokens.append(Token(kind: TkInt(n), lo: lo, hi: l.pos))
+            continue
+        }
+
+        // Identifiers and keywords
+        if isAlpha(ch) {
+            let start = l.pos
+            while l.pos < l.len && isAlphaNum(charAt(l, l.pos)) {
+                l.pos = l.pos + 1
+            }
+            const word = src.substring(start, l.pos)
+            const kw, isKw = identToKeyword(word)
+            if isKw {
+                tokens.append(Token(kind: kw, lo: lo, hi: l.pos))
+            } else {
+                tokens.append(Token(kind: TkIdent(word), lo: lo, hi: l.pos))
+            }
+            continue
+        }
+
+        // String literals
+        if ch == "\"" {
+            l.pos = l.pos + 1
+            let start = l.pos
+            let buf = ""
+            while l.pos < l.len && charAt(l, l.pos) != "\"" {
+                const c = charAt(l, l.pos)
+                if c == "\\" && l.pos + 1 < l.len {
+                    const esc = charAt(l, l.pos + 1)
+                    if esc == "n"  { buf = buf + "\n"  l.pos = l.pos + 2  continue }
+                    if esc == "t"  { buf = buf + "\t"  l.pos = l.pos + 2  continue }
+                    if esc == "\"" { buf = buf + "\""  l.pos = l.pos + 2  continue }
+                    if esc == "\\" { buf = buf + "\\"  l.pos = l.pos + 2  continue }
+                }
+                buf = buf + c
+                l.pos = l.pos + 1
+            }
+            if l.pos < l.len { l.pos = l.pos + 1 }   // consume closing "
+            tokens.append(Token(kind: TkString(buf), lo: lo, hi: l.pos))
+            continue
+        }
+
+        // Two-character operators
+        const ch2 = charAt(l, l.pos + 1)
+        if ch == "-" && ch2 == ">" { tokens.append(Token(kind: TkArrow,    lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+        if ch == "=" && ch2 == ">" { tokens.append(Token(kind: TkFatArrow, lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+        if ch == "=" && ch2 == "=" { tokens.append(Token(kind: TkEqEq,     lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+        if ch == "!" && ch2 == "=" { tokens.append(Token(kind: TkNeq,      lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+        if ch == "<" && ch2 == "=" { tokens.append(Token(kind: TkLtEq,     lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+        if ch == ">" && ch2 == "=" { tokens.append(Token(kind: TkGtEq,     lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+        if ch == "&" && ch2 == "&" { tokens.append(Token(kind: TkAmpAmp,   lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+        if ch == "|" && ch2 == "|" { tokens.append(Token(kind: TkPipePipe, lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+
+        // Single-character tokens
+        l.pos = l.pos + 1
+        if ch == "(" { tokens.append(Token(kind: TkLParen,    lo: lo, hi: l.pos))  continue }
+        if ch == ")" { tokens.append(Token(kind: TkRParen,    lo: lo, hi: l.pos))  continue }
+        if ch == "{" { tokens.append(Token(kind: TkLBrace,    lo: lo, hi: l.pos))  continue }
+        if ch == "}" { tokens.append(Token(kind: TkRBrace,    lo: lo, hi: l.pos))  continue }
+        if ch == "[" { tokens.append(Token(kind: TkLBracket,  lo: lo, hi: l.pos))  continue }
+        if ch == "]" { tokens.append(Token(kind: TkRBracket,  lo: lo, hi: l.pos))  continue }
+        if ch == "," { tokens.append(Token(kind: TkComma,     lo: lo, hi: l.pos))  continue }
+        if ch == "." { tokens.append(Token(kind: TkDot,       lo: lo, hi: l.pos))  continue }
+        if ch == ":" { tokens.append(Token(kind: TkColon,     lo: lo, hi: l.pos))  continue }
+        if ch == "?" { tokens.append(Token(kind: TkQuestion,  lo: lo, hi: l.pos))  continue }
+        if ch == "_" { tokens.append(Token(kind: TkUnder,     lo: lo, hi: l.pos))  continue }
+        if ch == "!" { tokens.append(Token(kind: TkBang,      lo: lo, hi: l.pos))  continue }
+        if ch == "=" { tokens.append(Token(kind: TkEq,        lo: lo, hi: l.pos))  continue }
+        if ch == "<" { tokens.append(Token(kind: TkLt,        lo: lo, hi: l.pos))  continue }
+        if ch == ">" { tokens.append(Token(kind: TkGt,        lo: lo, hi: l.pos))  continue }
+        if ch == "+" { tokens.append(Token(kind: TkPlus,      lo: lo, hi: l.pos))  continue }
+        if ch == "-" { tokens.append(Token(kind: TkMinus,     lo: lo, hi: l.pos))  continue }
+        if ch == "*" { tokens.append(Token(kind: TkStar,      lo: lo, hi: l.pos))  continue }
+        if ch == "/" { tokens.append(Token(kind: TkSlash,     lo: lo, hi: l.pos))  continue }
+        if ch == "%" { tokens.append(Token(kind: TkPercent,   lo: lo, hi: l.pos))  continue }
+
+        // Unknown character — emit error token
+        tokens.append(Token(kind: TkError("unexpected char: " + ch), lo: lo, hi: l.pos))
+    }
+
+    tokens.append(Token(kind: TkEof, lo: l.pos, hi: l.pos))
+    return tokens
+}
+
+// ── Token display ──────────────────────────────────────────────────────────────
+
+fn showKind(k: TokenKind) -> string {
+    const s = match k {
+        TkInt(n)    { yield "Int(" + int_to_string(n) + ")" }
+        TkString(s) { yield "Str(" + s + ")" }
+        TkIdent(s)  { yield "Ident(" + s + ")" }
+        TkError(s)  { yield "Error(" + s + ")" }
+        TkFn        { yield "fn" }       TkLet     { yield "let" }
+        TkConst     { yield "const" }    TkReturn  { yield "return" }
+        TkIf        { yield "if" }       TkElse    { yield "else" }
+        TkWhile     { yield "while" }    TkFor     { yield "for" }
+        TkIn        { yield "in" }       TkMatch   { yield "match" }
+        TkYield     { yield "yield" }    TkStruct  { yield "struct" }
+        TkClass     { yield "class" }    TkEnum    { yield "enum" }
+        TkProtocol  { yield "protocol" } TkImpl    { yield "impl" }
+        TkImport    { yield "import" }   TkAs      { yield "as" }
+        TkWeak      { yield "weak" }     TkAsync   { yield "async" }
+        TkAwait     { yield "await" }    TkDefer   { yield "defer" }
+        TkTry       { yield "try" }      TkTrue    { yield "true" }
+        TkFalse     { yield "false" }    TkNull    { yield "null" }
+        TkLParen    { yield "(" }        TkRParen  { yield ")" }
+        TkLBrace    { yield "{" }        TkRBrace  { yield "}" }
+        TkLBracket  { yield "[" }        TkRBracket{ yield "]" }
+        TkComma     { yield "," }        TkDot     { yield "." }
+        TkColon     { yield ":" }        TkQuestion{ yield "?" }
+        TkUnder     { yield "_" }        TkBang    { yield "!" }
+        TkArrow     { yield "->" }       TkFatArrow{ yield "=>" }
+        TkEq        { yield "=" }        TkEqEq    { yield "==" }
+        TkNeq       { yield "!=" }       TkLt      { yield "<" }
+        TkLtEq      { yield "<=" }       TkGt      { yield ">" }
+        TkGtEq      { yield ">=" }       TkPlus    { yield "+" }
+        TkMinus     { yield "-" }        TkStar    { yield "*" }
+        TkSlash     { yield "/" }        TkPercent { yield "%" }
+        TkAmpAmp    { yield "&&" }       TkPipePipe{ yield "||" }
+        TkEof       { yield "EOF" }      TkSemicolon{ yield ";" }
+        TkFloat(n)  { yield "Float(" + int_to_string(n) + ")" }
+    }
+    return s
+}
+
+
+// ── Parser ──────────────────────────────────────────────────────────────────
+
+// haki_parser.haki — Haki recursive-descent parser written in Haki
+//
+// Consumes Array<Token> from haki_lexer.haki and produces an AST.
+// Import: this file assumes Token/TokenKind/tokenize are available via import.
+// For now we inline the lexer types to keep this file standalone.
+
+// ── AST node types ────────────────────────────────────────────────────────────
+
+enum Ty {
+    TyNamed(string)
+    TyOptional(Ty)
+    TyArray(Ty)
+    TyFn(Array<Ty>, Ty)
+}
+
+enum Expr {
+    EInt(int)
+    EBool(bool)
+    ENull
+    EString(string)
+    EIdent(string)
+    EUnary(string, Expr)
+    EBinary(string, Expr, Expr)
+    ECall(string, Array<Expr>)
+    EField(Expr, string)
+    EMethodCall(Expr, string, Array<Expr>)
+    EIndex(Expr, Expr)
+    EArray(Array<Expr>)
+    EIf(Expr, Array<Stmt>, Array<Stmt>)
+    EMatch(Expr, Array<MatchArm>)
+    EBlock(Array<Stmt>)
+    EAsync(Expr)
+}
+
+enum Stmt {
+    SLet(bool, string, Expr)        // is_mut, name, init
+    SReturn(Array<Expr>)
+    SYield(Expr)
+    SDefer(Expr)
+    SContinue
+    SBreak
+    SExpr(Expr)
+    SIf(Expr, Array<Stmt>, Array<Stmt>)
+    SWhile(Expr, Array<Stmt>)
+    SFor(string, Expr, Array<Stmt>)
+    SAssign(Expr, Expr)
+}
+
+struct Param {
+    const name: string
+    const ty:   string       // simplified: type name as string for now
+}
+
+struct FnDef {
+    const name:    string
+    const params:  Array<Param>
+    const retTy:   string
+    const body:    Array<Stmt>
+}
+
+struct MatchArm {
+    const pattern:  string
+    const bindings: Array<string>
+    const body:     Array<Stmt>
+}
+
+struct StructDef {
+    const name:   string
+    const fields: Array<Param>
+}
+
+enum Item {
+    IFn(FnDef)
+    IStruct(StructDef)
+    IImport(string, string)   // path, alias
+}
+
+// ── Parser state ──────────────────────────────────────────────────────────────
+
+struct Parser {
+    const tokens: Array<Token>
+    let pos:      int
+}
+
+fn parserNew(tokens: Array<Token>) -> Parser {
+    return Parser(tokens: tokens, pos: 0)
+}
+
+fn peek(p: Parser) -> Token {
+    if p.pos < p.tokens.length {
+        return p.tokens[p.pos]
+    }
+    return p.tokens[p.tokens.length - 1]   // EOF
+}
+
+fn peekKind(p: Parser) -> string {
+    return showKind(peek(p).kind)
+}
+
+fn advance(p: Parser) -> Token {
+    const tok = peek(p)
+    if p.pos < p.tokens.length - 1 {
+        p.pos = p.pos + 1
+    }
+    return tok
+}
+
+fn eat(p: Parser, kind: string) -> bool {
+    if peekKind(p) == kind {
+        const _ = advance(p)
+        return true
+    }
+    return false
+}
+
+fn expect(p: Parser, kind: string) -> (Token, Error?) {
+    const tok = peek(p)
+    if peekKind(p) != kind {
+        return tok, Error(message: "expected " + kind + " but got " + peekKind(p) +
+            " at pos " + int_to_string(p.pos))
+    }
+    const _ = advance(p)
+    return tok, null
+}
+
+// ── Type parsing ──────────────────────────────────────────────────────────────
+
+fn parseSimpleTyStr(p: Parser) -> (string, Error?) {
+    const kind = peekKind(p)
+
+    // Tuple type: (Type1, Type2)
+    if kind == "(" {
+        const _ = advance(p)
+        let parts: Array<string> = []
+        while peekKind(p) != ")" && peekKind(p) != "EOF" {
+            const part, pe = parseSimpleTyStr(p)
+            if pe != null { return "()", pe }
+            parts.append(part)
+            const _ = eat(p, ",")
+        }
+        const _, rpe = expect(p, ")")
+        if rpe != null { return "()", rpe }
+        // Return as comma-joined string — simplified representation
+        let result = "("
+        let i = 0
+        while i < parts.length {
+            if i > 0 { result = result + ", " }
+            result = result + parts[i]
+            i = i + 1
+        }
+        result = result + ")"
+        return result, null
+    }
+
+    // fn type: fn(A, B) -> R
+    if kind == "fn" {
+        const _ = advance(p)
+        let fnTy = "fn"
+        if peekKind(p) == "(" {
+            const _ = advance(p)
+            fnTy = fnTy + "("
+            let first = true
+            while peekKind(p) != ")" && peekKind(p) != "EOF" {
+                const pt, pte = parseSimpleTyStr(p)
+                if pte != null { return fnTy + ")", pte }
+                if !first { fnTy = fnTy + ", " }
+                fnTy = fnTy + pt
+                first = false
+                const _ = eat(p, ",")
+            }
+            const _, rpe = expect(p, ")")
+            if rpe != null { return fnTy, rpe }
+            fnTy = fnTy + ")"
+        }
+        if peekKind(p) == "->" {
+            const _ = advance(p)
+            const rt, rte = parseSimpleTyStr(p)
+            if rte != null { return fnTy, rte }
+            fnTy = fnTy + " -> " + rt
+        }
+        return fnTy, null
+    }
+
+    // Named types (possibly generic, possibly qualified with dot)
+    if string_length(kind) > 6 && kind.substring(0, 6) == "Ident(" {
+        const name = kind.substring(6, string_length(kind) - 1)
+        const _ = advance(p)
+        // Qualified name: Ident.Ident (e.g. lex.Token, compiler.Item)
+        let baseName = name
+        if peekKind(p) == "." {
+            const _ = advance(p)  // consume '.'
+            const nextK = peekKind(p)
+            if string_length(nextK) > 6 && nextK.substring(0, 6) == "Ident(" {
+                const tyName = nextK.substring(6, string_length(nextK) - 1)
+                const _ = advance(p)
+                baseName = name + "." + tyName
+            }
+        }
+        // Generic: Name<T> or Name<T, U>
+        if peekKind(p) == "<" {
+            const _ = advance(p)
+            let argStr = baseName + "<"
+            let firstArg = true
+            while peekKind(p) != ">" && peekKind(p) != "EOF" {
+                const inner, ie = parseSimpleTyStr(p)
+                if ie != null { return argStr + ">", ie }
+                if !firstArg { argStr = argStr + ", " }
+                argStr = argStr + inner
+                firstArg = false
+                const _ = eat(p, ",")
+            }
+            const _, ge = expect(p, ">")
+            if ge != null { return argStr + ">", ge }
+            argStr = argStr + ">"
+            if peekKind(p) == "?" {
+                const _ = advance(p)
+                return argStr + "?", null
+            }
+            return argStr, null
+        }
+        if peekKind(p) == "?" {
+            const _ = advance(p)
+            return baseName + "?", null
+        }
+        return baseName, null
+    }
+    // Builtin named types
+    if kind == "int" || kind == "string" || kind == "bool" || kind == "float" || kind == "void" {
+        const _ = advance(p)
+        if peekKind(p) == "?" {
+            const _ = advance(p)
+            return kind + "?", null
+        }
+        return kind, null
+    }
+    return "", Error(message: "expected type, got: " + kind)
+}
+
+// ── Expression parsing ────────────────────────────────────────────────────────
+
+fn parseExpr(p: Parser) -> (Expr, Error?) {
+    return parseOr(p)
+}
+
+fn parseOr(p: Parser) -> (Expr, Error?) {
+    const left, le = parseAnd(p)
+    if le != null { return left, le }
+    let result = left
+    while peekKind(p) == "||" {
+        const _ = advance(p)
+        const right, re = parseAnd(p)
+        if re != null { return result, re }
+        result = EBinary("||", result, right)
+    }
+    return result, null
+}
+
+fn parseAnd(p: Parser) -> (Expr, Error?) {
+    const left, le = parseEquality(p)
+    if le != null { return left, le }
+    let result = left
+    while peekKind(p) == "&&" {
+        const _ = advance(p)
+        const right, re = parseEquality(p)
+        if re != null { return result, re }
+        result = EBinary("&&", result, right)
+    }
+    return result, null
+}
+
+fn parseEquality(p: Parser) -> (Expr, Error?) {
+    const left, le = parseComparison(p)
+    if le != null { return left, le }
+    let result = left
+    let going = true
+    while going {
+        const k = peekKind(p)
+        if k == "==" || k == "!=" {
+            const _ = advance(p)
+            const right, re = parseComparison(p)
+            if re != null { return result, re }
+            result = EBinary(k, result, right)
+        } else {
+            going = false
+        }
+    }
+    return result, null
+}
+
+fn parseComparison(p: Parser) -> (Expr, Error?) {
+    const left, le = parseAddSub(p)
+    if le != null { return left, le }
+    let result = left
+    let going = true
+    while going {
+        const k = peekKind(p)
+        if k == "<" || k == "<=" || k == ">" || k == ">=" {
+            const _ = advance(p)
+            const right, re = parseAddSub(p)
+            if re != null { return result, re }
+            result = EBinary(k, result, right)
+        } else {
+            going = false
+        }
+    }
+    return result, null
+}
+
+fn parseAddSub(p: Parser) -> (Expr, Error?) {
+    const left, le = parseMulDiv(p)
+    if le != null { return left, le }
+    let result = left
+    let going = true
+    while going {
+        const k = peekKind(p)
+        if k == "+" || k == "-" {
+            const _ = advance(p)
+            const right, re = parseMulDiv(p)
+            if re != null { return result, re }
+            result = EBinary(k, result, right)
+        } else {
+            going = false
+        }
+    }
+    return result, null
+}
+
+fn parseMulDiv(p: Parser) -> (Expr, Error?) {
+    const left, le = parseUnary(p)
+    if le != null { return left, le }
+    let result = left
+    let going = true
+    while going {
+        const k = peekKind(p)
+        if k == "*" || k == "/" || k == "%" {
+            const _ = advance(p)
+            const right, re = parseUnary(p)
+            if re != null { return result, re }
+            result = EBinary(k, result, right)
+        } else {
+            going = false
+        }
+    }
+    return result, null
+}
+
+fn parseUnary(p: Parser) -> (Expr, Error?) {
+    const k = peekKind(p)
+    if k == "-" || k == "!" {
+        const _ = advance(p)
+        const operand, oe = parsePostfix(p)
+        if oe != null { return operand, oe }
+        return EUnary(k, operand), null
+    }
+    return parsePostfix(p)
+}
+
+fn parsePostfix(p: Parser) -> (Expr, Error?) {
+    const base, be = parsePrimary(p)
+    if be != null { return base, be }
+    let result = base
+    let going = true
+    while going {
+        const k = peekKind(p)
+        if k == "." {
+            const _ = advance(p)
+            const fieldK = peekKind(p)
+            if string_length(fieldK) > 6 && fieldK.substring(0, 6) == "Ident(" {
+                const field = fieldK.substring(6, string_length(fieldK) - 1)
+                const _ = advance(p)
+                if peekKind(p) == "(" {
+                    const _ = advance(p)
+                    const args, ae = parseArgList(p)
+                    if ae != null { return result, ae }
+                    const _, pe = expect(p, ")")
+                    if pe != null { return result, pe }
+                    result = EMethodCall(result, field, args)
+                } else {
+                    result = EField(result, field)
+                }
+            } else {
+                going = false
+            }
+        } else if k == "[" {
+            const _ = advance(p)
+            const idx, ie = parseExpr(p)
+            if ie != null { return result, ie }
+            const _, be2 = expect(p, "]")
+            if be2 != null { return result, be2 }
+            result = EIndex(result, idx)
+        } else {
+            going = false
+        }
+    }
+    return result, null
+}
+
+fn parseArgList(p: Parser) -> (Array<Expr>, Error?) {
+    let args: Array<Expr> = []
+    while peekKind(p) != ")" && peekKind(p) != "EOF" {
+        const arg, ae = parseExpr(p)
+        if ae != null { return args, ae }
+        args.append(arg)
+        const _ = eat(p, ",")
+    }
+    return args, null
+}
+
+fn parsePrimary(p: Parser) -> (Expr, Error?) {
+    const kind = peekKind(p)
+
+    // Integer literal
+    if string_length(kind) > 4 && kind.substring(0, 4) == "Int(" {
+        const nStr = kind.substring(4, string_length(kind) - 1)
+        const _ = advance(p)
+        // Parse int from string (simplified: use atoi via string ops)
+        let n = 0
+        let i = 0
+        let neg = false
+        if string_length(nStr) > 0 && nStr.substring(0, 1) == "-" {
+            neg = true
+            i = 1
+        }
+        while i < string_length(nStr) {
+            const ch = nStr.substring(i, i + 1)
+            if ch == "0" { n = n * 10 + 0 }
+            if ch == "1" { n = n * 10 + 1 }
+            if ch == "2" { n = n * 10 + 2 }
+            if ch == "3" { n = n * 10 + 3 }
+            if ch == "4" { n = n * 10 + 4 }
+            if ch == "5" { n = n * 10 + 5 }
+            if ch == "6" { n = n * 10 + 6 }
+            if ch == "7" { n = n * 10 + 7 }
+            if ch == "8" { n = n * 10 + 8 }
+            if ch == "9" { n = n * 10 + 9 }
+            i = i + 1
+        }
+        if neg { n = -n }
+        return EInt(n), null
+    }
+
+    // String literal
+    if string_length(kind) > 4 && kind.substring(0, 4) == "Str(" {
+        const s = kind.substring(4, string_length(kind) - 1)
+        const _ = advance(p)
+        return EString(s), null
+    }
+
+    // Keywords-as-values
+    if kind == "true"  { const _ = advance(p)  return EBool(true),  null }
+    if kind == "false" { const _ = advance(p)  return EBool(false), null }
+    if kind == "null"  { const _ = advance(p)  return ENull,        null }
+
+    // Identifier, call, or constructor
+    if string_length(kind) > 6 && kind.substring(0, 6) == "Ident(" {
+        const name = kind.substring(6, string_length(kind) - 1)
+        const _ = advance(p)
+        if peekKind(p) == "(" {
+            const _ = advance(p)
+            // Check if this is a named-arg call: `Name(field: val, ...)`
+            // Detect: next is Ident followed by ':'
+            let isNamed = false
+            if string_length(peekKind(p)) > 6 && peekKind(p).substring(0, 6) == "Ident(" {
+                // peek ahead past the ident — if ':' follows, it's named
+                let savedPos = p.pos
+                const _ = advance(p)  // consume ident
+                if peekKind(p) == ":" { isNamed = true }
+                p.pos = savedPos      // restore
+            }
+            if isNamed {
+                // Named args: skip field names and colons, just collect values
+                let args: Array<Expr> = []
+                while peekKind(p) != ")" && peekKind(p) != "EOF" {
+                    // consume field name
+                    if string_length(peekKind(p)) > 6 && peekKind(p).substring(0, 6) == "Ident(" {
+                        const _ = advance(p)
+                    }
+                    // consume ':'
+                    if peekKind(p) == ":" { const _ = advance(p) }
+                    // parse value
+                    const arg, ae = parseExpr(p)
+                    if ae != null { return ECall(name, args), ae }
+                    args.append(arg)
+                    const _ = eat(p, ",")
+                }
+                const _, pe = expect(p, ")")
+                if pe != null { return ECall(name, args), pe }
+                return ECall(name, args), null
+            } else {
+                const args, ae = parseArgList(p)
+                if ae != null { return EIdent(name), ae }
+                const _, pe = expect(p, ")")
+                if pe != null { return EIdent(name), pe }
+                return ECall(name, args), null
+            }
+        }
+        return EIdent(name), null
+    }
+
+    // match expression: match expr { Pattern { body } ... }
+    if kind == "match" {
+        const _ = advance(p)
+        const scrutinee, se = parseExpr(p)
+        if se != null { return scrutinee, se }
+        const _, lbe = expect(p, "{")
+        if lbe != null { return scrutinee, lbe }
+        let arms: Array<MatchArm> = []
+        while peekKind(p) != "}" && peekKind(p) != "EOF" {
+            // Pattern name (or _)
+            let pat = "_"
+            const pk = peekKind(p)
+            if pk == "_" {
+                const _ = advance(p)
+            } else if string_length(pk) > 6 && pk.substring(0, 6) == "Ident(" {
+                pat = pk.substring(6, string_length(pk) - 1)
+                const _ = advance(p)
+            }
+            // Optional bindings: Pattern(a, b, c)
+            let bindings: Array<string> = []
+            if peekKind(p) == "(" {
+                const _ = advance(p)
+                while peekKind(p) != ")" && peekKind(p) != "EOF" {
+                    const bk = peekKind(p)
+                    if bk == "_" {
+                        bindings.append("_")
+                        const _ = advance(p)
+                    } else if string_length(bk) > 6 && bk.substring(0, 6) == "Ident(" {
+                        bindings.append(bk.substring(6, string_length(bk) - 1))
+                        const _ = advance(p)
+                    }
+                    const _ = eat(p, ",")
+                }
+                const _, rpe = expect(p, ")")
+                if rpe != null { return scrutinee, rpe }
+            }
+            // Arm body
+            const body, be = parseBlock(p)
+            if be != null { return scrutinee, be }
+            arms.append(MatchArm(pattern: pat, bindings: bindings, body: body))
+        }
+        const _, rbe = expect(p, "}")
+        if rbe != null { return scrutinee, rbe }
+        return EMatch(scrutinee, arms), null
+    }
+
+    // Block expression: { stmts }
+    if kind == "{" {
+        const body, be = parseBlock(p)
+        if be != null { return ENull, be }
+        return EBlock(body), null
+    }
+
+    // if as expression (yield-based)
+    if kind == "if" {
+        const _ = advance(p)
+        const cond, ce = parseExpr(p)
+        if ce != null { return cond, ce }
+        const then, te = parseBlock(p)
+        if te != null { return EIf(cond, then, []), te }
+        let els: Array<Stmt> = []
+        if peekKind(p) == "else" {
+            const _ = advance(p)
+            const elsBody, ee = parseBlock(p)
+            if ee != null { return EIf(cond, then, els), ee }
+            els = elsBody
+        }
+        return EIf(cond, then, els), null
+    }
+
+    // Grouped expression
+    if kind == "(" {        const _ = advance(p)
+        const e, ee = parseExpr(p)
+        if ee != null { return e, ee }
+        const _, pe = expect(p, ")")
+        if pe != null { return e, pe }
+        return e, null
+    }
+
+    // Array literal
+    if kind == "[" {
+        const _ = advance(p)
+        let elems: Array<Expr> = []
+        while peekKind(p) != "]" && peekKind(p) != "EOF" {
+            const el, ee = parseExpr(p)
+            if ee != null { return EArray(elems), ee }
+            elems.append(el)
+            const _ = eat(p, ",")
+        }
+        const _, be = expect(p, "]")
+        if be != null { return EArray(elems), be }
+        return EArray(elems), null
+    }
+
+    return EIdent("__error__"), Error(message: "unexpected token in expr: " + kind)
+}
+
+// ── Statement parsing ─────────────────────────────────────────────────────────
+
+fn parseBlock(p: Parser) -> (Array<Stmt>, Error?) {
+    const _, lbe = expect(p, "{")
+    if lbe != null { return [], lbe }
+    let stmts: Array<Stmt> = []
+    while peekKind(p) != "}" && peekKind(p) != "EOF" {
+        const stmt, se = parseStmt(p)
+        if se != null { return stmts, se }
+        stmts.append(stmt)
+    }
+    const _, rbe = expect(p, "}")
+    if rbe != null { return stmts, rbe }
+    return stmts, null
+}
+
+fn parseStmt(p: Parser) -> (Stmt, Error?) {
+    const kind = peekKind(p)
+
+    if kind == "return" {
+        const _ = advance(p)
+        let vals: Array<Expr> = []
+        // return with values, or bare return
+        if peekKind(p) != "}" && peekKind(p) != "EOF" {
+            const e, ee = parseExpr(p)
+            if ee != null { return SReturn(vals), ee }
+            vals.append(e)
+            while peekKind(p) == "," {
+                const _ = advance(p)
+                const e2, e2e = parseExpr(p)
+                if e2e != null { return SReturn(vals), e2e }
+                vals.append(e2)
+            }
+        }
+        return SReturn(vals), null
+    }
+
+    if kind == "yield" {
+        const _ = advance(p)
+        const e, ee = parseExpr(p)
+        if ee != null { return SYield(e), ee }
+        return SYield(e), null
+    }
+
+    if kind == "defer" {
+        const _ = advance(p)
+        const e, ee = parseExpr(p)
+        if ee != null { return SDefer(e), ee }
+        return SDefer(e), null
+    }
+
+    if kind == "continue" { const _ = advance(p)  return SContinue, null }
+    if kind == "break"    { const _ = advance(p)  return SBreak,    null }
+
+    if kind == "const" || kind == "let" {
+        const isMut = kind == "let"
+        const _ = advance(p)
+        // Support multi-binding: const a, b, c = expr  OR  const a = expr
+        const firstK = peekKind(p)
+        if string_length(firstK) > 6 && firstK.substring(0, 6) == "Ident(" {
+            const name = firstK.substring(6, string_length(firstK) - 1)
+            const _ = advance(p)
+            // Check for multi-binding: const a, b = expr
+            if peekKind(p) == "," {
+                // Consume all remaining binding names
+                while peekKind(p) == "," {
+                    const _ = advance(p)  // consume ','
+                    if peekKind(p) == "_" {
+                        const _ = advance(p)  // underscore sink
+                    } else if string_length(peekKind(p)) > 6 && peekKind(p).substring(0, 6) == "Ident(" {
+                        const _ = advance(p)  // consume extra binding name
+                    }
+                }
+            } else if peekKind(p) == ":" {
+                // Type annotation — skip it
+                const _ = advance(p)
+                const _, te = parseSimpleTyStr(p)
+                if te != null { return SLet(isMut, name, ENull), te }
+            }
+            const _, eqe = expect(p, "=")
+            if eqe != null { return SLet(isMut, name, ENull), eqe }
+            const init, ie = parseExpr(p)
+            if ie != null { return SLet(isMut, name, ENull), ie }
+            return SLet(isMut, name, init), null
+        }
+        // Underscore sink: const _ = expr
+        if peekKind(p) == "_" {
+            const _ = advance(p)
+            const _, eqe = expect(p, "=")
+            if eqe != null { return SLet(isMut, "_", ENull), eqe }
+            const init, ie = parseExpr(p)
+            if ie != null { return SLet(isMut, "_", ENull), ie }
+            return SLet(isMut, "_", init), null
+        }
+        return SLet(false, "__error__", ENull), Error(message: "expected name after let/const")
+    }
+
+    if kind == "if" {
+        const s, se = parseIfStmt(p)
+        return s, se
+    }
+
+    if kind == "while" {
+        const _ = advance(p)
+        const cond, ce = parseExpr(p)
+        if ce != null { return SWhile(cond, []), ce }
+        const body, be = parseBlock(p)
+        if be != null { return SWhile(cond, body), be }
+        return SWhile(cond, body), null
+    }
+
+    if kind == "for" {
+        const _ = advance(p)
+        const varK = peekKind(p)
+        let varName = "__it__"
+        if string_length(varK) > 6 && varK.substring(0, 6) == "Ident(" {
+            varName = varK.substring(6, string_length(varK) - 1)
+            const _ = advance(p)
+        }
+        // Skip optional index var (for i, v in arr)
+        if peekKind(p) == "," {
+            const _ = advance(p)
+            const vk = peekKind(p)
+            if string_length(vk) > 6 && vk.substring(0, 6) == "Ident(" {
+                varName = vk.substring(6, string_length(vk) - 1)
+                const _ = advance(p)
+            }
+        }
+        const _, ine = expect(p, "in")
+        if ine != null { return SFor(varName, ENull, []), ine }
+        const iter, ie = parseExpr(p)
+        if ie != null { return SFor(varName, ENull, []), ie }
+        const body, be = parseBlock(p)
+        if be != null { return SFor(varName, iter, body), be }
+        return SFor(varName, iter, body), null
+    }
+
+    // Expression statement or assignment
+    const e, ee = parseExpr(p)
+    if ee != null { return SExpr(e), ee }
+
+    // Check for assignment: expr = expr
+    if peekKind(p) == "=" {
+        const _ = advance(p)
+        const rhs, re = parseExpr(p)
+        if re != null { return SExpr(e), re }
+        return SAssign(e, rhs), null
+    }
+
+    return SExpr(e), null
+}
+
+fn parseIfStmt(p: Parser) -> (Stmt, Error?) {
+    const _ = advance(p)    // consume 'if'
+    const cond, ce = parseExpr(p)
+    if ce != null { return SIf(cond, [], []), ce }
+    const then, te = parseBlock(p)
+    if te != null { return SIf(cond, then, []), te }
+    let els: Array<Stmt> = []
+    if peekKind(p) == "else" {
+        const _ = advance(p)
+        if peekKind(p) == "if" {
+            const nested, ne = parseIfStmt(p)
+            if ne != null { return SIf(cond, then, els), ne }
+            els.append(nested)
+        } else {
+            const elseBody, ee2 = parseBlock(p)
+            if ee2 != null { return SIf(cond, then, els), ee2 }
+            els = elseBody
+        }
+    }
+    return SIf(cond, then, els), null
+}
+
+// ── Top-level item parsing ────────────────────────────────────────────────────
+
+fn parseFn(p: Parser) -> (FnDef, Error?) {
+    const _, fe = expect(p, "fn")
+    if fe != null { return FnDef(name: "", params: [], retTy: "void", body: []), fe }
+
+    const nameK = peekKind(p)
+    let name = "__anonymous__"
+    if string_length(nameK) > 6 && nameK.substring(0, 6) == "Ident(" {
+        name = nameK.substring(6, string_length(nameK) - 1)
+        const _ = advance(p)
+    }
+
+    const _, lpe = expect(p, "(")
+    if lpe != null { return FnDef(name: name, params: [], retTy: "void", body: []), lpe }
+
+    let params: Array<Param> = []
+    while peekKind(p) != ")" && peekKind(p) != "EOF" {
+        const pk = peekKind(p)
+        let pname = "__param__"
+        if string_length(pk) > 6 && pk.substring(0, 6) == "Ident(" {
+            pname = pk.substring(6, string_length(pk) - 1)
+            const _ = advance(p)
+        }
+        const _, ce = expect(p, ":")
+        if ce != null { return FnDef(name: name, params: params, retTy: "void", body: []), ce }
+        const ty, te = parseSimpleTyStr(p)
+        if te != null { return FnDef(name: name, params: params, retTy: "void", body: []), te }
+        params.append(Param(name: pname, ty: ty))
+        const _ = eat(p, ",")
+    }
+
+    const _, rpe = expect(p, ")")
+    if rpe != null { return FnDef(name: name, params: params, retTy: "void", body: []), rpe }
+
+    let retTy = "void"
+    if peekKind(p) == "->" {
+        const _ = advance(p)
+        const ty, te = parseSimpleTyStr(p)
+        if te != null { return FnDef(name: name, params: params, retTy: "void", body: []), te }
+        retTy = ty
+    }
+
+    const body, be = parseBlock(p)
+    if be != null { return FnDef(name: name, params: params, retTy: retTy, body: []), be }
+
+    return FnDef(name: name, params: params, retTy: retTy, body: body), null
+}
+
+fn parseItem(p: Parser) -> (Item, Error?) {
+    const kind = peekKind(p)
+
+    if kind == "import" {
+        const _ = advance(p)
+        const pathK = peekKind(p)
+        let path = ""
+        if string_length(pathK) > 4 && pathK.substring(0, 4) == "Str(" {
+            path = pathK.substring(4, string_length(pathK) - 1)
+            const _ = advance(p)
+        }
+        let alias = path
+        if peekKind(p) == "as" {
+            const _ = advance(p)
+            const ak = peekKind(p)
+            if string_length(ak) > 6 && ak.substring(0, 6) == "Ident(" {
+                alias = ak.substring(6, string_length(ak) - 1)
+                const _ = advance(p)
+            }
+        }
+        return IImport(path, alias), null
+    }
+
+    if kind == "fn" {
+        const f, fe = parseFn(p)
+        if fe != null { return IFn(f), fe }
+        return IFn(f), null
+    }
+
+    if kind == "struct" {
+        const _ = advance(p)
+        const nk = peekKind(p)
+        let sname = "__struct__"
+        if string_length(nk) > 6 && nk.substring(0, 6) == "Ident(" {
+            sname = nk.substring(6, string_length(nk) - 1)
+            const _ = advance(p)
+        }
+        const _, lbe = expect(p, "{")
+        if lbe != null { return IStruct(StructDef(name: sname, fields: [])), lbe }
+        let fields: Array<Param> = []
+        while peekKind(p) != "}" && peekKind(p) != "EOF" {
+            // skip const/let
+            if peekKind(p) == "const" || peekKind(p) == "let" {
+                const _ = advance(p)
+            }
+            const fk = peekKind(p)
+            let fname = "__field__"
+            if string_length(fk) > 6 && fk.substring(0, 6) == "Ident(" {
+                fname = fk.substring(6, string_length(fk) - 1)
+                const _ = advance(p)
+            }
+            const _, ce = expect(p, ":")
+            if ce != null { return IStruct(StructDef(name: sname, fields: fields)), ce }
+            const ty, te = parseSimpleTyStr(p)
+            if te != null { return IStruct(StructDef(name: sname, fields: fields)), te }
+            fields.append(Param(name: fname, ty: ty))
+        }
+        const _, rbe = expect(p, "}")
+        if rbe != null { return IStruct(StructDef(name: sname, fields: fields)), rbe }
+        return IStruct(StructDef(name: sname, fields: fields)), null
+    }
+
+    // enum: parse name and skip the body (we don't need to inspect enum variants
+    // in the bootstrap typechecker — we just need to count items correctly)
+    if kind == "enum" {
+        const _ = advance(p)
+        const nk = peekKind(p)
+        let ename = "__enum__"
+        if string_length(nk) > 6 && nk.substring(0, 6) == "Ident(" {
+            ename = nk.substring(6, string_length(nk) - 1)
+            const _ = advance(p)
+        }
+        // Skip optional type params
+        if peekKind(p) == "<" {
+            while peekKind(p) != ">" && peekKind(p) != "EOF" {
+                const _ = advance(p)
+            }
+            if peekKind(p) == ">" { const _ = advance(p) }
+        }
+        const _, lbe = expect(p, "{")
+        if lbe != null { return IStruct(StructDef(name: ename, fields: [])), lbe }
+        // Skip variant declarations — just count brace depth
+        let depth = 1
+        while depth > 0 && peekKind(p) != "EOF" {
+            const tok = peekKind(p)
+            if tok == "{" { depth = depth + 1 }
+            if tok == "}" { depth = depth - 1 }
+            if depth > 0 { const _ = advance(p) }
+        }
+        const _, rbe = expect(p, "}")
+        if rbe != null { return IStruct(StructDef(name: ename, fields: [])), rbe }
+        return IStruct(StructDef(name: ename, fields: [])), null
+    }
+
+    // class: parse like struct but also has methods — skip the whole body
+    if kind == "class" {
+        const _ = advance(p)
+        const nk = peekKind(p)
+        let cname = "__class__"
+        if string_length(nk) > 6 && nk.substring(0, 6) == "Ident(" {
+            cname = nk.substring(6, string_length(nk) - 1)
+            const _ = advance(p)
+        }
+        // Skip optional extends clause
+        if peekKind(p) == "extends" {
+            const _ = advance(p)
+            const _ = advance(p)  // skip superclass name
+        }
+        // Skip entire class body
+        let depth = 0
+        while peekKind(p) != "EOF" {
+            const tok = peekKind(p)
+            if tok == "{" { depth = depth + 1 }
+            if tok == "}" {
+                depth = depth - 1
+                if depth <= 0 {
+                    const _ = advance(p)
+                    break
+                }
+            }
+            const _ = advance(p)
+        }
+        return IStruct(StructDef(name: cname, fields: [])), null
+    }
+
+    // protocol / impl: skip entirely
+    if kind == "protocol" || kind == "impl" {
+        const _ = advance(p)
+        let depth = 0
+        while peekKind(p) != "EOF" {
+            const tok = peekKind(p)
+            if tok == "{" { depth = depth + 1 }
+            if tok == "}" {
+                depth = depth - 1
+                if depth <= 0 {
+                    const _ = advance(p)
+                    break
+                }
+            }
+            const _ = advance(p)
+        }
+        return IImport("__skip__", "__skip__"), null
+    }
+
+    return IFn(FnDef(name: "__error__", params: [], retTy: "void", body: [])),
+        Error(message: "unexpected top-level token: " + kind)
+}
+
+// ── Full parse ────────────────────────────────────────────────────────────────
+
+fn parse(src: string) -> (Array<Item>, Error?) {
+    const tokens = tokenize(src)
+    let p = parserNew(tokens)
+    let items: Array<Item> = []
+
+    while peekKind(p) != "EOF" {
+        const item, ie = parseItem(p)
+        if ie != null { return items, ie }
+        items.append(item)
+    }
+
+    return items, null
+}
+
+// ── AST display (for debugging) ───────────────────────────────────────────────
+
+fn showExpr(e: Expr) -> string {
+    const s = match e {
+        EInt(n)             { yield "Int(" + int_to_string(n) + ")" }
+        EBool(b)            { yield if b { yield "true" } else { yield "false" } }
+        ENull               { yield "null" }
+        EString(s)          { yield "\"" + s + "\"" }
+        EIdent(s)           { yield s }
+        EUnary(op, operand) { yield op + showExpr(operand) }
+        EBinary(op, l, r)   { yield "(" + showExpr(l) + " " + op + " " + showExpr(r) + ")" }
+        ECall(n, args)      { yield n + "(...)" }
+        EField(recv, f)     { yield showExpr(recv) + "." + f }
+        EMethodCall(r, m, margs) { yield showExpr(r) + "." + m + "(...)" }
+        EIndex(a, i)        { yield showExpr(a) + "[" + showExpr(i) + "]" }
+        EArray(aelems)      { yield "[...]" }
+        EIf(c, th, el)      { yield "if " + showExpr(c) + " {...}" }
+        EMatch(s, arms)     { yield "match " + showExpr(s) + " {...}" }
+        EBlock(bstmts)      { yield "{...}" }
+        EAsync(inner)       { yield "async " + showExpr(inner) }
+    }
+    return s
+}
+
+// ── Driver ─────────────────────────────────────────────────────────────────────
+
+fn main() {
+    const src = "fn add(a: int, b: int) -> int { return a + b }"
+    const items, err = parse(src)
+    if err != null {
+        print("parse error: " + err.message)
+        return
+    }
+    print("parsed " + int_to_string(items.length) + " item(s)")
+    for item in items {
+        const desc = match item {
+            IFn(f)         { yield "fn " + f.name }
+            IStruct(s)     { yield "struct " + s.name }
+            IImport(p, a)  { yield "import " + p }
+        }
+        print(desc)
+    }
+}
+
+// ── Parser tests ───────────────────────────────────────────────────────────────
+
+fn test_parse_fn() {
+    const items, err = parse("fn add(a: int, b: int) -> int { return a + b }")
+    if err != null { panic("parse error: " + err.message) }
+    if items.length != 1 { panic("expected 1 item") }
+    const desc = match items[0] {
+        IFn(f)     { yield "fn:" + f.name }
+        IStruct(s) { yield "struct:" + s.name }
+        IImport(p, a) { yield "import:" + p }
+    }
+    if desc != "fn:add" { panic("expected fn:add, got: " + desc) }
+}
+
+fn test_parse_params() {
+    const items, err = parse("fn greet(name: string, age: int) { return }")
+    if err != null { panic("parse error: " + err.message) }
+    const f = match items[0] { IFn(f) { yield f }  _ { yield FnDef(name:"",params:[],retTy:"",body:[]) } }
+    if f.params.length != 2 { panic("expected 2 params, got: " + int_to_string(f.params.length)) }
+    if f.params[0].name != "name" { panic("first param wrong: " + f.params[0].name) }
+    if f.params[1].name != "age"  { panic("second param wrong: " + f.params[1].name) }
+}
+
+fn test_parse_return_type() {
+    const items, err = parse("fn id(x: int) -> int { return x }")
+    if err != null { panic("parse error: " + err.message) }
+    const f = match items[0] { IFn(f) { yield f } _ { yield FnDef(name:"",params:[],retTy:"",body:[]) } }
+    if f.retTy != "int" { panic("expected int return, got: " + f.retTy) }
+}
+
+fn test_parse_struct() {
+    const items, err = parse("struct Point { const x: int  const y: int }")
+    if err != null { panic("parse error: " + err.message) }
+    const s = match items[0] { IStruct(s) { yield s } _ { yield StructDef(name:"",fields:[]) } }
+    if s.name != "Point" { panic("struct name wrong: " + s.name) }
+    if s.fields.length != 2 { panic("expected 2 fields, got: " + int_to_string(s.fields.length)) }
+}
+
+fn test_parse_expr_binary() {
+    const items, err = parse("fn f() -> int { return 1 + 2 * 3 }")
+    if err != null { panic("parse error: " + err.message) }
+    const f = match items[0] { IFn(f) { yield f } _ { yield FnDef(name:"",params:[],retTy:"",body:[]) } }
+    if f.body.length != 1 { panic("expected 1 stmt") }
+    const retExpr = match f.body[0] {
+        SReturn(vals) { yield if vals.length > 0 { yield showExpr(vals[0]) } else { yield "" } }
+        _ { yield "" }
+    }
+    // (1 + (2 * 3)) — precedence correct
+    if retExpr != "(Int(1) + (Int(2) * Int(3)))" { panic("wrong expr: " + retExpr) }
+}
+
+fn test_parse_if() {
+    const items, err = parse("fn f(x: int) -> int { if x > 0 { return x } return 0 }")
+    if err != null { panic("parse error: " + err.message) }
+    const f = match items[0] { IFn(f) { yield f } _ { yield FnDef(name:"",params:[],retTy:"",body:[]) } }
+    if f.body.length != 2 { panic("expected 2 stmts, got: " + int_to_string(f.body.length)) }
+}
+
+fn test_parse_multi_fn() {
+    const src = "fn a(x: int) -> int { return x }\nfn b(y: int) -> int { return y }"
+    const items, err = parse(src)
+    if err != null { panic("parse error: " + err.message) }
+    if items.length != 2 { panic("expected 2 items, got: " + int_to_string(items.length)) }
+}
+
+// ── Factory helpers for cross-module construction ─────────────────────────────
+// These allow other modules to construct compiler AST types without needing
+// qualified named-constructor syntax (which the bootstrap parser doesn't support).
+
+fn emptyFnDef() -> FnDef {
+    let params: Array<Param> = []
+    let body: Array<Stmt> = []
+    return FnDef(name: "", params: params, retTy: "", body: body)
+}
+
+fn emptyStructDef() -> StructDef {
+    let fields: Array<Param> = []
+    return StructDef(name: "", fields: fields)
+}
+
+fn makeFnDef(name: string, params: Array<Param>, retTy: string, body: Array<Stmt>) -> FnDef {
+    return FnDef(name: name, params: params, retTy: retTy, body: body)
+}
+
+// Sentinel null expression for use in other modules
+fn nullExpr() -> Expr {
+    return EIdent("__null__")
+}
+
+fn isNullExpr(e: Expr) -> bool {
+    const n = match e { EIdent(n) { yield n } _ { yield "" } }
+    return n == "__null__"
+}
+
+// Empty stmt/expr arrays
+fn emptyStmts() -> Array<Stmt> {
+    let s: Array<Stmt> = []
+    return s
+}
+
+fn emptyExprs() -> Array<Expr> {
+    let s: Array<Expr> = []
+    return s
+}
+
+fn emptyArms() -> Array<MatchArm> {
+    let s: Array<MatchArm> = []
+    return s
+}

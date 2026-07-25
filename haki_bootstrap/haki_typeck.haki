@@ -1,0 +1,316 @@
+// haki_typeck.haki — Symbol collector + type checker written in Haki
+//
+// Phase 1: collect top-level function signatures into a symbol table.
+// Phase 2: walk each function body, resolve names, report type errors.
+//
+// Scope: bootstrap subset — enough to typecheck the compiler itself.
+
+import "/home/claude/haki_bootstrap/haki_compiler" as compiler
+
+// ── Type representations ───────────────────────────────────────────────────────
+
+enum SemTy {
+    TyInt
+    TyFloat
+    TyBool
+    TyString
+    TyVoid
+    TyNamed(string)
+    TyOptional(string)    // simplified: just the inner type name
+    TyArray(string)       // element type name
+    TyFn(string, string)  // params summary, return type name
+    TyError               // used for error recovery
+}
+
+fn tyName(t: SemTy) -> string {
+    const s = match t {
+        TyInt          { yield "int" }
+        TyFloat        { yield "float" }
+        TyBool         { yield "bool" }
+        TyString       { yield "string" }
+        TyVoid         { yield "void" }
+        TyNamed(n)     { yield n }
+        TyOptional(n)  { yield n + "?" }
+        TyArray(n)     { yield "Array<" + n + ">" }
+        TyFn(p, r)     { yield "fn(" + p + ") -> " + r }
+        TyError        { yield "<error>" }
+    }
+    return s
+}
+
+fn tyEq(a: SemTy, b: SemTy) -> bool {
+    return tyName(a) == tyName(b)
+}
+
+// ── Symbol table ───────────────────────────────────────────────────────────────
+
+struct FnInfo {
+    const name:    string
+    const retTy:   SemTy
+    const nParams: int
+}
+
+struct SymTable {
+    let fns:    Map<string, FnInfo>
+    let structs: Map<string, int>   // name → field count
+    let errors: Array<string>
+}
+
+fn symNew() -> SymTable {
+    return SymTable(
+        fns:    Map(),
+        structs: Map(),
+        errors: []
+    )
+}
+
+fn symError(sym: SymTable, msg: string) {
+    sym.errors.append(msg)
+}
+
+fn symRegisterFn(sym: SymTable, info: FnInfo) {
+    sym.fns.set(info.name, info)
+}
+
+fn symLookupFn(sym: SymTable, name: string) -> (FnInfo, bool) {
+    if sym.fns.has(name) {
+        return sym.fns.getOrDefault(name, FnInfo(name: "", retTy: TyError, nParams: 0)), true
+    }
+    return FnInfo(name: "", retTy: TyError, nParams: 0), false
+}
+
+// ── Type resolution (from string representation) ───────────────────────────────
+
+fn resolveSimpleTy(s: string) -> SemTy {
+    if s == "int"    { return TyInt }
+    if s == "float"  { return TyFloat }
+    if s == "bool"   { return TyBool }
+    if s == "string" { return TyString }
+    if s == "void"   { return TyVoid }
+    // Optional: ends with ?
+    const n = string_length(s)
+    if n > 1 && s.substring(n - 1, n) == "?" {
+        return TyOptional(s.substring(0, n - 1))
+    }
+    // Array: starts with Array<
+    if n > 6 && s.substring(0, 6) == "Array<" {
+        const inner = s.substring(6, n - 1)
+        return TyArray(inner)
+    }
+    // Named type
+    return TyNamed(s)
+}
+
+// ── Collection pass: build symbol table from item list ─────────────────────────
+
+fn collectItem(sym: SymTable, item: compiler.Item) {
+    const isFn = match item {
+        IFn(f) {
+            const retTy = resolveSimpleTy(f.retTy)
+            const info = FnInfo(name: f.name, retTy: retTy, nParams: f.params.length)
+            symRegisterFn(sym, info)
+            yield true
+        }
+        IStruct(s) {
+            sym.structs.set(s.name, s.fields.length)
+            yield false
+        }
+        IImport(p, a) { yield false }
+    }
+    const _ = isFn
+}
+
+fn collectItems(sym: SymTable, items: Array<compiler.Item>) {
+    for item in items {
+        collectItem(sym, item)
+    }
+}
+
+// ── Inference pass: walk expressions, check calls ─────────────────────────────
+
+fn inferExpr(sym: SymTable, e: compiler.Expr) -> SemTy {
+    return inferExprInner(sym, e)
+}
+
+fn inferExprInner(sym: SymTable, e: compiler.Expr) -> SemTy {
+    const tag = match e {
+        EInt(n)             { yield "int" }
+        EBool(b)            { yield "bool" }
+        ENull               { yield "null" }
+        EString(s)          { yield "string" }
+        EIdent(n)           { yield "ident" }
+        EUnary(op, inner)   { yield "unary" }
+        EBinary(op, l, r)   { yield "binary" }
+        ECall(n, args)      { yield "call" }
+        EField(recv, f)     { yield "field" }
+        EMethodCall(r,m,ma) { yield "method" }
+        EIndex(a, i)        { yield "index" }
+        EArray(elems)       { yield "array" }
+        EIf(c, th, el)      { yield "if" }
+        EMatch(s, arms)     { yield "match" }
+        EBlock(stmts)       { yield "block" }
+        EAsync(inner)       { yield "async" }
+    }
+    if tag == "int"    { return TyInt }
+    if tag == "bool"   { return TyBool }
+    if tag == "null"   { return TyVoid }
+    if tag == "string" { return TyString }
+    if tag == "unary"  { return TyVoid }
+    if tag == "binary" { return inferBinary(sym, e) }
+    if tag == "call"   { return inferCall(sym, e) }
+    return TyVoid
+}
+
+fn inferBinary(sym: SymTable, e: compiler.Expr) -> SemTy {
+    const op = match e { EBinary(op, l, r) { yield op } _ { yield "" } }
+    // Since inferBinary is only called when tag == "binary", extract via match
+    // Avoid ENull by checking op first
+    if op == "+" || op == "-" || op == "*" || op == "/" || op == "%" { return TyInt }
+    return TyBool
+}
+
+fn inferCall(sym: SymTable, e: compiler.Expr) -> SemTy {
+    const name = match e { ECall(n, args) { yield n } _ { yield "" } }
+    const args = match e { ECall(n, args) { yield args } _ { yield [] } }
+    const info, found = symLookupFn(sym, name)
+    if found {
+        if args.length != info.nParams {
+            symError(sym, "call to " + name + ": expected " +
+                int_to_string(info.nParams) + " args, got " +
+                int_to_string(args.length))
+        }
+        return info.retTy
+    }
+    return TyNamed(name)
+}
+
+fn checkStmts(sym: SymTable, stmts: Array<compiler.Stmt>, fnName: string, retTy: SemTy) {
+    for stmt in stmts {
+        checkStmt(sym, stmt, fnName, retTy)
+    }
+}
+
+fn checkStmt(sym: SymTable, stmt: compiler.Stmt, fnName: string, retTy: SemTy) {
+    const _ = match stmt {
+        SLet(isMut, name, init) {
+            const _ = inferExpr(sym, init)
+            yield 0
+        }
+        SReturn(vals) {
+            for v in vals {
+                const _ = inferExpr(sym, v)
+            }
+            yield 0
+        }
+        SYield(e)  { const _ = inferExpr(sym, e)  yield 0 }
+        SDefer(e)  { const _ = inferExpr(sym, e)  yield 0 }
+        SExpr(e)   { const _ = inferExpr(sym, e)  yield 0 }
+        SContinue  { yield 0 }
+        SBreak     { yield 0 }
+        SAssign(target, val) {
+            const _ = inferExpr(sym, target)
+            const _ = inferExpr(sym, val)
+            yield 0
+        }
+        SIf(cond, then, els) {
+            const _ = inferExpr(sym, cond)
+            checkStmts(sym, then, fnName, retTy)
+            checkStmts(sym, els, fnName, retTy)
+            yield 0
+        }
+        SWhile(cond, body) {
+            const _ = inferExpr(sym, cond)
+            checkStmts(sym, body, fnName, retTy)
+            yield 0
+        }
+        SFor(varName, iter, body) {
+            const _ = inferExpr(sym, iter)
+            checkStmts(sym, body, fnName, retTy)
+            yield 0
+        }
+    }
+}
+
+fn checkFn(sym: SymTable, f: compiler.FnDef) {
+    const retTy = resolveSimpleTy(f.retTy)
+    checkStmts(sym, f.body, f.name, retTy)
+}
+
+fn checkItems(sym: SymTable, items: Array<compiler.Item>) {
+    for item in items {
+        const _ = match item {
+            IFn(f)     { checkFn(sym, f)  yield 0 }
+            IStruct(s) { yield 0 }
+            IImport(p, a) { yield 0 }
+        }
+    }
+}
+
+// ── Public API ─────────────────────────────────────────────────────────────────
+
+fn typecheck(src: string) -> (SymTable, Error?) {
+    const items, parseErr = compiler.parse(src)
+    if parseErr != null {
+        return symNew(), Error(message: "parse error: " + parseErr.message)
+    }
+
+    let sym = symNew()
+    collectItems(sym, items)
+    checkItems(sym, items)
+
+    if sym.errors.length > 0 {
+        let msg = "typecheck errors:\n"
+        for e in sym.errors { msg = msg + "  - " + e + "\n" }
+        return sym, Error(message: msg)
+    }
+
+    return sym, null
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────────
+
+fn test_collect_fns() {
+    const sym, err = typecheck("fn add(a: int, b: int) -> int { return a + b }\nfn main() { print(\"hi\") }")
+    if err != null { panic("typecheck error: " + err.message) }
+    const info, found = symLookupFn(sym, "add")
+    if !found { panic("add not found") }
+    if info.nParams != 2 { panic("expected 2 params") }
+    if tyName(info.retTy) != "int" { panic("expected int return") }
+}
+
+fn test_wrong_arg_count() {
+    const sym, err = typecheck("fn add(a: int, b: int) -> int { return a + b }\nfn main() { const x = add(1) }")
+    if err == null { panic("expected typecheck error for wrong arg count") }
+}
+
+fn test_collect_struct() {
+    const sym, err = typecheck("struct Point { const x: int  const y: int }\nfn main() { }")
+    if err != null { panic("typecheck error: " + err.message) }
+    const hasPoint = sym.structs.has("Point")
+    if !hasPoint { panic("Point not collected") }
+}
+
+fn test_complex_fn() {
+    const src = "fn fib(n: int) -> int {\n  if n < 2 { return n }\n  return fib(n - 1) + fib(n - 2)\n}\nfn main() { print_int(fib(10)) }"
+    const sym, err = typecheck(src)
+    if err != null { panic("typecheck error: " + err.message) }
+    const info, found = symLookupFn(sym, "fib")
+    if !found { panic("fib not found") }
+}
+
+fn main() {
+    const sym, err = typecheck(
+        "fn add(a: int, b: int) -> int { return a + b }\n" +
+        "fn greet(name: string) -> string { return name }\n" +
+        "fn main() { const x = add(1, 2)  print_int(x) }"
+    )
+    if err != null {
+        print("error: " + err.message)
+        return
+    }
+    print("collected " + int_to_string(sym.fns.length) + " functions")
+    const addInfo, found = symLookupFn(sym, "add")
+    if found {
+        print("add: " + int_to_string(addInfo.nParams) + " params -> " + tyName(addInfo.retTy))
+    }
+}

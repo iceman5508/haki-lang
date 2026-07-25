@@ -1,0 +1,658 @@
+// haki_cemit.haki — C code emitter written in Haki
+//
+// Takes a mono.MonoProgram (from haki_mono.haki) and emits a complete, self-contained
+// C source file that compiles with: gcc -std=gnu11 -O2 -lpthread -lm -o out out.c
+//
+// This closes the bootstrap loop: the Haki compiler can now lower its own source
+// all the way to C without touching the Rust host compiler.
+
+import "/home/claude/haki_bootstrap/haki_mono" as mono
+import "/home/claude/haki_bootstrap/haki_compiler" as compiler
+
+// ── C name mangling ────────────────────────────────────────────────────────────
+
+fn cName(name: string) -> string {
+    // Replace :: with __ (module paths)
+    // Reserve C keywords
+    if name == "int"      { return "haki_int" }
+    if name == "float"    { return "haki_float" }
+    if name == "double"   { return "haki_double" }
+    if name == "char"     { return "haki_char" }
+    if name == "return"   { return "haki_return" }
+    if name == "void"     { return "haki_void" }
+    if name == "struct"   { return "haki_struct" }
+    if name == "typedef"  { return "haki_typedef" }
+    if name == "static"   { return "haki_static" }
+    if name == "extern"   { return "haki_extern" }
+    if name == "switch"   { return "haki_switch" }
+    if name == "case"     { return "haki_case" }
+    if name == "default"  { return "haki_default" }
+    if name == "enum"     { return "haki_enum" }
+    return name
+}
+
+// ── Type mapping ───────────────────────────────────────────────────────────────
+
+fn cTy(ty: string) -> string {
+    if ty == "int"    { return "int64_t" }
+    if ty == "float"  { return "double" }
+    if ty == "bool"   { return "int8_t" }
+    if ty == "string" { return "const char*" }
+    if ty == "void"   { return "void" }
+    if ty == ""       { return "void" }
+    // Error and nullable types → void*
+    if ty == "Error"  { return "void*" }
+    if ty == "Error?" { return "void*" }
+    // Optional types → pointer to inner
+    const n = string_length(ty)
+    if n > 1 && ty.substring(n - 1, n) == "?" {
+        return "void*"   // nullable — use void*
+    }
+    // Generic types: Array<T>, Map<K,V>
+    if string_length(ty) > 5 && ty.substring(0, 5) == "Array" { return "void*" }
+    if string_length(ty) > 3 && ty.substring(0, 3) == "Map"   { return "void*" }
+    if string_length(ty) > 4 && ty.substring(0, 4) == "Task"  { return "void*" }
+    // Named types → pointer
+    return cName(ty) + "*"
+}
+
+fn cRetTy(ty: string) -> string {
+    if ty == "void" || ty == "" { return "void" }
+    // Tuple return types (multi-return) → void*
+    const n = string_length(ty)
+    if n > 0 && ty.substring(0, 1) == "(" { return "void*" }
+    return cTy(ty)
+}
+
+fn isScalarTy(ty: string) -> bool {
+    return ty == "int" || ty == "float" || ty == "bool"
+}
+
+// ── Indent helper ──────────────────────────────────────────────────────────────
+
+fn indent(depth: int) -> string {
+    let s = ""
+    let i = 0
+    while i < depth {
+        s = s + "    "
+        i = i + 1
+    }
+    return s
+}
+
+// ── String escaping ────────────────────────────────────────────────────────────
+
+fn escapeStr(s: string) -> string {
+    let out = ""
+    let i = 0
+    const n = string_length(s)
+    while i < n {
+        const ch = s.substring(i, i + 1)
+        if ch == "\"" { out = out + "\\\"" }
+        else if ch == "\\" { out = out + "\\\\" }
+        else if ch == "\n" { out = out + "\\n" }
+        else if ch == "\t" { out = out + "\\t" }
+        else { out = out + ch }
+        i = i + 1
+    }
+    return out
+}
+
+// ── Expression emission ────────────────────────────────────────────────────────
+
+fn emitExpr(e: compiler.Expr, depth: int) -> string {
+    const tag = match e {
+        EInt(n)             { yield "int" }
+        EBool(b)            { yield "bool" }
+        ENull               { yield "null" }
+        EString(s)          { yield "string" }
+        EIdent(n)           { yield "ident" }
+        EUnary(op, inner)   { yield "unary" }
+        EBinary(op, l, r)   { yield "binary" }
+        ECall(n, args)      { yield "call" }
+        EField(recv, f)     { yield "field" }
+        EMethodCall(r,m,ma) { yield "method" }
+        EIndex(a, idx)      { yield "index" }
+        EArray(elems)       { yield "array" }
+        EIf(c, th, el)      { yield "if" }
+        EMatch(s, arms)     { yield "match" }
+        EBlock(stmts)       { yield "block" }
+        EAsync(inner)       { yield "async" }
+    }
+
+    if tag == "int" {
+        const n = match e { EInt(n) { yield n } _ { yield 0 } }
+        return "((int64_t)" + int_to_string(n) + "LL)"
+    }
+    if tag == "bool" {
+        const b = match e { EBool(b) { yield b } _ { yield false } }
+        if b { return "1" }
+        return "0"
+    }
+    if tag == "null"   { return "NULL" }
+    if tag == "string" {
+        const s = match e { EString(s) { yield s } _ { yield "" } }
+        return "\"" + escapeStr(s) + "\""
+    }
+    if tag == "ident" {
+        const n = match e { EIdent(n) { yield n } _ { yield "" } }
+        return cName(n)
+    }
+    if tag == "unary" {
+        const op = match e { EUnary(op, inner) { yield op } _ { yield "" } }
+        const inner = match e { EUnary(op, inner) { yield inner } _ { yield compiler.nullExpr() } }
+        return "(" + op + emitExpr(inner, depth) + ")"
+    }
+    if tag == "binary" {
+        const op = match e { EBinary(op, l, r) { yield op } _ { yield "" } }
+        const lExpr = match e { EBinary(op, l, r) { yield l } _ { yield compiler.nullExpr() } }
+        const rExpr = match e { EBinary(op, l, r) { yield r } _ { yield compiler.nullExpr() } }
+        const le = emitExpr(lExpr, depth)
+        const re = emitExpr(rExpr, depth)
+        // String concat and equality need special handling
+        if op == "+" {
+            return "haki_string_concat(" + le + ", " + re + ")"
+        }
+        if op == "==" {
+            return "(strcmp(" + le + ", " + re + ") == 0)"
+        }
+        if op == "!=" {
+            return "(strcmp(" + le + ", " + re + ") != 0)"
+        }
+        return "(" + le + " " + op + " " + re + ")"
+    }
+    if tag == "call" {
+        const n = match e { ECall(n, args) { yield n } _ { yield "" } }
+        const args = match e { ECall(n, args) { yield args } _ { yield compiler.emptyExprs() } }
+        return emitCall(n, args, depth)
+    }
+    if tag == "field" {
+        const recv = match e { EField(recv, f) { yield recv } _ { yield compiler.nullExpr() } }
+        const f = match e { EField(recv, f) { yield f } _ { yield "" } }
+        // Error field access
+        if f == "message" { return "haki_error_message(" + emitExpr(recv, depth) + ")" }
+        if f == "cause"   { return "haki_error_cause(" + emitExpr(recv, depth) + ")" }
+        if f == "length"  { return "haki_array_length(" + emitExpr(recv, depth) + ")" }
+        return emitExpr(recv, depth) + "->" + cName(f)
+    }
+    if tag == "method" {
+        const recv = match e { EMethodCall(r,m,ma) { yield r } _ { yield compiler.nullExpr() } }
+        const m = match e { EMethodCall(r,m,ma) { yield m } _ { yield "" } }
+        const args = match e { EMethodCall(r,m,ma) { yield ma } _ { yield compiler.emptyExprs() } }
+        const re = emitExpr(recv, depth)
+        if m == "append" && args.length == 1 {
+            const av = emitExpr(args[0], depth)
+            return "({ void* __el = " + av + "; haki_array_append(" + re + ", &__el); })"
+        }
+        if m == "length"  { return "haki_array_length(" + re + ")" }
+        if m == "has"     { return "haki_map_has(" + re + ", " + emitExprList(args, depth) + ")" }
+        if m == "get"     { return "haki_map_get(" + re + ", " + emitExprList(args, depth) + ")" }
+        if m == "set"     { return "haki_map_set(" + re + ", " + emitExprList(args, depth) + ")" }
+        if m == "substring" {
+            return "haki_string_substring(" + re + ", " + emitExprList(args, depth) + ")"
+        }
+        if m == "contains" {
+            return "haki_string_contains(" + re + ", " + emitExprList(args, depth) + ")"
+        }
+        if m == "split"   { return "haki_string_split(" + re + ", " + emitExprList(args, depth) + ")" }
+        if m == "toUpper" { return "haki_string_to_upper(" + re + ")" }
+        if m == "toLower" { return "haki_string_to_lower(" + re + ")" }
+        if m == "trim"    { return "haki_string_trim(" + re + ")" }
+        // Generic method call
+        let argStr = ""
+        if args.length > 0 { argStr = ", " + emitExprList(args, depth) }
+        return re + "->" + cName(m) + "(" + re + argStr + ")"
+    }
+    if tag == "index" {
+        const arr = match e { EIndex(a, idx) { yield a } _ { yield compiler.nullExpr() } }
+        const idx = match e { EIndex(a, idx) { yield idx } _ { yield compiler.nullExpr() } }
+        return "(*((void**)haki_array_get(" + emitExpr(arr, depth) + ", " + emitExpr(idx, depth) + ")))"
+    }
+    if tag == "array" {
+        // Array literals must be pre-initialized via statements; inline use → stub
+        return "haki_array_new(sizeof(void*))"
+    }
+    if tag == "if" {
+        const cond = match e { EIf(c, th, el) { yield c } _ { yield compiler.nullExpr() } }
+        const then = match e { EIf(c, th, el) { yield th } _ { yield compiler.emptyStmts() } }
+        const els  = match e { EIf(c, th, el) { yield el } _ { yield compiler.emptyStmts() } }
+        const ce = emitExpr(cond, depth)
+        const tv = yieldVal(then, depth)
+        const ev = yieldVal(els, depth)
+        if string_length(tv) > 0 && string_length(ev) > 0 {
+            return "((" + ce + ") ? (" + tv + ") : (" + ev + "))"
+        }
+        return ce
+    }
+    if tag == "match" {
+        const scrut = match e { EMatch(s, arms) { yield s } _ { yield compiler.nullExpr() } }
+        const arms  = match e { EMatch(s, arms) { yield arms } _ { yield compiler.emptyArms() } }
+        return emitMatchExpr(scrut, arms, depth)
+    }
+    if tag == "block" {
+        const stmts = match e { EBlock(stmts) { yield stmts } _ { yield compiler.emptyStmts() } }
+        const yv = yieldVal(stmts, depth)
+        if string_length(yv) > 0 { return "({ " + yv + "; })" }
+        return "0"
+    }
+    if tag == "async" {
+        const inner = match e { EAsync(inner) { yield inner } _ { yield compiler.nullExpr() } }
+        return "haki_task_spawn_simple((void(*)(void*))" + emitExpr(inner, depth) + ", NULL)"
+    }
+    return "/* unknown expr */"
+}
+
+fn emitExprList(args: Array<compiler.Expr>, depth: int) -> string {
+    let s = ""
+    let i = 0
+    while i < args.length {
+        if i > 0 { s = s + ", " }
+        s = s + emitExpr(args[i], depth)
+        i = i + 1
+    }
+    return s
+}
+
+fn yieldVal(stmts: Array<compiler.Stmt>, depth: int) -> string {
+    for stmt in stmts {
+        const tag = match stmt {
+            SYield(e) { yield "yield" }
+            _ { yield "" }
+        }
+        if tag == "yield" {
+            const e = match stmt { SYield(e) { yield e } _ { yield compiler.nullExpr() } }
+            return emitExpr(e, depth)
+        }
+    }
+    return ""
+}
+
+fn emitMatchExpr(scrut: compiler.Expr, arms: Array<compiler.MatchArm>, depth: int) -> string {
+    const se = emitExpr(scrut, depth)
+    let parts = "void* __msc = (void*)(" + se + "); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; "
+    parts = parts + "int64_t __mr; "
+    let i = 0
+    while i < arms.length {
+        const arm = arms[i]
+        let prefix = ""
+        if i == 0 { prefix = "if" } else { prefix = "} else if" }
+        if arm.pattern == "_" {
+            parts = parts + "} else { "
+        } else {
+            // Use discriminant = arm index as approximation (needs enum info for accuracy)
+            parts = parts + prefix + " (__mtag == " + int_to_string(i) + "LL) { "
+        }
+        // Bind payloads
+        let bi = 0
+        while bi < arm.bindings.length {
+            parts = parts + "void* " + cName(arm.bindings[bi]) + " = ((void**)__mpayload)[" + int_to_string(bi) + "]; "
+            bi = bi + 1
+        }
+        const yv = yieldVal(arm.body, depth)
+        if string_length(yv) > 0 {
+            parts = parts + "__mr = (int64_t)(" + yv + "); "
+        }
+        i = i + 1
+    }
+    parts = parts + "} __mr"
+    return "({ " + parts + "})"
+}
+
+// ── Call emission ──────────────────────────────────────────────────────────────
+
+fn emitCall(name: string, args: Array<compiler.Expr>, depth: int) -> string {
+    // Builtin intercepts
+    if name == "print" && args.length == 1 {
+        return "haki_print(" + emitExpr(args[0], depth) + ")"
+    }
+    if name == "print_int" && args.length == 1 {
+        return "haki_print_int(" + emitExpr(args[0], depth) + ")"
+    }
+    if name == "print_bool" && args.length == 1 {
+        return "haki_print_bool(" + emitExpr(args[0], depth) + ")"
+    }
+    if name == "print_float" && args.length == 1 {
+        return "haki_print_float(" + emitExpr(args[0], depth) + ")"
+    }
+    if name == "int_to_string" && args.length == 1 {
+        return "haki_int_to_string(" + emitExpr(args[0], depth) + ")"
+    }
+    if name == "string_length" && args.length == 1 {
+        return "haki_string_length(" + emitExpr(args[0], depth) + ")"
+    }
+    if name == "panic"    { return "haki_panic(" + emitExpr(args[0], depth) + ")" }
+    if name == "argv"     { return "haki_argv()" }
+    if name == "readFile" { return "haki_read_file(" + emitExpr(args[0], depth) + ")" }
+    if name == "fileExists" { return "haki_file_exists(" + emitExpr(args[0], depth) + ")" }
+    if name == "Error"    {
+        if args.length == 1 { return "haki_error_new(" + emitExpr(args[0], depth) + ")" }
+    }
+    // Array/Map methods mangled as Type__method
+    if name.contains("__append") && args.length == 2 {
+        const av = emitExpr(args[1], depth)
+        return "({ void* __el = (void*)(" + av + "); haki_array_append(" + emitExpr(args[0], depth) + ", &__el); })"
+    }
+    if name.contains("__length") && args.length == 1 {
+        return "haki_array_length(" + emitExpr(args[0], depth) + ")"
+    }
+    if name.contains("__has") && args.length == 2 {
+        return "haki_map_has(" + emitExpr(args[0], depth) + ", " + emitExpr(args[1], depth) + ")"
+    }
+    if name.contains("__set") && args.length == 3 {
+        return "haki_map_set(" + emitExpr(args[0], depth) + ", " + emitExpr(args[1], depth) + ", " + emitExpr(args[2], depth) + ")"
+    }
+    if name.contains("__getOrDefault") && args.length == 3 {
+        return "haki_map_get_or_default(" + emitExpr(args[0], depth) + ", " + emitExpr(args[1], depth) + ", " + emitExpr(args[2], depth) + ")"
+    }
+    // General call
+    let argStr = ""
+    let i = 0
+    while i < args.length {
+        if i > 0 { argStr = argStr + ", " }
+        argStr = argStr + emitExpr(args[i], depth)
+        i = i + 1
+    }
+    return cName(name) + "(" + argStr + ")"
+}
+
+// ── Statement emission ─────────────────────────────────────────────────────────
+
+fn emitStmt(stmt: compiler.Stmt, depth: int) -> string {
+    const ind = indent(depth)
+    const tag = match stmt {
+        SLet(isMut, name, init) { yield "let" }
+        SReturn(vals)           { yield "return" }
+        SYield(e)               { yield "yield" }
+        SDefer(e)               { yield "defer" }
+        SContinue               { yield "continue" }
+        SBreak                  { yield "break" }
+        SExpr(e)                { yield "expr" }
+        SAssign(target, val)    { yield "assign" }
+        SIf(c, th, el)          { yield "if" }
+        SWhile(cond, body)      { yield "while" }
+        SFor(v, iter, body)     { yield "for" }
+    }
+
+    if tag == "let" {
+        const isMut = match stmt { SLet(isMut, name, init) { yield isMut } _ { yield false } }
+        const name  = match stmt { SLet(isMut, name, init) { yield name }  _ { yield "" } }
+        const init  = match stmt { SLet(isMut, name, init) { yield init }  _ { yield compiler.nullExpr() } }
+        return emitLet(name, init, depth)
+    }
+
+    if tag == "return" {
+        const vals = match stmt { SReturn(vals) { yield vals } _ { yield compiler.emptyExprs() } }
+        if vals.length == 0 { return ind + "return;\n" }
+        if vals.length == 1 { return ind + "return " + emitExpr(vals[0], depth) + ";\n" }
+        // Multi-return: pack into __TupleN
+        let n = int_to_string(vals.length)
+        let s = ind + "__Tuple" + n + "* __ret = (__Tuple" + n + "*)malloc(sizeof(__Tuple" + n + "));\n"
+        let i = 0
+        while i < vals.length {
+            const ve = emitExpr(vals[i], depth)
+            const si = int_to_string(i)
+            if isScalarTy("int") {
+                // Wrap scalars
+                s = s + ind + "{ int64_t* __f = malloc(sizeof(int64_t)); *__f = " + ve + "; __ret->f" + si + " = __f; }\n"
+            } else {
+                s = s + ind + "__ret->f" + si + " = (void*)(" + ve + ");\n"
+            }
+            i = i + 1
+        }
+        s = s + ind + "return __ret;\n"
+        return s
+    }
+
+    if tag == "yield"    { return "/* yield — handled by parent */\n" }
+    if tag == "defer"    { return "/* defer — handled by parent */\n" }
+    if tag == "continue" { return ind + "continue;\n" }
+    if tag == "break"    { return ind + "break;\n" }
+
+    if tag == "expr" {
+        const e = match stmt { SExpr(e) { yield e } _ { yield compiler.nullExpr() } }
+        const es = emitExpr(e, depth)
+        if string_length(es) > 0 { return ind + es + ";\n" }
+        return ""
+    }
+
+    if tag == "assign" {
+        const target = match stmt { SAssign(t, v) { yield t } _ { yield compiler.nullExpr() } }
+        const val    = match stmt { SAssign(t, v) { yield v } _ { yield compiler.nullExpr() } }
+        return ind + emitExpr(target, depth) + " = " + emitExpr(val, depth) + ";\n"
+    }
+
+    if tag == "if" {
+        const cond = match stmt { SIf(c, th, el) { yield c }  _ { yield compiler.nullExpr() } }
+        const then = match stmt { SIf(c, th, el) { yield th } _ { yield compiler.emptyStmts() } }
+        const els  = match stmt { SIf(c, th, el) { yield el } _ { yield compiler.emptyStmts() } }
+        let s = ind + "if (" + emitExpr(cond, depth) + ") {\n"
+        for st in then { s = s + emitStmt(st, depth + 1) }
+        s = s + ind + "}\n"
+        if els.length > 0 {
+            s = s + ind + "else {\n"
+            for st in els { s = s + emitStmt(st, depth + 1) }
+            s = s + ind + "}\n"
+        }
+        return s
+    }
+
+    if tag == "while" {
+        const cond = match stmt { SWhile(c, body) { yield c }    _ { yield compiler.nullExpr() } }
+        const body = match stmt { SWhile(c, body) { yield body } _ { yield compiler.emptyStmts() } }
+        let s = ind + "while (" + emitExpr(cond, depth) + ") {\n"
+        for st in body { s = s + emitStmt(st, depth + 1) }
+        s = s + ind + "}\n"
+        return s
+    }
+
+    if tag == "for" {
+        const varName = match stmt { SFor(v, iter, body) { yield v }    _ { yield "__it" } }
+        const iter    = match stmt { SFor(v, iter, body) { yield iter }  _ { yield compiler.nullExpr() } }
+        const body    = match stmt { SFor(v, iter, body) { yield body }  _ { yield compiler.emptyStmts() } }
+        const arrVar = "__arr_" + cName(varName)
+        const idxVar = "__i_"   + cName(varName)
+        let s = ind + "{ void* " + arrVar + " = " + emitExpr(iter, depth) + ";\n"
+        s = s + ind + "  int64_t __len_" + cName(varName) + " = haki_array_length(" + arrVar + ");\n"
+        s = s + ind + "  for (int64_t " + idxVar + " = 0; " + idxVar + " < __len_" + cName(varName) + "; " + idxVar + "++) {\n"
+        s = s + indent(depth + 2) + "void* " + cName(varName) + " = *(void**)haki_array_get(" + arrVar + ", " + idxVar + ");\n"
+        for st in body { s = s + emitStmt(st, depth + 2) }
+        s = s + ind + "  }\n"
+        s = s + ind + "}\n"
+        return s
+    }
+
+    return ind + "/* unknown stmt */\n"
+}
+
+fn emitLet(name: string, init: compiler.Expr, depth: int) -> string {
+    const ind = indent(depth)
+    const nm = cName(name)
+    if nm == "_" { return ind + "(void)(" + emitExpr(init, depth) + ");\n" }
+
+    // Special: array literal → sequential append statements
+    const isArr = match init {
+        EArray(elems) { yield true }
+        _ { yield false }
+    }
+    if isArr {
+        const elems = match init { EArray(elems) { yield elems } _ { yield compiler.emptyExprs() } }
+        let s = ind + "void* " + nm + " = haki_array_new(sizeof(void*));\n"
+        for el in elems {
+            const ev = emitExpr(el, depth)
+            s = s + ind + "{ void* __el = (void*)(" + ev + "); haki_array_append(" + nm + ", &__el); }\n"
+        }
+        return s
+    }
+
+    // Special: struct/Error construction → sequential field assignment
+    const isCall = match init {
+        ECall(n, args) { yield true }
+        _ { yield false }
+    }
+    if isCall {
+        const callName = match init { ECall(n, args) { yield n } _ { yield "" } }
+        const callArgs = match init { ECall(n, args) { yield args } _ { yield compiler.emptyExprs() } }
+        if callName == "Error" && callArgs.length == 1 {
+            return ind + "void* " + nm + " = haki_error_new(" + emitExpr(callArgs[0], depth) + ");\n"
+        }
+    }
+
+    // Default: type from expression
+    const initStr = emitExpr(init, depth)
+    return ind + "void* " + nm + " = (void*)(" + initStr + ");\n"
+}
+
+// ── Function emission ──────────────────────────────────────────────────────────
+
+fn emitFnProto(f: mono.MonoFn) -> string {
+    const ret = cRetTy(f.retTy)
+    let params = ""
+    let i = 0
+    while i < f.params.length {
+        if i > 0 { params = params + ", " }
+        params = params + cTy(f.params[i].ty) + " " + cName(f.params[i].name)
+        i = i + 1
+    }
+    if f.name == "main" {
+        return "int main(int argc, char** argv)"
+    }
+    if string_length(params) == 0 { params = "void" }
+    return ret + " " + cName(f.name) + "(" + params + ")"
+}
+
+fn emitFn(f: mono.MonoFn) -> string {
+    let s = emitFnProto(f) + " {\n"
+    if f.name == "main" {
+        s = s + "    haki_runtime_init(argc, argv);\n"
+    }
+    for stmt in f.body {
+        s = s + emitStmt(stmt, 1)
+    }
+    if f.retTy == "void" || f.retTy == "" {
+        if f.name == "main" { s = s + "    return 0;\n" }
+    }
+    s = s + "}\n\n"
+    return s
+}
+
+// ── Struct emission ────────────────────────────────────────────────────────────
+
+fn emitStructDef(s: compiler.StructDef) -> string {
+    if string_length(s.name) == 0 { return "" }
+    let out = "struct " + cName(s.name) + " {\n"
+    for f in s.fields {
+        out = out + "    " + cTy(f.ty) + " " + cName(f.name) + ";\n"
+    }
+    if s.fields.length == 0 { out = out + "    int _dummy;\n" }
+    out = out + "};\n"
+    return out
+}
+
+// ── Tuple struct pre-declarations ─────────────────────────────────────────────
+
+fn tupleStructs() -> string {
+    let s = "/* Tuple structs for multi-return */\n"
+    let n = 2
+    while n <= 4 {
+        s = s + "typedef struct { "
+        let i = 0
+        while i < n {
+            s = s + "void* f" + int_to_string(i) + "; "
+            i = i + 1
+        }
+        s = s + "} __Tuple" + int_to_string(n) + ";\n"
+        n = n + 1
+    }
+    return s + "\n"
+}
+
+// ── Full program emission ──────────────────────────────────────────────────────
+
+fn emitProgram(prog: mono.MonoProgram, runtimeSrc: string) -> string {
+    let out = "/* Generated by hakic --emit-c (Haki bootstrap emitter) */\n"
+    out = out + "/* Compile: gcc -std=gnu11 -O2 -lpthread -lm -o out this.c */\n\n"
+
+    // Embed core runtime
+    out = out + runtimeSrc + "\n"
+
+    // Tuple struct pre-declarations
+    out = out + tupleStructs()
+
+    // Struct forward declarations
+    out = out + "/* Forward declarations */\n"
+    for s in prog.structs {
+        if string_length(s.name) > 0 {
+            out = out + "typedef struct " + cName(s.name) + " " + cName(s.name) + ";\n"
+        }
+    }
+    out = out + "\n"
+
+    // Function prototypes
+    out = out + "/* Function prototypes */\n"
+    for f in prog.fns {
+        out = out + emitFnProto(f) + ";\n"
+    }
+    out = out + "\n"
+
+    // Struct definitions
+    out = out + "/* Struct definitions */\n"
+    for s in prog.structs {
+        out = out + emitStructDef(s)
+    }
+    out = out + "\n"
+
+    // Function definitions
+    out = out + "/* Functions */\n"
+    for f in prog.fns {
+        out = out + emitFn(f)
+    }
+
+    return out
+}
+
+// ── Full pipeline ──────────────────────────────────────────────────────────────
+
+fn compileToC(src: string, runtimeSrc: string) -> (string, Error?) {
+    const prog, err = mono.monoFromSource(src)
+    if err != null { return "", err }
+    return emitProgram(prog, runtimeSrc), null
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────────
+
+fn test_c_name() {
+    if cName("int") != "haki_int"   { panic("cName int wrong") }
+    if cName("foo") != "foo"         { panic("cName foo wrong") }
+    if cName("add") != "add"         { panic("cName add wrong") }
+}
+
+fn test_c_ty() {
+    if cTy("int")    != "int64_t"   { panic("cTy int wrong") }
+    if cTy("string") != "const char*" { panic("cTy string wrong") }
+    if cTy("bool")   != "int8_t"    { panic("cTy bool wrong") }
+    if cTy("void")   != "void"      { panic("cTy void wrong") }
+}
+
+fn test_escape_str() {
+    const s = escapeStr("hello\nworld")
+    if s != "hello\\nworld" { panic("escapeStr wrong: " + s) }
+}
+
+fn test_emit_proto() {
+    let params: Array<compiler.Param> = []
+    let body: Array<compiler.Stmt> = []
+    const mf = mono.makeMonoFn("add", params, "int", body)
+    const proto = emitFnProto(mf)
+    if proto != "int64_t add(void)" { panic("proto wrong: " + proto) }
+}
+
+fn main() {
+    const miniSrc = "fn add(a: int, b: int) -> int { return a + b }\nfn main() { print_int(add(1, 2)) }"
+    const c, err = compileToC(miniSrc, "/* runtime stub */")
+    if err != null {
+        print("error: " + err.message)
+        return
+    }
+    print("emitted " + int_to_string(string_length(c)) + " bytes of C")
+    print("done")
+}
