@@ -29,6 +29,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew install llvm@17
+          brew link --overwrite llvm@17 --force
           LLVM_PREFIX=$(brew --prefix llvm@17)
           echo "LLVM_SYS_170_PREFIX=$LLVM_PREFIX" >> $GITHUB_ENV
           echo "$LLVM_PREFIX/bin" >> $GITHUB_PATH
