@@ -10,13 +10,13 @@ on:
         description: 'Version tag (e.g. v1.0.0)'
         required: true
 
-permissions:
-  contents: write
-
+# Only run on actual tag pushes, not branch pushes
+# This guard catches the case where GitHub re-runs the workflow on main pushes
 jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -90,7 +90,7 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo build --release --bin hakic
 
-      - name: Smoke test — emit-c backend (Unix)
+      - name: Smoke test (Unix)
         if: runner.os != 'Windows'
         run: |
           cat > /tmp/smoke.haki << 'HAKI'
@@ -127,6 +127,7 @@ jobs:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
 
@@ -176,11 +177,11 @@ jobs:
 
             ### Usage
 ```bash
-            hakic run hello.haki          # compile and run
-            hakic hello.haki -o hello     # compile to native binary
-            hakic hello.haki --emit-c     # emit portable C
-            hakic check hello.haki        # typecheck only
-            hakic test hello.haki         # run test_* functions
+            hakic run hello.haki
+            hakic hello.haki -o hello
+            hakic hello.haki --emit-c
+            hakic check hello.haki
+            hakic test hello.haki
 ```
           files: |
             artifacts/*
