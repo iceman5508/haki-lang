@@ -11,9 +11,9 @@
 //   - Monomorphization
 //   - Codegen (still handled by the Rust host compiler)
 
-import "/home/claude/haki_bootstrap/haki_compiler" as compiler
-import "/home/claude/haki_bootstrap/haki_typeck" as typeck
-import "/home/claude/haki_bootstrap/haki_mono" as mono
+import "./haki_compiler" as compiler
+import "./haki_typeck" as typeck
+import "./haki_mono" as mono
 
 fn printUsage() {
     print("usage: hakic <source.haki>")

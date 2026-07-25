@@ -6,8 +6,8 @@
 // This closes the bootstrap loop: the Haki compiler can now lower its own source
 // all the way to C without touching the Rust host compiler.
 
-import "/home/claude/haki_bootstrap/haki_mono" as mono
-import "/home/claude/haki_bootstrap/haki_compiler" as compiler
+import "./haki_mono" as mono
+import "./haki_compiler" as compiler
 
 // ── C name mangling ────────────────────────────────────────────────────────────
 
