@@ -33,4 +33,3 @@ crates/
 hakic/           Compiler binary
 ```
 
-See `CLAUDE.md` for the full language specification.
