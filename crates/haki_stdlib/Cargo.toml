@@ -1,0 +1,11 @@
+[package]
+name    = "haki_stdlib"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+haki_ast    = { workspace = true }
+haki_typeck = { workspace = true }
+thiserror   = { workspace = true }

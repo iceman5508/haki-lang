@@ -1,0 +1,180 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag (e.g. v1.0.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS Apple Silicon
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: hakic
+            archive: hakic-macos-arm64.tar.gz
+
+          # macOS Intel
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: hakic
+            archive: hakic-macos-x86_64.tar.gz
+
+          # Linux x86_64
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            artifact: hakic
+            archive: hakic-linux-x86_64.tar.gz
+
+          # Linux ARM64
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact: hakic
+            archive: hakic-linux-arm64.tar.gz
+
+          # Windows x64
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            artifact: hakic.exe
+            archive: hakic-windows-x86_64.zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          wget -O - https://apt.llvm.org/llvm.sh | sudo bash -s 17
+          sudo apt-get install -y llvm-17-dev libclang-17-dev clang-17
+
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm@17
+          echo "LLVM_SYS_170_PREFIX=$(brew --prefix llvm@17)" >> $GITHUB_ENV
+
+      - name: Install LLVM (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install llvm --version=17.0.6 -y
+          echo "LLVM_SYS_170_PREFIX=C:\Program Files\LLVM" >> $env:GITHUB_ENV
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cargo build --release --bin hakic
+          strip target/release/hakic || true
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cargo build --release --bin hakic
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp target/release/hakic dist/
+          cp LICENSE dist/ 2>/dev/null || true
+          cp README.md dist/ 2>/dev/null || true
+          # Include the haki_runtime.c for users who want --emit-c
+          # It's already embedded in hakic but we include it for reference
+          tar -czf ${{ matrix.archive }} -C dist .
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          New-Item -ItemType Directory -Force dist
+          Copy-Item target/release/hakic.exe dist/
+          Compress-Archive -Path dist/* -DestinationPath ${{ matrix.archive }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: ${{ matrix.archive }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || inputs.tag }}
+          name: Haki ${{ github.ref_name || inputs.tag }}
+          draft: false
+          prerelease: false
+          body: |
+            ## Haki ${{ github.ref_name || inputs.tag }}
+
+            ### Installation
+
+            **macOS (Homebrew)**
+            ```bash
+            brew install haki-lang/tap/haki
+            ```
+
+            **Linux / macOS (curl)**
+            ```bash
+            curl -fsSL https://haki-lang.dev/install.sh | sh
+            ```
+
+            **Windows (winget)**
+            ```powershell
+            winget install haki-lang.haki
+            ```
+
+            ### Requirements
+            - `gcc` or `clang` for `--emit-c` backend (pre-installed on most systems)
+            - No LLVM or Rust required for end users
+
+            ### Usage
+            ```bash
+            hakic run hello.haki          # compile and run
+            hakic hello.haki -o hello     # compile to native binary
+            hakic hello.haki --emit-c     # emit portable C (no LLVM needed)
+            hakic check hello.haki        # typecheck only
+            hakic test hello.haki         # run test_* functions
+            ```
+
+            See [CHANGELOG.md](CHANGELOG.md) for what's new.
+          files: |
+            artifacts/*

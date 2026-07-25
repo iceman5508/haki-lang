@@ -1,0 +1,11 @@
+[package]
+name    = "haki_cemit"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+haki_ast    = { path = "../haki_ast" }
+haki_mono   = { path = "../haki_mono" }
+haki_typeck = { path = "../haki_typeck" }
+haki_stdlib = { path = "../haki_stdlib" }
+thiserror   = "1"

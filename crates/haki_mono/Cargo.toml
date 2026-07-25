@@ -1,0 +1,14 @@
+[package]
+name    = "haki_mono"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+haki_ast    = { workspace = true }
+haki_typeck = { workspace = true }
+thiserror   = { workspace = true }
+
+[dev-dependencies]
+haki_parser = { workspace = true }

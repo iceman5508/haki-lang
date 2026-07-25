@@ -1,0 +1,5 @@
+/target/
+*.ll
+*.o
+*.a
+Cargo.lock  # remove this line if you want to commit the lockfile

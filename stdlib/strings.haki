@@ -1,0 +1,38 @@
+/// Repeat string s n times.
+fn repeat(s: string, n: int) -> string {
+    let result = ""
+    let i = 0
+    while i < n {
+        result = result + s
+        i = i + 1
+    }
+    return result
+}
+
+/// True if s is empty (zero length).
+fn isEmpty(s: string) -> bool {
+    return string_length(s) == 0
+}
+
+/// Pad s on the left with padChar to reach width.
+fn padLeft(s: string, width: int, padChar: string) -> string {
+    let result = s
+    while string_length(result) < width {
+        result = padChar + result
+    }
+    return result
+}
+
+/// Pad s on the right with padChar to reach width.
+fn padRight(s: string, width: int, padChar: string) -> string {
+    let result = s
+    while string_length(result) < width {
+        result = result + padChar
+    }
+    return result
+}
+
+/// Join array of strings with separator.
+fn join(parts: Array<string>, sep: string) -> string {
+    return parts.join(sep)
+}

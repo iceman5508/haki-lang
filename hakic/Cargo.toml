@@ -1,0 +1,23 @@
+[package]
+name    = "hakic"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "hakic"
+path = "src/main.rs"
+
+[dependencies]
+haki_ast     = { workspace = true }
+haki_lexer   = { workspace = true }
+haki_parser  = { workspace = true }
+haki_typeck  = { workspace = true }
+haki_mono    = { workspace = true }
+haki_codegen = { workspace = true }
+haki_stdlib  = { workspace = true }
+haki_wasm    = { workspace = true }
+haki_cemit   = { path = "../crates/haki_cemit" }
+inkwell      = { version = "0.4", features = ["llvm17-0"] }
+llvm-sys     = { version = "170", features = ["prefer-dynamic"] }

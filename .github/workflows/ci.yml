@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-14]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          wget -O - https://apt.llvm.org/llvm.sh | sudo bash -s 17
+          sudo apt-get install -y llvm-17-dev libclang-17-dev clang-17
+          echo "LLVM_SYS_170_PREFIX=/usr/lib/llvm-17" >> $GITHUB_ENV
+
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm@17
+          echo "LLVM_SYS_170_PREFIX=$(brew --prefix llvm@17)" >> $GITHUB_ENV
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --workspace
+
+      - name: Build release binary
+        run: cargo build --release --bin hakic
+
+      - name: Smoke test
+        run: |
+          echo 'fn main() { print("hello from CI") }' > /tmp/smoke.haki
+          ./target/release/hakic run /tmp/smoke.haki --quiet
+          ./target/release/hakic /tmp/smoke.haki --emit-c -o /tmp/smoke_c --quiet
+          /tmp/smoke_c
+
+      - name: Bootstrap self-check
+        run: |
+          ./target/release/hakic check haki_bootstrap/haki_compiler.haki
+          ./target/release/hakic check haki_bootstrap/haki_typeck.haki
+          ./target/release/hakic check haki_bootstrap/haki_mono.haki
+          ./target/release/hakic check haki_bootstrap/haki_cemit.haki
