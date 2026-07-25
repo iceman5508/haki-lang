@@ -67,7 +67,7 @@ jobs:
       - name: Install LLVM (Windows)
         if: runner.os == 'Windows'
         run: |
-          choco install llvm --version=17.0.6 -y
+          choco install llvm --version=17.0.6 -y --allow-downgrade --force
           echo "LLVM_SYS_170_PREFIX=C:\Program Files\LLVM" >> $env:GITHUB_ENV
 
       - name: Install Rust
