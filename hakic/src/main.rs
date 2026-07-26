@@ -865,7 +865,7 @@ fn extract_signature(line: &str) -> Option<String> {
     for kw in &["fn ", "struct ", "class ", "protocol "] {
         if trimmed.starts_with(kw) {
             // Extract up to the opening brace or end
-            let sig = trimmed.split('{').next()?.trim().trim_end_matches(')');
+            let _sig = trimmed.split('{').next()?.trim().trim_end_matches(')');
             // Trim trailing whitespace + include closing paren if fn
             let full = if trimmed.starts_with("fn ") {
                 // Keep up to and including the ')' + optional return type
@@ -1587,7 +1587,7 @@ fn run_tests(source: &Path, quiet: bool) {
         if fs::write(&harness_path, &harness).is_err() { continue; }
 
         // Compile harness using the same pipeline as compile_and_run.
-        let compile_args = RunArgs {
+        let _compile_args = RunArgs {
             source:       harness_path.clone(),
             output:       Some(binary_path.clone()),
             emit_ir:      false,
@@ -1761,6 +1761,8 @@ fn compile_and_run(args: RunArgs) {
                 quiet:        args.quiet,
                 run:          args.run,
                 run_args:     args.run_args.clone(),
+                target_so:    false,
+                target_gtk:   false,
             };
             compile_and_run(c_args);
             return;
@@ -1924,7 +1926,7 @@ fn compile_and_run(args: RunArgs) {
                     eprintln!("[link]    libs: {}", link_libs.join(" "));
                 }
 
-                let mut base_flags: Vec<&str> = if is_so {
+                let base_flags: Vec<&str> = if is_so {
                     vec!["-std=gnu11", "-O2", "-shared", "-fPIC", "-lpthread", "-lm"]
                 } else {
                     vec!["-std=gnu11", "-O2", "-lpthread", "-lm"]
