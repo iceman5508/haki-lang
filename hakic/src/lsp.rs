@@ -11,7 +11,6 @@
 ///
 /// No external LSP crates — hand-rolled transport avoids edition2024 dep chain.
 
-use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 
