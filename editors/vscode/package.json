@@ -1,0 +1,78 @@
+{
+  "name": "haki-language",
+  "displayName": "Haki",
+  "description": "Language support for Haki — syntax highlighting, diagnostics, hover types, and go-to-definition.",
+  "version": "0.1.0",
+  "publisher": "haki-lang",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/iceman5508/haki-lang"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "haki",
+    "language",
+    "lsp"
+  ],
+  "activationEvents": [
+    "onLanguage:haki"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "haki",
+        "aliases": [
+          "Haki",
+          "haki"
+        ],
+        "extensions": [
+          ".haki"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "haki",
+        "scopeName": "source.haki",
+        "path": "./syntaxes/haki.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Haki",
+      "properties": {
+        "haki.server.path": {
+          "type": "string",
+          "default": "hakic",
+          "description": "Path to the hakic compiler binary. Defaults to 'hakic' (must be on PATH)."
+        },
+        "haki.trace.server": {
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Trace LSP communication between the editor and hakic-lsp."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^8.1.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.75.0",
+    "@types/node": "^18.0.0",
+    "typescript": "^5.0.0"
+  }
+}

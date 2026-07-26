@@ -13,6 +13,7 @@
 ///     then specializations in discovery order.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use haki_ast::MatchPattern;
 use haki_typeck::typed_ast::*;
 use crate::mono_ast::*;
 use crate::subst::{mangle, Subst};
@@ -155,6 +156,11 @@ impl<'src> MonoEngine<'src> {
             TypedItemKind::Import { .. } => {
                 // Imports are resolved by the driver — nothing to emit.
             }
+            TypedItemKind::ExternFn(f) => {
+                // Extern fns are passed through to MonoProgram for the Wasm
+                // backend to emit as imports. Other backends ignore them.
+                self.program.extern_fns.push(f.clone());
+            }
         }
         Ok(())
     }
@@ -244,6 +250,7 @@ impl<'src> MonoEngine<'src> {
             body,
             span: f.span,
             captures: vec![],
+            attributes: f.attributes.clone(),
         })
     }
 
@@ -489,21 +496,48 @@ impl<'src> MonoEngine<'src> {
 
     fn lower_match(&mut self, m: &TypedMatchExpr, subst: &Subst) -> MonoResult<MonoMatch> {
         let scrutinee = self.lower_expr(&m.scrutinee, subst)?;
+
+        // Determine match kind from scrutinee type and first non-wildcard arm pattern
+        let kind = match &scrutinee.ty {
+            ConcrTy::Int => MonoMatchKind::Int,
+            ConcrTy::String => MonoMatchKind::String,
+            _ => {
+                // Check if first non-wildcard arm is a literal (shouldn't happen after typeck)
+                let has_literal = m.arms.iter().any(|arm| {
+                    matches!(&arm.pattern, MatchPattern::Int(_) | MatchPattern::String(_))
+                });
+                if has_literal {
+                    MonoMatchKind::Int // fallback — typeck should have caught mismatches
+                } else {
+                    // Enum or class — distinguished by whether variant lookup worked
+                    // (typeck already verified, codegen checks via find_variant)
+                    MonoMatchKind::Enum
+                }
+            }
+        };
+
         let arms = m.arms.iter().map(|arm| {
             let body = self.lower_block(&arm.body, subst)?;
+            let pattern = match &arm.pattern {
+                MatchPattern::Ident(ident) => MonoPattern::Named(ident.name.clone()),
+                MatchPattern::Int(n)       => MonoPattern::Int(*n),
+                MatchPattern::String(s)    => MonoPattern::String(s.clone()),
+            };
             Ok(MonoArm {
-                pattern: arm.pattern.name.clone(),
+                pattern,
                 bindings: arm.bindings.clone(),
                 binding_tys: arm.binding_tys.iter().map(|t| subst.apply_ty(t)).collect(),
                 body,
                 span: arm.span,
             })
         }).collect::<MonoResult<Vec<_>>>()?;
+
         Ok(MonoMatch {
             scrutinee: Box::new(scrutinee),
             arms,
             ty: subst.apply_ty(&m.ty),
             span: m.span,
+            kind,
         })
     }
 

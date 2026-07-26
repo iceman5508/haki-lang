@@ -7,11 +7,12 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Version tag (e.g. v1.0.0)'
+        description: 'Version tag (e.g. v1.0.3)'
         required: true
 
-# Only run on actual tag pushes, not branch pushes
-# This guard catches the case where GitHub re-runs the workflow on main pushes
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build ${{ matrix.target }}
@@ -41,6 +42,10 @@ jobs:
             artifact: hakic
             archive: hakic-linux-arm64.tar.gz
 
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            artifact: hakic.exe
+            archive: hakic-windows-x86_64.zip
 
     steps:
       - uses: actions/checkout@v4
@@ -60,6 +65,9 @@ jobs:
           echo "LLVM_SYS_170_PREFIX=$LLVM_PREFIX" >> $GITHUB_ENV
           echo "$LLVM_PREFIX/bin" >> $GITHUB_PATH
 
+      - name: No LLVM needed (Windows)
+        if: runner.os == 'Windows'
+        run: echo "Windows uses --emit-c backend only — no LLVM dependency"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -77,17 +85,19 @@ jobs:
           cargo build --release --bin hakic
           strip target/release/hakic || true
 
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cargo build --release --bin hakic
 
       - name: Smoke test (Unix)
         if: runner.os != 'Windows'
         run: |
-          cat > /tmp/smoke.haki << 'HAKI'
-          fn main() {
-              print("Hello from Haki!")
-          }
-          HAKI
+          printf 'fn main() { print("Hello from Haki!") }\n' > /tmp/smoke.haki
           ./target/release/hakic /tmp/smoke.haki --emit-c -o /tmp/smoke_c --quiet
           /tmp/smoke_c | grep -q "Hello from Haki!" || exit 1
+          # Verify bootstrap: check and type-check work
+          ./target/release/hakic check /tmp/smoke.haki
+          echo "Smoke tests passed"
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
@@ -98,6 +108,12 @@ jobs:
           cp README.md dist/ 2>/dev/null || true
           tar -czf ${{ matrix.archive }} -C dist .
 
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          New-Item -ItemType Directory -Force dist
+          Copy-Item target/release/hakic.exe dist/
+          Compress-Archive -Path dist/* -DestinationPath ${{ matrix.archive }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -132,30 +148,6 @@ jobs:
           name: Haki ${{ github.ref_name || inputs.tag }}
           draft: false
           prerelease: false
-          body: |
-            ## Haki ${{ github.ref_name || inputs.tag }}
-
-            ### Installation
-
-            **macOS (Homebrew)**
-            brew tap iceman5508/tap
-            brew install haki
-
-            **Linux / macOS (curl)**
-            curl -fsSL https://raw.githubusercontent.com/iceman5508/haki-lang/main/install.sh | sh
-
-            **Windows (winget)**
-            winget install haki-lang.haki
-
-            ### Requirements
-            - `gcc` or `clang` for `--emit-c` backend (pre-installed on most systems)
-            - No LLVM or Rust required for end users
-
-            ### Usage
-            hakic run hello.haki
-            hakic hello.haki -o hello
-            hakic hello.haki --emit-c
-            hakic check hello.haki
-            hakic test hello.haki
+          body_path: release_notes.md
           files: |
             artifacts/*

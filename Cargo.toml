@@ -10,11 +10,12 @@ members = [
     "crates/haki_wasm",
     "crates/haki_stdlib",
     "crates/haki_cemit",
+    "crates/haki_pkg",
     "hakic",
 ]
 
 [workspace.package]
-version     = "0.1.0"
+version     = "2.1.0"
 edition     = "2021"
 authors     = ["Haki Contributors"]
 license     = "MIT"
@@ -29,4 +30,5 @@ haki_codegen= { path = "crates/haki_codegen" }
 haki_wasm   = { path = "crates/haki_wasm" }
 haki_stdlib = { path = "crates/haki_stdlib" }
 haki_cemit  = { path = "crates/haki_cemit" }
+haki_pkg    = { path = "crates/haki_pkg" }
 thiserror   = "1"

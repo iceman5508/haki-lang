@@ -49,6 +49,7 @@ pub enum TokenKind {
     As,
     Import,
     Defer,
+    Extern,
     Enum,
     Try,
     Continue,
@@ -72,6 +73,7 @@ pub enum TokenKind {
     Dot,      // .
     Question, // ?
     Under,    // _
+    At,       // @  (attribute prefix: @link, @deprecated, @inline ...)
 
     // ── Operators ─────────────────────────────────────────────
     Plus,     // +
@@ -122,6 +124,7 @@ impl TokenKind {
             "as"       => Some(TokenKind::As),
             "import"   => Some(TokenKind::Import),
             "defer"    => Some(TokenKind::Defer),
+            "extern"   => Some(TokenKind::Extern),
             "enum"     => Some(TokenKind::Enum),
             "try"      => Some(TokenKind::Try),
             "continue" => Some(TokenKind::Continue),
@@ -329,6 +332,7 @@ impl<'src> Lexer<'src> {
                 b'%' => { self.pos += 1; Token::new(TokenKind::Percent,  lo as u32, self.pos as u32) }
                 b'*' => { self.pos += 1; Token::new(TokenKind::Star,     lo as u32, self.pos as u32) }
                 b'+' => { self.pos += 1; Token::new(TokenKind::Plus,     lo as u32, self.pos as u32) }
+                b'@' => { self.pos += 1; Token::new(TokenKind::At,       lo as u32, self.pos as u32) }
 
                 // `_` — wildcard / discard
                 b'_' => {

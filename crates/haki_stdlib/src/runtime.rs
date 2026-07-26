@@ -731,6 +731,46 @@ void haki_file_read(const char* path, char** out_content, char** out_error) {
     *out_content = buf;
 }
 
+/* haki_read_file — single-return wrapper matching C emitter's calling convention.
+ * Returns a heap-allocated void* pair { content_ptr, error_ptr } matching
+ * readFile(path) -> (string, Error?) semantics.
+ * Uses raw void* fields to avoid forward-declaration dependency on HakiError/__Tuple2. */
+void* haki_read_file(const char* path) {
+    char* content = NULL;
+    char* err_msg = NULL;
+    haki_file_read(path, &content, &err_msg);
+    /* Allocate a simple two-pointer tuple: [content, error] */
+    void** t = (void**)malloc(2 * sizeof(void*));
+    t[0] = (void*)(content ? content : (char*)"");
+    if (err_msg) {
+        /* Allocate a minimal error object: [arc_count, message] */
+        void** e = (void**)malloc(2 * sizeof(void*));
+        int64_t* arc = (int64_t*)malloc(sizeof(int64_t));
+        *arc = 1;
+        e[0] = (void*)arc;
+        e[1] = (void*)err_msg;
+        t[1] = (void*)e;
+    } else {
+        t[1] = NULL;
+    }
+    return (void*)t;
+}
+
+/* haki_write_file — matches C emitter's calling convention for writeFile(). */
+void* haki_write_file(const char* path, const char* content) {
+    /* Forward declaration needed — haki_file_write is defined below */
+    char* haki_file_write(const char*, const char*);
+    char* err = haki_file_write(path, content);
+    if (!err) return NULL;
+    /* Return error as a simple two-pointer [arc, message] object */
+    void** e = (void**)malloc(2 * sizeof(void*));
+    int64_t* arc = (int64_t*)malloc(sizeof(int64_t));
+    *arc = 1;
+    e[0] = (void*)arc;
+    e[1] = (void*)err;
+    return (void*)e;
+}
+
 char* haki_file_write(const char* path, const char* content) {
     FILE* f = fopen(path, "wb");
     if (!f) return strdup(strerror(errno));
@@ -767,7 +807,311 @@ void* haki_argv(void) {
     return arr;
 }
 
-/* ── Error type ──────────────────────────────────────────────────────────── */
+/* ── std/env, std/time, std/process, std/regex ───────────────────────────── */
+/* Forward declaration — haki_error_new is defined in the Error section below */
+void* haki_error_new(const char* message);
+
+#ifndef _WIN32
+#include <unistd.h>   /* getcwd, chdir, setenv, unsetenv */
+#include <errno.h>
+#endif
+
+/* ── std/env ─────────────────────────────────────────────────────────────── */
+
+void* haki_env_get(const char* name) {
+    const char* val = getenv(name);
+    if (!val) {
+        void* err = haki_error_new("environment variable not set");
+        void** result = (void**)malloc(2 * sizeof(void*));
+        result[0] = (void*)strdup("");
+        result[1] = err;
+        return (void*)result;
+    }
+    void** result = (void**)malloc(2 * sizeof(void*));
+    result[0] = (void*)strdup(val);
+    result[1] = NULL;
+    return (void*)result;
+}
+
+void* haki_env_set(const char* name, const char* value) {
+#ifdef _WIN32
+    if (_putenv_s(name, value) != 0)
+        return haki_error_new("failed to set environment variable");
+#else
+    if (setenv(name, value, 1) != 0)
+        return haki_error_new(strerror(errno));
+#endif
+    return NULL;
+}
+
+void* haki_env_unset(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
+#endif
+    return NULL;
+}
+
+void* haki_env_cwd(void) {
+    char buf[4096];
+#ifdef _WIN32
+    if (!_getcwd(buf, sizeof(buf))) {
+#else
+    if (!getcwd(buf, sizeof(buf))) {
+#endif
+        void** r = (void**)malloc(2 * sizeof(void*));
+        r[0] = (void*)strdup("");
+        r[1] = haki_error_new(strerror(errno));
+        return (void*)r;
+    }
+    void** r = (void**)malloc(2 * sizeof(void*));
+    r[0] = (void*)strdup(buf);
+    r[1] = NULL;
+    return (void*)r;
+}
+
+void* haki_env_chdir(const char* path) {
+#ifdef _WIN32
+    if (_chdir(path) != 0)
+#else
+    if (chdir(path) != 0)
+#endif
+        return haki_error_new(strerror(errno));
+    return NULL;
+}
+
+/* ── std/time ────────────────────────────────────────────────────────────── */
+
+#include <time.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/time.h>
+#endif
+
+int64_t haki_time_now_ms(void) {
+#ifdef _WIN32
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    ULONGLONG t = ((ULONGLONG)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
+    return (int64_t)((t - 116444736000000000ULL) / 10000);
+#else
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (int64_t)tv.tv_sec * 1000LL + tv.tv_usec / 1000LL;
+#endif
+}
+
+void haki_time_sleep_ms(int64_t ms) {
+    if (ms <= 0) return;
+#ifdef _WIN32
+    Sleep((DWORD)ms);
+#else
+    struct timespec ts;
+    ts.tv_sec  = ms / 1000;
+    ts.tv_nsec = (ms % 1000) * 1000000L;
+    nanosleep(&ts, NULL);
+#endif
+}
+
+const char* haki_time_format(int64_t unix_sec) {
+    time_t t = (time_t)unix_sec;
+    struct tm* tm_info = gmtime(&t);
+    char* buf = (char*)malloc(32);
+    strftime(buf, 32, "%Y-%m-%dT%H:%M:%SZ", tm_info);
+    return buf;
+}
+
+/* ── std/process ─────────────────────────────────────────────────────────── */
+
+#include <stdio.h>
+
+/* run: capture stdout, return as string */
+void* haki_process_run(const char* cmd, void* args_arr) {
+    /* Build command string from cmd + args array */
+    char buf[4096];
+    int64_t len = haki_array_length(args_arr);
+    snprintf(buf, sizeof(buf), "%s", cmd);
+    for (int64_t i = 0; i < len; i++) {
+        const char* arg = *(const char**)haki_array_get(args_arr, i);
+        strncat(buf, " ", sizeof(buf) - strlen(buf) - 1);
+        strncat(buf, arg, sizeof(buf) - strlen(buf) - 1);
+    }
+#ifdef _WIN32
+    FILE* fp = _popen(buf, "r");
+#else
+    FILE* fp = popen(buf, "r");
+#endif
+    if (!fp) {
+        void** r = (void**)malloc(2 * sizeof(void*));
+        r[0] = (void*)strdup("");
+        r[1] = haki_error_new("failed to run command");
+        return (void*)r;
+    }
+    /* Read stdout */
+    char out[65536]; out[0] = '\0';
+    char line[1024];
+    while (fgets(line, sizeof(line), fp)) {
+        strncat(out, line, sizeof(out) - strlen(out) - 1);
+    }
+    int status;
+#ifdef _WIN32
+    status = _pclose(fp);
+#else
+    status = pclose(fp);
+#endif
+    void** r = (void**)malloc(2 * sizeof(void*));
+    if (status != 0) {
+        r[0] = (void*)strdup(out);
+        r[1] = haki_error_new("command exited with non-zero status");
+    } else {
+        r[0] = (void*)strdup(out);
+        r[1] = NULL;
+    }
+    return (void*)r;
+}
+
+/* exec: inherit stdio, return exit code */
+void* haki_process_exec(const char* cmd, void* args_arr) {
+    char buf[4096];
+    int64_t len = haki_array_length(args_arr);
+    snprintf(buf, sizeof(buf), "%s", cmd);
+    for (int64_t i = 0; i < len; i++) {
+        const char* arg = *(const char**)haki_array_get(args_arr, i);
+        strncat(buf, " ", sizeof(buf) - strlen(buf) - 1);
+        strncat(buf, arg, sizeof(buf) - strlen(buf) - 1);
+    }
+    int code = system(buf);
+    void** r = (void**)malloc(2 * sizeof(void*));
+    int64_t* code_ptr = (int64_t*)malloc(sizeof(int64_t));
+    *code_ptr = (int64_t)code;
+    r[0] = (void*)code_ptr;
+    r[1] = NULL;
+    return (void*)r;
+}
+
+/* shell: run via /bin/sh -c, capture output */
+void* haki_process_shell(const char* cmd) {
+#ifdef _WIN32
+    FILE* fp = _popen(cmd, "r");
+#else
+    FILE* fp = popen(cmd, "r");
+#endif
+    if (!fp) {
+        void** r = (void**)malloc(2 * sizeof(void*));
+        r[0] = (void*)strdup("");
+        r[1] = haki_error_new("failed to run shell command");
+        return (void*)r;
+    }
+    char out[65536]; out[0] = '\0';
+    char line[1024];
+    while (fgets(line, sizeof(line), fp)) {
+        strncat(out, line, sizeof(out) - strlen(out) - 1);
+    }
+#ifdef _WIN32
+    _pclose(fp);
+#else
+    pclose(fp);
+#endif
+    void** r = (void**)malloc(2 * sizeof(void*));
+    r[0] = (void*)strdup(out);
+    r[1] = NULL;
+    return (void*)r;
+}
+
+void haki_process_exit(int64_t code) {
+    exit((int)code);
+}
+
+/* ── std/regex ───────────────────────────────────────────────────────────── */
+
+#include <regex.h>
+
+int8_t haki_regex_matches(const char* s, const char* pattern) {
+    regex_t re;
+    if (regcomp(&re, pattern, REG_EXTENDED | REG_NOSUB) != 0) return 0;
+    int match = regexec(&re, s, 0, NULL, 0);
+    regfree(&re);
+    return match == 0 ? 1 : 0;
+}
+
+void* haki_regex_find(const char* s, const char* pattern) {
+    regex_t re;
+    void** r = (void**)malloc(2 * sizeof(void*));
+    if (regcomp(&re, pattern, REG_EXTENDED) != 0) {
+        r[0] = (void*)strdup("");
+        r[1] = haki_error_new("invalid regex pattern");
+        return (void*)r;
+    }
+    regmatch_t match;
+    if (regexec(&re, s, 1, &match, 0) == 0) {
+        int len = match.rm_eo - match.rm_so;
+        char* found = (char*)malloc(len + 1);
+        strncpy(found, s + match.rm_so, len);
+        found[len] = '\0';
+        r[0] = (void*)found;
+        r[1] = NULL;
+    } else {
+        r[0] = (void*)strdup("");
+        r[1] = haki_error_new("no match found");
+    }
+    regfree(&re);
+    return (void*)r;
+}
+
+const char* haki_regex_replace_all(const char* s, const char* pattern, const char* replacement) {
+    regex_t re;
+    if (regcomp(&re, pattern, REG_EXTENDED) != 0) return strdup(s);
+    /* Allocate generous output buffer */
+    size_t outsize = strlen(s) * 4 + 1024;
+    char* out = (char*)malloc(outsize);
+    out[0] = '\0';
+    const char* cur = s;
+    regmatch_t match;
+    while (*cur && regexec(&re, cur, 1, &match, 0) == 0) {
+        /* Append text before match */
+        strncat(out, cur, match.rm_so);
+        /* Append replacement */
+        strncat(out, replacement, outsize - strlen(out) - 1);
+        cur += match.rm_eo;
+        if (match.rm_eo == 0) { /* zero-width match guard */
+            if (*cur) { char c[2] = {*cur, '\0'}; strncat(out, c, 1); cur++; }
+            else break;
+        }
+    }
+    strncat(out, cur, outsize - strlen(out) - 1);
+    regfree(&re);
+    return out;
+}
+
+void* haki_regex_split(const char* s, const char* pattern) {
+    regex_t re;
+    void* arr = haki_array_new(sizeof(void*));
+    if (regcomp(&re, pattern, REG_EXTENDED) != 0) {
+        char* copy = strdup(s);
+        haki_array_append(arr, &copy);
+        return arr;
+    }
+    const char* cur = s;
+    regmatch_t match;
+    while (*cur && regexec(&re, cur, 1, &match, 0) == 0) {
+        if (match.rm_so > 0) {
+            char* part = (char*)malloc(match.rm_so + 1);
+            strncpy(part, cur, match.rm_so);
+            part[match.rm_so] = '\0';
+            haki_array_append(arr, &part);
+        }
+        cur += match.rm_eo;
+        if (match.rm_eo == 0) { if (*cur) cur++; else break; }
+    }
+    if (*cur) {
+        char* rest = strdup(cur);
+        haki_array_append(arr, &rest);
+    }
+    regfree(&re);
+    return arr;
+}
 
 typedef struct {
     void*       __arc;    /* ARC header — must be first */

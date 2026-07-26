@@ -300,7 +300,7 @@ pub struct TypedMatchExpr {
 
 #[derive(Debug, Clone)]
 pub struct TypedMatchArm {
-    pub pattern: Ident,
+    pub pattern: MatchPattern,
     /// For class match: one binding (the object).
     /// For enum payload: one per payload field.
     /// For unit variant / wildcard: empty.
@@ -336,6 +336,8 @@ pub enum TypedItemKind {
     Protocol(ProtocolDef),
     Impl(TypedImplBlock),
     Fn(TypedFnDef),
+    /// `extern "js" fn name(params) -> RetTy` — no body, emits Wasm import.
+    ExternFn(ExternFnDef),
 }
 
 #[derive(Debug, Clone)]
@@ -373,5 +375,7 @@ pub struct TypedFnDef {
     pub params: Vec<Param>,
     pub return_ty: SemTy,
     pub body: TypedBlock,
+    /// Attributes from the source declaration (e.g. `@deprecated`, `@inline`).
+    pub attributes: Vec<haki_ast::Attribute>,
     pub span: Span,
 }

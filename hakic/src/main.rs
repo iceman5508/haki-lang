@@ -4,6 +4,7 @@
 ///   hakic <source.haki>                  compile to native binary (same dir)
 ///   hakic <source.haki> -o <output>      specify output binary path
 ///   hakic run <source.haki>              compile + execute immediately
+///   hakic lsp                            start the language server (LSP)
 ///   hakic <source.haki> --emit-ir        write .ll only, do not link
 ///   hakic <source.haki> --emit-runtime   write haki_runtime.c only
 ///   hakic <source.haki> --quiet          suppress pipeline progress output
@@ -11,6 +12,9 @@
 /// Pipeline:
 ///   Source → Lex → Parse → Typeck → Mono → Codegen
 ///         → .ll → llc → .o + gcc runtime.c → binary
+
+mod lsp;
+mod lsp_index;
 
 use std::path::{Path, PathBuf};
 use std::process::{self, Command};
@@ -25,6 +29,12 @@ fn stdlib_source(name: &str) -> Option<&'static str> {
     match name {
         "std/math"    | "std/math.haki"    => Some(include_str!("../../stdlib/math.haki")),
         "std/strings" | "std/strings.haki" => Some(include_str!("../../stdlib/strings.haki")),
+        "std/path"    | "std/path.haki"    => Some(include_str!("../../stdlib/path.haki")),
+        "std/env"     | "std/env.haki"     => Some(include_str!("../../stdlib/env.haki")),
+        "std/json"    | "std/json.haki"    => Some(include_str!("../../stdlib/json.haki")),
+        "std/time"    | "std/time.haki"    => Some(include_str!("../../stdlib/time.haki")),
+        "std/process" | "std/process.haki" => Some(include_str!("../../stdlib/process.haki")),
+        "std/regex"   | "std/regex.haki"   => Some(include_str!("../../stdlib/regex.haki")),
         _ => None,
     }
 }
@@ -110,6 +120,18 @@ fn load_module_from_src(
 
 /// Resolve `"utils/math"` → `/path/to/utils/math.haki` relative to `source_dir`.
 fn resolve_import_path(path: &str, source_dir: &Path) -> Result<PathBuf, String> {
+    // ── pkg/ imports → global cache ───────────────────────────────────────
+    if haki_pkg::resolver::is_pkg_import(path) {
+        // Walk up from source_dir to find the project root (haki.json)
+        let project_dir = haki_pkg::resolver::find_project_root(source_dir)
+            .ok_or_else(|| format!(
+                "import error: '{}' requires haki.json — run `hakic pkg install` in your project root",
+                path
+            ))?;
+        return haki_pkg::resolver::resolve_import(path, &project_dir)
+            .map_err(|e| format!("import error: {e}"));
+    }
+
     // Strip any leading "./" for cleanliness.
     let clean = path.trim_start_matches("./");
     let with_ext = if clean.ends_with(".haki") {
@@ -290,6 +312,12 @@ fn rename_item(mut item: haki_ast::Item, alias: &str, module_names: &HashSet<Str
             }
         }
         haki_ast::ItemKind::Import { .. } => {}
+        haki_ast::ItemKind::ExternFn(f) => {
+            // Rename the extern fn itself and its type annotations
+            f.name.name = format!("{alias}__{}", f.name.name);
+            for p in &mut f.params { rename_ty(&mut p.ty, alias, module_names); }
+            if let Some(ret) = &mut f.return_ty { rename_return_ty(ret, alias, module_names); }
+        }
     }
     item
 }
@@ -354,9 +382,11 @@ fn rename_stmt(stmt: &mut haki_ast::Stmt, alias: &str, names: &HashSet<String>) 
         haki_ast::StmtKind::Match(m) => {
             rename_expr(&mut m.scrutinee, alias, names);
             for arm in &mut m.arms {
-                // Rename the variant pattern name if it's a module-level name.
-                if names.contains(&arm.pattern.name) {
-                    arm.pattern.name = format!("{alias}__{}", arm.pattern.name);
+                // Only rename Ident patterns (variant/class names), not literals
+                if let haki_ast::MatchPattern::Ident(ref mut ident) = arm.pattern {
+                    if names.contains(&ident.name) {
+                        ident.name = format!("{alias}__{}", ident.name);
+                    }
                 }
                 rename_block(&mut arm.body, alias, names);
             }
@@ -387,8 +417,10 @@ fn rename_expr(expr: &mut haki_ast::Expr, alias: &str, names: &HashSet<String>) 
         ExprKind::Match(m) => {
             rename_expr(&mut m.scrutinee, alias, names);
             for arm in &mut m.arms {
-                if names.contains(&arm.pattern.name) {
-                    arm.pattern.name = format!("{alias}__{}", arm.pattern.name);
+                if let haki_ast::MatchPattern::Ident(ref mut ident) = arm.pattern {
+                    if names.contains(&ident.name) {
+                        ident.name = format!("{alias}__{}", ident.name);
+                    }
                 }
                 rename_block(&mut arm.body, alias, names);
             }
@@ -447,7 +479,46 @@ fn format_error(e: &dyn std::fmt::Display, src: &str) -> String {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let raw_args: Vec<String> = std::env::args().collect();
+
+    // ── Binary alias dispatch ─────────────────────────────────────────────────
+    // When invoked as haki-gtk, haki-dom, or haki-web, inject the appropriate
+    // --target flag and run-mode before handing off to the normal argument parser.
+    //
+    //   haki-gtk app.haki    →  haki --target gtk app.haki    (compile + run GTK)
+    //   haki-dom app.haki    →  haki --target dom app.haki    (compile to .wasm)
+    //   haki-web app.haki    →  haki --target so  app.haki    (compile to .so)
+    //
+    // Any extra flags the user passes (e.g. -o, --quiet) are preserved.
+    let binary_name = raw_args[0]
+        .split(['/', '\\'])   // handle full paths on both Unix and Windows
+        .last()
+        .unwrap_or("hakic")
+        .to_string();
+    // Strip .exe on Windows
+    let binary_stem = binary_name.trim_end_matches(".exe");
+
+    let args: Vec<String> = match binary_stem {
+        "haki-gtk" => {
+            // Compile + run the GTK app: inject --target gtk
+            let mut v = vec![raw_args[0].clone(), "--target".into(), "gtk".into()];
+            v.extend_from_slice(&raw_args[1..]);
+            v
+        }
+        "haki-dom" => {
+            // Compile to Wasm for browser: inject --emit-wasm
+            let mut v = vec![raw_args[0].clone(), "--emit-wasm".into()];
+            v.extend_from_slice(&raw_args[1..]);
+            v
+        }
+        "haki-web" => {
+            // Compile to .so for mod_haki/FastCGI: inject --target so
+            let mut v = vec![raw_args[0].clone(), "--target".into(), "so".into()];
+            v.extend_from_slice(&raw_args[1..]);
+            v
+        }
+        _ => raw_args,
+    };
 
     if args.len() < 2 {
         print_usage();
@@ -456,8 +527,13 @@ fn main() {
 
     // Handle --version and --help before anything else.
     if args[1] == "--version" || args[1] == "-V" {
-        println!("hakic 0.7.0 — Haki compiler");
-        println!("https://github.com/haki-lang/haki");
+        println!("haki 2.1.0 — Haki compiler");
+        println!("  haki          run any .haki file");
+        println!("  haki-gtk      compile + run as GTK desktop app");
+        println!("  haki-dom      compile to WebAssembly for the browser");
+        println!("  haki-web      compile to .so for Apache/nginx (mod_haki)");
+        println!("  hakic         compiler driver (tooling/CI alias)");
+        println!("https://github.com/iceman5508/haki-lang");
         return;
     }
     if args[1] == "--help" || args[1] == "-h" {
@@ -512,6 +588,75 @@ fn main() {
         return;
     }
 
+    // `hakic lsp` — start the Language Server Protocol daemon.
+    if args[1] == "lsp" {
+        lsp::run_lsp();
+        return;
+    }
+
+    // ── hakic pkg <subcommand> ─────────────────────────────────────────────
+    if args[1] == "pkg" {
+        let sub = args.get(2).map(|s| s.as_str()).unwrap_or("help");
+        let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+        let result = match sub {
+            "init" => {
+                let name = args.get(3).map(|s| s.as_str());
+                haki_pkg::commands::cmd_init(name, &project_dir)
+            }
+            "add" => {
+                if args.len() < 4 {
+                    eprintln!("usage: hakic pkg add <url> [as <alias>]");
+                    process::exit(1);
+                }
+                let url = &args[3];
+                // Support: hakic pkg add <url> as <alias>
+                let alias = if args.get(4).map(|s| s.as_str()) == Some("as") {
+                    args.get(5).map(|s| s.as_str())
+                } else {
+                    None
+                };
+                haki_pkg::commands::cmd_add(url, alias, &project_dir)
+            }
+            "install" => haki_pkg::commands::cmd_install(&project_dir),
+            "update" => {
+                let alias = args.get(3).map(|s| s.as_str());
+                haki_pkg::commands::cmd_update(alias, &project_dir)
+            }
+            "remove" | "rm" => {
+                if args.len() < 4 {
+                    eprintln!("usage: hakic pkg remove <alias>");
+                    process::exit(1);
+                }
+                haki_pkg::commands::cmd_remove(&args[3], &project_dir)
+            }
+            "list" | "ls" => haki_pkg::commands::cmd_list(&project_dir),
+            "help" | "--help" | "-h" | _ => {
+                println!("hakic pkg — Haki package manager\n");
+                println!("Usage:");
+                println!("  hakic pkg init [name]           Create haki.json");
+                println!("  hakic pkg add <url> [as <name>] Add a dependency");
+                println!("  hakic pkg install               Install all dependencies");
+                println!("  hakic pkg update [name]         Update one or all deps");
+                println!("  hakic pkg remove <name>         Remove a dependency");
+                println!("  hakic pkg list                  List dependencies");
+                println!("\nURL format:");
+                println!("  https://github.com/user/repo          latest default branch");
+                println!("  https://github.com/user/repo#v1.2.0   specific tag");
+                println!("  https://github.com/user/repo#main     specific branch");
+                println!("\nImport syntax:");
+                println!("  import \"pkg/utils/strings\" as strings");
+                return;
+            }
+        };
+
+        if let Err(e) = result {
+            eprintln!("hakic pkg {sub}: {e}");
+            process::exit(1);
+        }
+        return;
+    }
+
     // Detect `hakic run <file>` subcommand.
     if args[1] == "run" {
         if args.len() < 3 {
@@ -530,21 +675,29 @@ fn main() {
             run_args:    args[3..].iter()
                             .filter(|a| !a.starts_with("--"))
                             .cloned().collect(),
+            target_so:   false,
+            target_gtk:  false,
         };
         compile_and_run(run_args);
         return;
     }
 
     // Normal compile mode.
-    let source = PathBuf::from(&args[1]);
+    // Scan all arguments: find the source file (first non-flag arg after index 1),
+    // then parse all flags regardless of order.
+    // This allows: `hakic --target so handler.haki -o handler.so`
+    //          and: `hakic handler.haki --target so -o handler.so`
+    let mut source_opt:   Option<PathBuf> = None;
     let mut output:       Option<PathBuf> = None;
     let mut emit_ir       = false;
     let mut emit_runtime  = false;
     let mut emit_wasm     = false;
     let mut emit_c_flag   = false;
     let mut quiet         = false;
+    let mut target_so     = false;
+    let mut target_gtk    = false;
 
-    let mut i = 2;
+    let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "-o" => {
@@ -556,16 +709,39 @@ fn main() {
             "--emit-wasm"    => emit_wasm    = true,
             "--emit-c"       => emit_c_flag  = true,
             "--quiet"        => quiet        = true,
+            "--target" => {
+                i += 1;
+                if i < args.len() {
+                    match args[i].as_str() {
+                        "so"  => { target_so   = true; emit_c_flag = true; }
+                        "gtk" => { target_gtk  = true; emit_c_flag = true; }
+                        "dom" => { emit_wasm   = true; }
+                        other => { eprintln!("hakic: unknown target '{other}' (known: so, gtk, dom)"); process::exit(1); }
+                    }
+                }
+            }
+            arg if !arg.starts_with('-') => {
+                // First positional argument is the source file
+                if source_opt.is_none() {
+                    source_opt = Some(PathBuf::from(arg));
+                }
+            }
             _ => {}
         }
         i += 1;
     }
 
+    let source = match source_opt {
+        Some(s) => s,
+        None => {
+            eprintln!("hakic: no source file specified");
+            print_usage();
+            process::exit(1);
+        }
+    };
+
     // If the source is a .haki file and no output/emit flags specified,
     // treat as `hakic run` — compile and execute immediately.
-    // This enables `hakic hello.haki` as the shortest possible invocation.
-    // Always uses --emit-c: the bare-path UX is the scripting path —
-    // fast, portable, no LLVM or libmicrohttpd dependency required.
     let is_run_mode = output.is_none()
         && !emit_ir && !emit_runtime && !emit_wasm && !emit_c_flag
         && source.extension().and_then(|e| e.to_str()) == Some("haki");
@@ -583,16 +759,18 @@ fn main() {
             run_args:     args[2..].iter()
                             .filter(|a| !a.starts_with("--"))
                             .cloned().collect(),
+            target_so:    false,
+            target_gtk:   false,
         };
         compile_and_run(run_args);
         return;
     }
 
-    compile_and_run(RunArgs { source, output, emit_ir, emit_runtime, emit_wasm, emit_c: emit_c_flag, quiet, run: false, run_args: vec![] });
+    compile_and_run(RunArgs { source, output, emit_ir, emit_runtime, emit_wasm, emit_c: emit_c_flag, quiet, run: false, run_args: vec![], target_so, target_gtk });
 }
 
 fn print_usage() {
-    println!("Haki compiler v0.7.0");
+    println!("Haki compiler v1.7.0");
     println!();
     println!("Usage:");
     println!("  hakic <source.haki>              compile to native binary");
@@ -625,6 +803,12 @@ struct RunArgs {
     quiet:        bool,
     run:          bool,
     run_args:     Vec<String>,
+    /// Compile to a shared library (.so) for use with mod_haki.
+    /// Suppresses main(), exports haki_handle_request.
+    target_so:    bool,
+    /// Compile + run as a GTK desktop application.
+    /// Links haki_ui_gtk.c + libgtk-3, runs the resulting binary.
+    target_gtk:   bool,
 }
 
 // ── Doc generator (hakic doc) ─────────────────────────────────────────────────
@@ -757,6 +941,24 @@ fn fmt_item(out: &mut String, item: &haki_ast::Item, src: &str) {
         ItemKind::Enum(e)     => fmt_enum(out, e),
         ItemKind::Protocol(p) => fmt_protocol(out, p, src),
         ItemKind::Impl(i)     => fmt_impl(out, i, src),
+        ItemKind::ExternFn(f) => {
+            out.push_str("extern \"");
+            out.push_str(&f.abi);
+            out.push_str("\" fn ");
+            out.push_str(&f.name.name);
+            out.push('(');
+            for (i, p) in f.params.iter().enumerate() {
+                if i > 0 { out.push_str(", "); }
+                out.push_str(&p.name.name);
+                out.push_str(": ");
+                fmt_ty(out, &p.ty);
+            }
+            out.push(')');
+            if let Some(ret) = &f.return_ty {
+                out.push_str(" -> ");
+                fmt_return_ty(out, ret);
+            }
+        }
     }
 }
 
@@ -1058,7 +1260,11 @@ fn fmt_stmt(out: &mut String, stmt: &haki_ast::Stmt, src: &str, depth: usize) {
             out.push_str(" {\n");
             for arm in &m.arms {
                 indent(out, depth + 1);
-                out.push_str(&arm.pattern.name);
+                match &arm.pattern {
+                    haki_ast::MatchPattern::Ident(id) => out.push_str(&id.name),
+                    haki_ast::MatchPattern::Int(n)    => out.push_str(&n.to_string()),
+                    haki_ast::MatchPattern::String(s) => { out.push('"'); out.push_str(s); out.push('"'); }
+                }
                 if !arm.bindings.is_empty() {
                     out.push('(');
                     for (i, b) in arm.bindings.iter().enumerate() {
@@ -1066,8 +1272,6 @@ fn fmt_stmt(out: &mut String, stmt: &haki_ast::Stmt, src: &str, depth: usize) {
                         out.push_str(&b.name);
                     }
                     out.push(')');
-                } else if arm.pattern.name != "_" {
-                    // Check if there's a legacy single binding (class match)
                 }
                 out.push_str(" {\n");
                 fmt_block_stmts(out, &arm.body, src, depth + 2);
@@ -1222,7 +1426,11 @@ fn fmt_expr(out: &mut String, expr: &haki_ast::Expr, src: &str, depth: usize) {
             out.push_str(" {\n");
             for arm in &m.arms {
                 indent(out, depth + 1);
-                out.push_str(&arm.pattern.name);
+                match &arm.pattern {
+                    haki_ast::MatchPattern::Ident(id) => out.push_str(&id.name),
+                    haki_ast::MatchPattern::Int(n)    => out.push_str(&n.to_string()),
+                    haki_ast::MatchPattern::String(s) => { out.push('"'); out.push_str(s); out.push('"'); }
+                }
                 if !arm.bindings.is_empty() {
                     out.push('(');
                     for (i, b) in arm.bindings.iter().enumerate() {
@@ -1230,8 +1438,6 @@ fn fmt_expr(out: &mut String, expr: &haki_ast::Expr, src: &str, depth: usize) {
                         out.push_str(&b.name);
                     }
                     out.push(')');
-                } else if arm.pattern.name != "_" {
-                    // Check if there's a legacy single binding (class match)
                 }
                 out.push_str(" {\n");
                 fmt_block_stmts(out, &arm.body, src, depth + 2);
@@ -1391,6 +1597,8 @@ fn run_tests(source: &Path, quiet: bool) {
             quiet:        true,
             run:          false,
             run_args:     vec![],
+            target_so:    false,
+            target_gtk:   false,
         };
 
         // Capture compile errors.
@@ -1539,6 +1747,26 @@ fn compile_and_run(args: RunArgs) {
         ($($t:tt)*) => { if !quiet { eprintln!($($t)*); } }
     }
 
+    // ── Windows: always use --emit-c (no LLVM backend compiled in) ───────────
+    #[cfg(target_os = "windows")]
+    {
+        if !args.emit_wasm {
+            let c_args = RunArgs {
+                source:       args.source.clone(),
+                output:       args.output.clone(),
+                emit_ir:      false,
+                emit_runtime: args.emit_runtime,
+                emit_wasm:    false,
+                emit_c:       true,
+                quiet:        args.quiet,
+                run:          args.run,
+                run_args:     args.run_args.clone(),
+            };
+            compile_and_run(c_args);
+            return;
+        }
+    }
+
     // ── Read source ───────────────────────────────────────────────────────
     let src = match fs::read_to_string(&args.source) {
         Ok(s) => s,
@@ -1605,72 +1833,130 @@ fn compile_and_run(args: RunArgs) {
     log!("[mono]    {} fns, {} structs, {} classes",
         mono.fns.len(), mono.structs.len(), mono.classes.len());
 
-    // ── Codegen ───────────────────────────────────────────────────────────
-    let ir = match haki_codegen::emit_ir(&mono, &stem) {
-        Ok(ir) => ir,
-        Err(e) => { eprintln!("hakic: {e}"); process::exit(1); }
-    };
-    log!("[codegen] {} bytes of IR", ir.len());
-
-    // ── Write IR ──────────────────────────────────────────────────────────
-    if let Err(e) = fs::write(&ir_path, &ir) {
-        eprintln!("hakic: cannot write IR: {e}"); process::exit(1);
-    }
-
-    if args.emit_ir {
-        // Copy .ll to source dir if we're in a temp dir
-        if args.run {
-            let dest = args.source.parent().unwrap_or(Path::new("."))
-                .join(format!("{stem}.ll"));
-            let _ = fs::copy(&ir_path, &dest);
-            eprintln!("{}", dest.display());
-        } else {
-            eprintln!("{}", ir_path.display());
+    // ── Wasm: short-circuit before LLVM codegen ───────────────────────────
+    // Wasm operates directly on MonoProgram — no LLVM IR needed.
+    // extern "js" fns become Wasm imports; LLVM never needs to see them.
+    if args.emit_wasm {
+        let wasm_path = args.output.clone().unwrap_or_else(||
+            args.source.parent().unwrap_or(Path::new("."))
+                .join(format!("{stem}.wasm"))
+        );
+        match haki_wasm::emit_wasm(&mono, &stem) {
+            Ok(bytes) => {
+                if let Err(e) = fs::write(&wasm_path, &bytes) {
+                    eprintln!("hakic: cannot write wasm: {e}"); process::exit(1);
+                }
+                if !quiet { eprintln!("[wasm]    {} ({} bytes)", wasm_path.display(), bytes.len()); }
+            }
+            Err(e) => { eprintln!("hakic: wasm error: {e}"); process::exit(1); }
         }
         return;
     }
 
+    // ── Codegen (LLVM — not compiled on Windows) ─────────────────────────────
+    #[cfg(not(target_os = "windows"))]
+    let ir = match haki_codegen::emit_ir(&mono, &stem) {
+        Ok(ir) => ir,
+        Err(e) => { eprintln!("hakic: {e}"); process::exit(1); }
+    };
+    #[cfg(not(target_os = "windows"))]
+    log!("[codegen] {} bytes of IR", ir.len());
+
+    // ── Write IR (non-Windows only) ───────────────────────────────────────────
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Err(e) = fs::write(&ir_path, &ir) {
+            eprintln!("hakic: cannot write IR: {e}"); process::exit(1);
+        }
+
+        if args.emit_ir {
+            if args.run {
+                let dest = args.source.parent().unwrap_or(Path::new("."))
+                    .join(format!("{stem}.ll"));
+                let _ = fs::copy(&ir_path, &dest);
+                eprintln!("{}", dest.display());
+            } else {
+                eprintln!("{}", ir_path.display());
+            }
+            return;
+        }
+    }
+
     // ── Optional: emit C source ───────────────────────────────────────────
     if args.emit_c {
-        match haki_cemit::emit_c(&mono) {
+        let c_result = if args.target_so {
+            haki_cemit::emit_c_so(&mono)
+        } else {
+            haki_cemit::emit_c(&mono)
+        };
+        match c_result {
             Ok(c_src) => {
                 let c_path = work_dir.join(format!("{stem}.c"));
                 if let Err(e) = fs::write(&c_path, &c_src) {
                     eprintln!("hakic: cannot write C source: {e}"); process::exit(1);
                 }
-                // Compile C to native binary with gcc
-                // In run mode, output to temp dir so we exec an absolute path cleanly.
-                let out_path = args.output.clone().unwrap_or_else(|| {
-                    if args.run {
-                        // Run mode: put binary in temp dir, exec with absolute path
-                        work_dir.join(&stem)
-                    } else {
-                        args.source.parent().unwrap_or(Path::new(".")).join(&stem)
-                    }
-                });
-                if !quiet { eprintln!("[c-emit]  {} ({} bytes)", c_path.display(), c_src.len()); }
-                // Try gcc first (Linux, macOS, MinGW), then clang, then cl.exe (MSVC)
-                let gcc_result = std::process::Command::new("gcc")
-                    .args(["-std=gnu11", "-O2", "-lpthread", "-lm",
-                           c_path.to_str().unwrap(),
-                           "-o", out_path.to_str().unwrap()])
-                    .status()
-                    .or_else(|_| {
-                        // Fallback to clang
-                        std::process::Command::new("clang")
-                            .args(["-std=gnu11", "-O2",
-                                   c_path.to_str().unwrap(),
-                                   "-o", out_path.to_str().unwrap()])
-                            .status()
+                let out_path = if args.target_so {
+                    args.output.clone().unwrap_or_else(|| {
+                        args.source.parent().unwrap_or(Path::new(".")).join(format!("{stem}.so"))
                     })
-                    .or_else(|_| {
-                        // Fallback to MSVC cl.exe (Windows, no GNU extensions)
-                        std::process::Command::new("cl.exe")
-                            .args(["/O2", "/TC",
-                                   c_path.to_str().unwrap(),
-                                   &format!("/Fe:{}", out_path.to_str().unwrap())])
-                            .status()
-                    });
+                } else {
+                    args.output.clone().unwrap_or_else(|| {
+                        if args.run { work_dir.join(&stem) }
+                        else { args.source.parent().unwrap_or(Path::new(".")).join(&stem) }
+                    })
+                };
+                if !quiet { eprintln!("[c-emit]  {} ({} bytes)", c_path.display(), c_src.len()); }
+                let is_so = args.target_so;
+
+                // Collect @link("libname") attributes from extern "c" declarations.
+                // These become -llib flags passed automatically to the linker.
+                let mut link_libs: Vec<String> = mono.extern_fns.iter()
+                    .filter(|ef| ef.abi == "c")
+                    .flat_map(|ef| ef.attributes.iter())
+                    .filter(|attr| attr.name == "link")
+                    .flat_map(|attr| attr.args.iter())
+                    .map(|lib| format!("-l{lib}"))
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter()
+                    .collect();
+                link_libs.sort(); // deterministic order
+                if !quiet && !link_libs.is_empty() {
+                    eprintln!("[link]    libs: {}", link_libs.join(" "));
+                }
+
+                let mut base_flags: Vec<&str> = if is_so {
+                    vec!["-std=gnu11", "-O2", "-shared", "-fPIC", "-lpthread", "-lm"]
+                } else {
+                    vec!["-std=gnu11", "-O2", "-lpthread", "-lm"]
+                };
+
+                let gcc_result = {
+                    let mut cmd = std::process::Command::new("gcc");
+                    cmd.args(&base_flags)
+                       .arg(c_path.to_str().unwrap())
+                       .arg("-o").arg(out_path.to_str().unwrap())
+                       .args(&link_libs);
+                    let status = cmd.status();
+                    if status.is_err() {
+                        // Fallback to clang
+                        let mut cmd2 = std::process::Command::new("clang");
+                        cmd2.args(&base_flags)
+                            .arg(c_path.to_str().unwrap())
+                            .arg("-o").arg(out_path.to_str().unwrap())
+                            .args(&link_libs);
+                        cmd2.status().or(status)
+                    } else {
+                        status
+                    }
+                };
+                // MSVC fallback (Windows, no GNU extensions, no -l flags)
+                let gcc_result = gcc_result.or_else(|_| {
+                    std::process::Command::new("cl.exe")
+                        .args(["/O2", "/TC",
+                               c_path.to_str().unwrap(),
+                               &format!("/Fe:{}", out_path.to_str().unwrap())])
+                        .status()
+                });
                 match gcc_result {
                     Ok(s) if s.success() => {
                         if !quiet { eprintln!("[link]    {}", out_path.display()); }
@@ -1697,32 +1983,14 @@ fn compile_and_run(args: RunArgs) {
         return;
     }
 
-    // ── Optional: emit Wasm binary (.wasm) ────────────────────────────────
-    if args.emit_wasm {
-        let wasm_path = work_dir.join(format!("{stem}.wasm"));
-        match haki_wasm::emit_wasm(&mono, &stem) {
-            Ok(bytes) => {
-                if let Err(e) = fs::write(&wasm_path, &bytes) {
-                    eprintln!("hakic: cannot write wasm: {e}"); process::exit(1);
-                }
-                // If running from temp dir, copy to source dir.
-                let dest = if args.run {
-                    let d = args.source.parent().unwrap_or(Path::new("."))
-                        .join(format!("{stem}.wasm"));
-                    let _ = fs::copy(&wasm_path, &d);
-                    d
-                } else { wasm_path };
-                eprintln!("[wasm]    {} ({} bytes)", dest.display(), bytes.len());
-            }
-            Err(e) => { eprintln!("hakic: wasm error: {e}"); process::exit(1); }
-        }
-        return;
-    }
-
     // ── Write runtime ─────────────────────────────────────────────────────
     if let Err(e) = fs::write(&runtime_c, haki_stdlib::RUNTIME_C_SOURCE) {
         eprintln!("hakic: cannot write runtime: {e}"); process::exit(1);
     }
+
+    // ── Everything below requires LLVM — non-Windows only ────────────────────
+    #[cfg(not(target_os = "windows"))]
+    {
 
     if args.emit_runtime {
         let dest = args.source.parent().unwrap_or(Path::new("."))
@@ -1750,6 +2018,8 @@ fn compile_and_run(args: RunArgs) {
             quiet:        args.quiet,
             run:          args.run,
             run_args:     args.run_args.clone(),
+            target_so:    args.target_so,
+            target_gtk:   args.target_gtk,
         };
         compile_and_run(c_args);
         return;
@@ -1823,12 +2093,12 @@ fn compile_and_run(args: RunArgs) {
 
     if args.run {
         log!("[run]     {}", binary_path.display());
-        // Replace current process with the compiled binary (exec-style).
-        // Falls back to Command::status on platforms without exec.
         exec_binary(&binary_path, &args.run_args);
     } else {
         log!("[done]    {}", binary_path.display());
     }
+
+    } // end #[cfg(not(target_os = "windows"))]
 }
 
 // ── exec or spawn ─────────────────────────────────────────────────────────────

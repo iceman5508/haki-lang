@@ -101,6 +101,34 @@ impl WasmEmitter {
         }
     }
 
+    /// Declare `extern "js"` functions as Wasm imports from module "env".
+    /// Each `extern "js" fn name(params) -> RetTy` in Haki becomes:
+    ///   (import "env" "name" (func (param ...) (result ...)))
+    fn declare_extern_fns(&mut self, extern_fns: &[haki_ast::ExternFnDef]) {
+        use crate::types::{ast_ty_to_val, ast_return_to_val};
+        for f in extern_fns {
+            // Skip if already registered (e.g. duplicate extern declarations)
+            if self.fn_map.contains_key(&f.name.name) { continue; }
+
+            let params: Vec<ValType> = f.params.iter()
+                .map(|p| ast_ty_to_val(&p.ty))
+                .collect();
+            let results: Vec<ValType> = ast_return_to_val(&f.return_ty)
+                .map(|v| vec![v])
+                .unwrap_or_default();
+
+            let type_idx = self.intern_type(params, results);
+            // Always import from "env" regardless of ABI string —
+            // "env" is the universal Wasm import convention for host functions.
+            self.imports.import("env", f.name.name.as_str(), EntityType::Function(type_idx));
+            self.fn_map.insert(f.name.name.clone(), FnEntry {
+                index: self.next_fn_idx,
+                is_import: true,
+            });
+            self.next_fn_idx += 1;
+        }
+    }
+
     // ── Declaration pass ──────────────────────────────────────────────────
 
     fn declare_fn(&mut self, f: &MonoFn) -> WasmResult<()> {
@@ -127,6 +155,9 @@ impl WasmEmitter {
 
     pub fn emit(&mut self, program: &MonoProgram) -> WasmResult<()> {
         self.declare_imports();
+        // Declare extern "js" functions as Wasm imports BEFORE regular functions.
+        // Import indices must come before function indices in Wasm.
+        self.declare_extern_fns(&program.extern_fns);
 
         // Declare all functions first.
         let all_fns: Vec<MonoFn> = {

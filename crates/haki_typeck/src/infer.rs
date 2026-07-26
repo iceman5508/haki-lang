@@ -131,6 +131,9 @@ impl Inferer {
             ItemKind::Protocol(p) => TypedItemKind::Protocol(p.clone()),
             ItemKind::Impl(i)     => TypedItemKind::Impl(self.infer_impl(i)?),
             ItemKind::Fn(f)       => TypedItemKind::Fn(self.infer_fn_def(f, &HashMap::new())?),
+            // ExternFn: no body to infer — pass through as-is.
+            // The function is already registered in sym by collect_item.
+            ItemKind::ExternFn(f) => TypedItemKind::ExternFn(f.clone()),
         };
         Ok(TypedItem { kind, span: item.span })
     }
@@ -305,6 +308,7 @@ impl Inferer {
             params: f.params.clone(),
             return_ty,
             body,
+            attributes: f.attributes.clone(),
             span: f.span,
         })
     }
@@ -583,78 +587,117 @@ impl Inferer {
 
         let mut arms = Vec::new();
         let mut arm_yield: Option<SemTy> = None;
+        let mut has_wildcard = false;
+
+        // Detect primitive match (int or string scrutinee with literal patterns)
+        let is_primitive_match = matches!(scrutinee_ty, SemTy::Int | SemTy::String);
 
         for arm in &m.arms {
             self.push_scope();
 
-            // Determine pattern type and binding types.
-            // Three cases:
-            // 1. Enum variant: scrutinee is an enum type and arm.pattern is a variant name.
-            // 2. Wildcard `_`: no binding, matches anything.
-            // 3. Class hierarchy match: pattern is a type name, single binding.
-            let (pat_is_enum_variant, binding_tys_computed) =
-                if arm.pattern.name == "_" {
-                    // Wildcard — no binding, no type check on pattern.
-                    (false, vec![])
-                } else if let SemTy::Named(ref enum_name) = scrutinee_ty {
-                    // Check if the scrutinee is an enum and this pattern is a variant.
-                    if let Some(enum_def) = self.sym.enum_defs.get(enum_name).cloned() {
-                        // Try both the bare pattern name and the alias-prefixed version.
-                        // When matching imported enum types, user writes `IFn` but the
-                        // variant is registered as `alias__IFn`.
-                        let variant_opt = enum_def.variants.iter()
-                            .find(|v| v.name.name == arm.pattern.name)
-                            .or_else(|| {
-                                // Try to find by stripping any alias prefix from the registered name
-                                // and comparing to the bare pattern name.
-                                enum_def.variants.iter().find(|v| {
-                                    if let Some(bare) = v.name.name.split("__").last() {
-                                        bare == arm.pattern.name
-                                    } else { false }
-                                })
-                            });
-                        if let Some(variant) = variant_opt {
-                            // Enum variant — resolve payload types, bind each.
-                            let payload_tys: Vec<SemTy> = variant.fields.iter()
-                                .map(|f| self.sym.resolve_ty(f, type_args).unwrap_or(SemTy::Void))
-                                .collect();
-                            for (binding, bty) in arm.bindings.iter().zip(payload_tys.iter()) {
-                                self.define(&binding.name, bty.clone(), Mut::Const);
-                            }
-                            (true, payload_tys)
-                        } else {
-                            // Pattern not a variant of this enum — treat as class match fallback.
-                            (false, vec![])
-                        }
-                    } else {
-                        // Not an enum scrutinee — class hierarchy match.
-                        if self.sym.lookup_type(&arm.pattern.name).is_none() {
-                            return Err(TypeError::UnknownType {
-                                name: arm.pattern.name.clone(),
-                                span: arm.pattern.span,
-                            });
-                        }
-                        let pat_ty = SemTy::Named(arm.pattern.name.clone());
-                        if let Some(b) = arm.bindings.first() {
-                            self.define(&b.name, pat_ty.clone(), Mut::Const);
-                        }
-                        (false, vec![SemTy::Named(arm.pattern.name.clone())])
-                    }
-                } else {
-                    // Non-named scrutinee — class match.
-                    if self.sym.lookup_type(&arm.pattern.name).is_none() && arm.pattern.name != "_" {
-                        return Err(TypeError::UnknownType {
-                            name: arm.pattern.name.clone(),
-                            span: arm.pattern.span,
+            let binding_tys_computed: Vec<SemTy> = match &arm.pattern {
+                // ── Wildcard ──────────────────────────────────────────────
+                MatchPattern::Ident(ident) if ident.name == "_" => {
+                    has_wildcard = true;
+                    vec![]
+                }
+
+                // ── Integer literal pattern ───────────────────────────────
+                MatchPattern::Int(_) => {
+                    if !matches!(scrutinee_ty, SemTy::Int) {
+                        return Err(TypeError::TypeMismatch {
+                            expected: "int".into(),
+                            found: format!("{:?}", scrutinee_ty),
+                            span: arm.span,
                         });
                     }
-                    let pat_ty = SemTy::Named(arm.pattern.name.clone());
-                    if let Some(b) = arm.bindings.first() {
-                        self.define(&b.name, pat_ty.clone(), Mut::Const);
+                    vec![]
+                }
+
+                // ── String literal pattern ────────────────────────────────
+                MatchPattern::String(_) => {
+                    if !matches!(scrutinee_ty, SemTy::String) {
+                        return Err(TypeError::TypeMismatch {
+                            expected: "string".into(),
+                            found: format!("{:?}", scrutinee_ty),
+                            span: arm.span,
+                        });
                     }
-                    (false, vec![SemTy::Named(arm.pattern.name.clone())])
-                };
-            let _ = pat_is_enum_variant;
+                    vec![]
+                }
+
+                // ── Named pattern (enum variant / class / wildcard ident) ──
+                MatchPattern::Ident(ident) => {
+                    if is_primitive_match {
+                        return Err(TypeError::TypeMismatch {
+                            expected: "integer or string literal pattern".into(),
+                            found: format!("identifier '{}'", ident.name),
+                            span: arm.span,
+                        });
+                    }
+                    match &scrutinee_ty {
+                        SemTy::Named(enum_name) => {
+                            if let Some(enum_def) = self.sym.enum_defs.get(enum_name).cloned() {
+                                let variant_opt = enum_def.variants.iter()
+                                    .find(|v| v.name.name == ident.name)
+                                    .or_else(|| {
+                                        enum_def.variants.iter().find(|v| {
+                                            if let Some(bare) = v.name.name.split("__").last() {
+                                                bare == ident.name
+                                            } else { false }
+                                        })
+                                    });
+                                if let Some(variant) = variant_opt {
+                                    let payload_tys: Vec<SemTy> = variant.fields.iter()
+                                        .map(|f| self.sym.resolve_ty(f, type_args).unwrap_or(SemTy::Void))
+                                        .collect();
+                                    for (binding, bty) in arm.bindings.iter().zip(payload_tys.iter()) {
+                                        self.define(&binding.name, bty.clone(), Mut::Const);
+                                    }
+                                    payload_tys
+                                } else {
+                                    if self.sym.lookup_type(&ident.name).is_none() {
+                                        return Err(TypeError::UnknownType {
+                                            name: ident.name.clone(),
+                                            span: ident.span,
+                                        });
+                                    }
+                                    let pat_ty = SemTy::Named(ident.name.clone());
+                                    if let Some(b) = arm.bindings.first() {
+                                        self.define(&b.name, pat_ty.clone(), Mut::Const);
+                                    }
+                                    vec![SemTy::Named(ident.name.clone())]
+                                }
+                            } else {
+                                if self.sym.lookup_type(&ident.name).is_none() {
+                                    return Err(TypeError::UnknownType {
+                                        name: ident.name.clone(),
+                                        span: ident.span,
+                                    });
+                                }
+                                let pat_ty = SemTy::Named(ident.name.clone());
+                                if let Some(b) = arm.bindings.first() {
+                                    self.define(&b.name, pat_ty.clone(), Mut::Const);
+                                }
+                                vec![SemTy::Named(ident.name.clone())]
+                            }
+                        }
+                        _ => {
+                            if self.sym.lookup_type(&ident.name).is_none() {
+                                return Err(TypeError::UnknownType {
+                                    name: ident.name.clone(),
+                                    span: ident.span,
+                                });
+                            }
+                            let pat_ty = SemTy::Named(ident.name.clone());
+                            if let Some(b) = arm.bindings.first() {
+                                self.define(&b.name, pat_ty.clone(), Mut::Const);
+                            }
+                            vec![SemTy::Named(ident.name.clone())]
+                        }
+                    }
+                }
+            };
 
             let body = self.infer_block(&arm.body, type_args)?;
             self.pop_scope();
@@ -673,6 +716,15 @@ impl Inferer {
                 binding_tys: binding_tys_computed,
                 body,
                 span: arm.span,
+            });
+        }
+
+        // Primitive matches must have a wildcard arm
+        if is_primitive_match && !has_wildcard {
+            return Err(TypeError::TypeMismatch {
+                expected: "wildcard arm `_` required for integer/string match".into(),
+                found: "no wildcard arm".into(),
+                span: m.span,
             });
         }
 
@@ -804,6 +856,7 @@ impl Inferer {
                     params:      params.clone(),
                     return_ty:   ret_sem_ty.clone(),
                     body:        typed_body,
+                    attributes:  vec![],   // fn literals have no attribute syntax
                     span:        expr.span,
                 };
 

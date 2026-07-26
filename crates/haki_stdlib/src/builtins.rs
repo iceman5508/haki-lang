@@ -24,8 +24,7 @@ pub fn register_builtins(sym: &mut SymbolTable) {
         type_params: vec![],
         params: vec![str_param("msg")],
         return_ty: None,
-        span: Span::dummy(),
-    });
+        span: Span::dummy(), is_extern: false, extern_abi: None });
 
     // ── print_int(n: int) ─────────────────────────────────────────────────
     sym.functions.insert("print_int".into(), FnInfo {
@@ -33,8 +32,7 @@ pub fn register_builtins(sym: &mut SymbolTable) {
         type_params: vec![],
         params: vec![int_param("n")],
         return_ty: None,
-        span: Span::dummy(),
-    });
+        span: Span::dummy(), is_extern: false, extern_abi: None });
 
     // ── print_float(f: f64) ───────────────────────────────────────────────
     sym.functions.insert("print_float".into(), FnInfo {
@@ -42,8 +40,7 @@ pub fn register_builtins(sym: &mut SymbolTable) {
         type_params: vec![],
         params: vec![float_param("f")],
         return_ty: None,
-        span: Span::dummy(),
-    });
+        span: Span::dummy(), is_extern: false, extern_abi: None });
 
     // ── print_bool(b: bool) ───────────────────────────────────────────────
     sym.functions.insert("print_bool".into(), FnInfo {
@@ -51,8 +48,7 @@ pub fn register_builtins(sym: &mut SymbolTable) {
         type_params: vec![],
         params: vec![bool_param("b")],
         return_ty: None,
-        span: Span::dummy(),
-    });
+        span: Span::dummy(), is_extern: false, extern_abi: None });
 
     // ── int_to_string(n: int) -> string ───────────────────────────────────
     sym.functions.insert("int_to_string".into(), FnInfo {
@@ -60,8 +56,7 @@ pub fn register_builtins(sym: &mut SymbolTable) {
         type_params: vec![],
         params: vec![int_param("n")],
         return_ty: Some(ReturnTy::Single(str_ty())),
-        span: Span::dummy(),
-    });
+        span: Span::dummy(), is_extern: false, extern_abi: None });
 
     // ── float_to_string(f: f64) -> string ────────────────────────────────
     sym.functions.insert("float_to_string".into(), FnInfo {
@@ -69,8 +64,7 @@ pub fn register_builtins(sym: &mut SymbolTable) {
         type_params: vec![],
         params: vec![float_param("f")],
         return_ty: Some(ReturnTy::Single(str_ty())),
-        span: Span::dummy(),
-    });
+        span: Span::dummy(), is_extern: false, extern_abi: None });
 
     // ── bool_to_string(b: bool) -> string ────────────────────────────────
     sym.functions.insert("bool_to_string".into(), FnInfo {
@@ -78,8 +72,7 @@ pub fn register_builtins(sym: &mut SymbolTable) {
         type_params: vec![],
         params: vec![bool_param("b")],
         return_ty: Some(ReturnTy::Single(str_ty())),
-        span: Span::dummy(),
-    });
+        span: Span::dummy(), is_extern: false, extern_abi: None });
 
     // ── string_length(s: string) -> int ──────────────────────────────────
     sym.functions.insert("string_length".into(), FnInfo {
@@ -87,8 +80,7 @@ pub fn register_builtins(sym: &mut SymbolTable) {
         type_params: vec![],
         params: vec![str_param("s")],
         return_ty: Some(ReturnTy::Single(int_ty())),
-        span: Span::dummy(),
-    });
+        span: Span::dummy(), is_extern: false, extern_abi: None });
 
     // ── argv() -> Array<string> ───────────────────────────────────────────
     // Returns the command-line arguments passed to the program.
@@ -98,8 +90,7 @@ pub fn register_builtins(sym: &mut SymbolTable) {
         type_params: vec![],
         params: vec![],
         return_ty: Some(ReturnTy::Single(array_ty("string"))),
-        span: Span::dummy(),
-    });
+        span: Span::dummy(), is_extern: false, extern_abi: None });
 
     // ── readFile(path: string) -> (string, Error?) ────────────────────────
     sym.functions.insert("readFile".into(), FnInfo {
@@ -114,6 +105,8 @@ pub fn register_builtins(sym: &mut SymbolTable) {
             })), span: Span::dummy() },
         ])),
         span: Span::dummy(),
+        is_extern: false,
+        extern_abi: None,
     });
 
     // ── writeFile(path: string, content: string) -> Error? ────────────────
@@ -129,6 +122,8 @@ pub fn register_builtins(sym: &mut SymbolTable) {
             span: Span::dummy(),
         })),
         span: Span::dummy(),
+        is_extern: false,
+        extern_abi: None,
     });
 
     // ── fileExists(path: string) -> bool ──────────────────────────────────
@@ -137,8 +132,156 @@ pub fn register_builtins(sym: &mut SymbolTable) {
         type_params: vec![],
         params: vec![str_param("path")],
         return_ty: Some(ReturnTy::Single(bool_ty())),
+        span: Span::dummy(), is_extern: false, extern_abi: None });
+
+    // ── std/env builtins ──────────────────────────────────────────────────
+    sym.functions.insert("haki_env_get".into(), FnInfo {
+        name: "haki_env_get".into(), type_params: vec![],
+        params: vec![str_param("name")],
+        return_ty: Some(ReturnTy::Tuple(vec![
+            str_ty(),
+            Ty { kind: TyKind::Optional(Box::new(named_ty("Error"))), span: Span::dummy() },
+        ])),
         span: Span::dummy(),
+        is_extern: false,
+        extern_abi: None,
     });
+    sym.functions.insert("haki_env_set".into(), FnInfo {
+        name: "haki_env_set".into(), type_params: vec![],
+        params: vec![str_param("name"), str_param("value")],
+        return_ty: Some(ReturnTy::Single(Ty {
+            kind: TyKind::Optional(Box::new(named_ty("Error"))), span: Span::dummy()
+        })),
+        span: Span::dummy(),
+        is_extern: false,
+        extern_abi: None,
+    });
+    sym.functions.insert("haki_env_unset".into(), FnInfo {
+        name: "haki_env_unset".into(), type_params: vec![],
+        params: vec![str_param("name")],
+        return_ty: Some(ReturnTy::Single(Ty {
+            kind: TyKind::Optional(Box::new(named_ty("Error"))), span: Span::dummy()
+        })),
+        span: Span::dummy(),
+        is_extern: false,
+        extern_abi: None,
+    });
+    sym.functions.insert("haki_env_cwd".into(), FnInfo {
+        name: "haki_env_cwd".into(), type_params: vec![], params: vec![],
+        return_ty: Some(ReturnTy::Tuple(vec![
+            str_ty(),
+            Ty { kind: TyKind::Optional(Box::new(named_ty("Error"))), span: Span::dummy() },
+        ])),
+        span: Span::dummy(),
+        is_extern: false,
+        extern_abi: None,
+    });
+    sym.functions.insert("haki_env_chdir".into(), FnInfo {
+        name: "haki_env_chdir".into(), type_params: vec![],
+        params: vec![str_param("path")],
+        return_ty: Some(ReturnTy::Single(Ty {
+            kind: TyKind::Optional(Box::new(named_ty("Error"))), span: Span::dummy()
+        })),
+        span: Span::dummy(),
+        is_extern: false,
+        extern_abi: None,
+    });
+
+    // ── std/time builtins ─────────────────────────────────────────────────
+    sym.functions.insert("haki_time_now_ms".into(), FnInfo {
+        name: "haki_time_now_ms".into(), type_params: vec![], params: vec![],
+        return_ty: Some(ReturnTy::Single(int_ty())),
+        span: Span::dummy(), is_extern: false, extern_abi: None });
+    sym.functions.insert("haki_time_sleep_ms".into(), FnInfo {
+        name: "haki_time_sleep_ms".into(), type_params: vec![],
+        params: vec![int_param("ms")],
+        return_ty: None,
+        span: Span::dummy(), is_extern: false, extern_abi: None });
+    sym.functions.insert("haki_time_format".into(), FnInfo {
+        name: "haki_time_format".into(), type_params: vec![],
+        params: vec![int_param("unix_sec")],
+        return_ty: Some(ReturnTy::Single(str_ty())),
+        span: Span::dummy(), is_extern: false, extern_abi: None });
+
+    // ── std/process builtins ──────────────────────────────────────────────
+    sym.functions.insert("haki_process_run".into(), FnInfo {
+        name: "haki_process_run".into(), type_params: vec![],
+        params: vec![str_param("cmd"), param("args", array_ty("string"))],
+        return_ty: Some(ReturnTy::Tuple(vec![
+            str_ty(),
+            Ty { kind: TyKind::Optional(Box::new(named_ty("Error"))), span: Span::dummy() },
+        ])),
+        span: Span::dummy(),
+        is_extern: false,
+        extern_abi: None,
+    });
+    sym.functions.insert("haki_process_exec".into(), FnInfo {
+        name: "haki_process_exec".into(), type_params: vec![],
+        params: vec![str_param("cmd"), param("args", array_ty("string"))],
+        return_ty: Some(ReturnTy::Tuple(vec![
+            int_ty(),
+            Ty { kind: TyKind::Optional(Box::new(named_ty("Error"))), span: Span::dummy() },
+        ])),
+        span: Span::dummy(),
+        is_extern: false,
+        extern_abi: None,
+    });
+    sym.functions.insert("haki_process_shell".into(), FnInfo {
+        name: "haki_process_shell".into(), type_params: vec![],
+        params: vec![str_param("cmd")],
+        return_ty: Some(ReturnTy::Tuple(vec![
+            str_ty(),
+            Ty { kind: TyKind::Optional(Box::new(named_ty("Error"))), span: Span::dummy() },
+        ])),
+        span: Span::dummy(),
+        is_extern: false,
+        extern_abi: None,
+    });
+    sym.functions.insert("haki_process_exit".into(), FnInfo {
+        name: "haki_process_exit".into(), type_params: vec![],
+        params: vec![int_param("code")],
+        return_ty: None,
+        span: Span::dummy(), is_extern: false, extern_abi: None });
+
+    // ── std/regex builtins ────────────────────────────────────────────────
+    sym.functions.insert("haki_regex_matches".into(), FnInfo {
+        name: "haki_regex_matches".into(), type_params: vec![],
+        params: vec![str_param("s"), str_param("pattern")],
+        return_ty: Some(ReturnTy::Single(bool_ty())),
+        span: Span::dummy(), is_extern: false, extern_abi: None });
+    sym.functions.insert("haki_regex_find".into(), FnInfo {
+        name: "haki_regex_find".into(), type_params: vec![],
+        params: vec![str_param("s"), str_param("pattern")],
+        return_ty: Some(ReturnTy::Tuple(vec![
+            str_ty(),
+            Ty { kind: TyKind::Optional(Box::new(named_ty("Error"))), span: Span::dummy() },
+        ])),
+        span: Span::dummy(),
+        is_extern: false,
+        extern_abi: None,
+    });
+    sym.functions.insert("haki_regex_replace_all".into(), FnInfo {
+        name: "haki_regex_replace_all".into(), type_params: vec![],
+        params: vec![str_param("s"), str_param("pattern"), str_param("replacement")],
+        return_ty: Some(ReturnTy::Single(str_ty())),
+        span: Span::dummy(), is_extern: false, extern_abi: None });
+    sym.functions.insert("haki_regex_split".into(), FnInfo {
+        name: "haki_regex_split".into(), type_params: vec![],
+        params: vec![str_param("s"), str_param("pattern")],
+        return_ty: Some(ReturnTy::Single(array_ty("string"))),
+        span: Span::dummy(), is_extern: false, extern_abi: None });
+
+    // ── std/json additional builtins ───────────────────────────────────────
+    sym.functions.insert("jsonEncodeObject".into(), FnInfo {
+        name: "jsonEncodeObject".into(), type_params: vec![],
+        params: vec![param("fields", named_ty("Map"))],
+        return_ty: Some(ReturnTy::Single(str_ty())),
+        span: Span::dummy(), is_extern: false, extern_abi: None });
+    sym.functions.insert("jsonEncodeArray".into(), FnInfo {
+        name: "jsonEncodeArray".into(), type_params: vec![],
+        params: vec![param("items", array_ty("string"))],
+        return_ty: Some(ReturnTy::Single(str_ty())),
+        span: Span::dummy(), is_extern: false, extern_abi: None });
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

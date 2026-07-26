@@ -31,6 +31,8 @@ pub struct MonoProgram {
     pub impls: Vec<MonoImpl>,
     /// Enum definitions carried through for codegen discriminant lookup.
     pub enum_defs: HashMap<String, EnumDef>,
+    /// Extern function declarations — emitted as Wasm imports.
+    pub extern_fns: Vec<haki_ast::ExternFnDef>,
 }
 
 impl MonoProgram {
@@ -41,6 +43,7 @@ impl MonoProgram {
             fns: Vec::new(),
             impls: Vec::new(),
             enum_defs: HashMap::new(),
+            extern_fns: Vec::new(),
         }
     }
 }
@@ -111,6 +114,8 @@ pub struct MonoFn {
     /// Captured variables for closures: (name, type, is_weak).
     /// Empty for plain function pointers.
     pub captures: Vec<(String, ConcrTy, bool)>,
+    /// Attributes from the source declaration (threaded through for codegen).
+    pub attributes: Vec<haki_ast::Attribute>,
 }
 
 #[derive(Debug, Clone)]
@@ -205,11 +210,37 @@ pub struct MonoMatch {
     pub arms: Vec<MonoArm>,
     pub ty: ConcrTy,
     pub span: Span,
+    /// What kind of match this is — drives codegen strategy.
+    pub kind: MonoMatchKind,
+}
+
+/// The kind of match expression — determines how codegen emits it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MonoMatchKind {
+    /// Enum discriminant switch (LLVM: switch on i64 tag; C: switch(tag))
+    Enum,
+    /// Class hierarchy dispatch (pointer type check)
+    Class,
+    /// Integer literal match (LLVM: switch on i64; C: switch(int))
+    Int,
+    /// String literal match (LLVM/C: if-else strcmp chain)
+    String,
+}
+
+/// The pattern in a mono match arm.
+#[derive(Debug, Clone)]
+pub enum MonoPattern {
+    /// Named pattern: variant name, class name, or "_" wildcard.
+    Named(String),
+    /// Integer literal pattern.
+    Int(i64),
+    /// String literal pattern.
+    String(String),
 }
 
 #[derive(Debug, Clone)]
 pub struct MonoArm {
-    pub pattern: String,          // variant name or type name
+    pub pattern: MonoPattern,
     pub bindings: Vec<Ident>,
     pub binding_tys: Vec<ConcrTy>,
     pub body: MonoBlock,

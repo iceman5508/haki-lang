@@ -45,6 +45,7 @@ impl Checker {
             TypedItemKind::Protocol(_) => Ok(()),
             TypedItemKind::Impl(i)     => self.check_impl_block(i),
             TypedItemKind::Fn(f)       => self.check_fn(f),
+            TypedItemKind::ExternFn(_) => Ok(()),  // no body to check
         }
     }
 

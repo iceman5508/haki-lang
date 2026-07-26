@@ -101,6 +101,10 @@ impl<'ctx> CodeGen<'ctx> {
 
     pub fn emit(&mut self) -> CodeGenResult<()> {
         self.declare_stdlib_externs();
+        // Declare extern "js" functions as LLVM extern declarations.
+        // In native builds these won't link (they're JS-only), but the
+        // declaration prevents "unknown function" errors during IR emission.
+        self.declare_extern_js_fns();
         self.declare_all()?;
         let fns = self.program.fns.clone();
         for f in &fns { self.emit_fn(f)?; }
@@ -244,6 +248,26 @@ impl<'ctx> CodeGen<'ctx> {
             // malloc / free
             ("malloc",  ptr.fn_type(&[i64.into()], false)),
             ("free",    void.fn_type(&[ptr.into()], false)),
+            // std/env (v1.3)
+            ("haki_env_get",   ptr.fn_type(&[ptr.into()], false)),
+            ("haki_env_set",   ptr.fn_type(&[ptr.into(), ptr.into()], false)),
+            ("haki_env_unset", ptr.fn_type(&[ptr.into()], false)),
+            ("haki_env_cwd",   ptr.fn_type(&[], false)),
+            ("haki_env_chdir", ptr.fn_type(&[ptr.into()], false)),
+            // std/time (v1.3)
+            ("haki_time_now_ms",  i64.fn_type(&[], false)),
+            ("haki_time_sleep_ms", void.fn_type(&[i64.into()], false)),
+            ("haki_time_format",  ptr.fn_type(&[i64.into()], false)),
+            // std/process (v1.3)
+            ("haki_process_run",   ptr.fn_type(&[ptr.into(), ptr.into()], false)),
+            ("haki_process_exec",  ptr.fn_type(&[ptr.into(), ptr.into()], false)),
+            ("haki_process_shell", ptr.fn_type(&[ptr.into()], false)),
+            ("haki_process_exit",  void.fn_type(&[i64.into()], false)),
+            // std/regex (v1.3)
+            ("haki_regex_matches",     i8.fn_type(&[ptr.into(), ptr.into()], false)),
+            ("haki_regex_find",        ptr.fn_type(&[ptr.into(), ptr.into()], false)),
+            ("haki_regex_replace_all", ptr.fn_type(&[ptr.into(), ptr.into(), ptr.into()], false)),
+            ("haki_regex_split",       ptr.fn_type(&[ptr.into(), ptr.into()], false)),
         ];
 
         for (name, ft) in externs {
@@ -258,6 +282,51 @@ impl<'ctx> CodeGen<'ctx> {
             if let Some(&fv) = self.fns.get(*c_name) {
                 self.fns.entry(haki_name.to_string()).or_insert(fv);
             }
+        }
+    }
+
+    /// Declare `extern "js"` functions as LLVM external function declarations.
+    fn declare_extern_js_fns(&mut self) {
+        let extern_fns = self.program.extern_fns.clone();
+        for f in &extern_fns {
+            if self.fns.contains_key(&f.name.name) { continue; }
+
+            // Build param types without holding a borrow on self
+            let params: Vec<inkwell::types::BasicMetadataTypeEnum> = f.params.iter()
+                .map(|p| {
+                    match &p.ty.kind {
+                        haki_ast::TyKind::Named(id) => match id.name.as_str() {
+                            "int"   => self.ctx.i64_type().into(),
+                            "float" => self.ctx.f64_type().into(),
+                            "bool"  => self.ctx.bool_type().into(),
+                            _       => self.tmap.ptr().into(),
+                        },
+                        _ => self.tmap.ptr().into(),
+                    }
+                })
+                .collect();
+
+            let fn_ty: inkwell::types::FunctionType = match &f.return_ty {
+                None => self.ctx.void_type().fn_type(&params, false),
+                Some(haki_ast::ReturnTy::Single(ty)) => {
+                    match &ty.kind {
+                        haki_ast::TyKind::Named(id) if id.name == "void" =>
+                            self.ctx.void_type().fn_type(&params, false),
+                        haki_ast::TyKind::Named(id) if id.name == "int" =>
+                            self.ctx.i64_type().fn_type(&params, false),
+                        haki_ast::TyKind::Named(id) if id.name == "float" =>
+                            self.ctx.f64_type().fn_type(&params, false),
+                        haki_ast::TyKind::Named(id) if id.name == "bool" =>
+                            self.ctx.bool_type().fn_type(&params, false),
+                        _ => self.tmap.ptr().fn_type(&params, false),
+                    }
+                }
+                Some(haki_ast::ReturnTy::Tuple(_)) =>
+                    self.tmap.ptr().fn_type(&params, false),
+            };
+
+            let fv = self.module.add_function(&f.name.name, fn_ty, None);
+            self.fns.insert(f.name.name.clone(), fv);
         }
     }
 
@@ -1016,24 +1085,124 @@ impl<'ctx> CodeGen<'ctx> {
         let merge_bb = self.ctx.append_basic_block(fv, "match.merge");
         let mut phi_parts: Vec<(BasicValueEnum<'ctx>, inkwell::basic_block::BasicBlock<'ctx>)> = Vec::new();
 
-        // Determine the scrutinee's enum type name for variant disambiguation.
         let scrutinee_enum_name = match &m.scrutinee.ty {
             SemTy::Named(n) => n.clone(),
             _ => String::new(),
         };
 
-        // Determine if this is an enum match by checking if any arm's pattern
-        // is a variant in the scrutinee's specific enum.
-        let is_enum_match = m.arms.iter().any(|arm| {
-            if arm.pattern == "_" { return false; }
-            if !scrutinee_enum_name.is_empty() {
-                self.find_variant_in(&arm.pattern, &scrutinee_enum_name).is_some()
-            } else {
-                self.find_variant(&arm.pattern).is_some()
+        match m.kind {
+        MonoMatchKind::Int => {
+            // Integer match → LLVM switch on i64
+            let i64 = self.ctx.i64_type();
+            let int_val = scrutinee.unwrap().into_int_value();
+            let default_bb = self.ctx.append_basic_block(fv, "match.default");
+            let mut arm_bbs: Vec<inkwell::basic_block::BasicBlock> = Vec::new();
+            for (idx, _) in m.arms.iter().enumerate() {
+                arm_bbs.push(self.ctx.append_basic_block(fv, &format!("match.arm{idx}")));
             }
-        });
-
-        if is_enum_match {
+            let mut cases: Vec<(inkwell::values::IntValue, inkwell::basic_block::BasicBlock)> = Vec::new();
+            let mut wildcard_bb = default_bb;
+            for (arm, &arm_bb) in m.arms.iter().zip(arm_bbs.iter()) {
+                match &arm.pattern {
+                    MonoPattern::Int(n) => { cases.push((i64.const_int(*n as u64, true), arm_bb)); }
+                    MonoPattern::Named(s) if s == "_" => { wildcard_bb = arm_bb; }
+                    _ => {}
+                }
+            }
+            self.builder.build_switch(int_val, wildcard_bb, &cases)
+                .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+            self.builder.position_at_end(default_bb);
+            self.builder.build_unreachable().map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+            for (arm, arm_bb) in m.arms.iter().zip(arm_bbs.iter()) {
+                self.builder.position_at_end(*arm_bb);
+                self.scopes.push(Scope::new());
+                let mut arm_yield: Option<BasicValueEnum> = None;
+                for stmt in &arm.body.stmts {
+                    if let MonoStmtKind::Yield(e) = &stmt.kind { arm_yield = self.emit_expr(e)?; }
+                    else { self.emit_stmt(stmt)?; }
+                }
+                self.emit_scope_release();
+                self.scopes.pop();
+                let arm_exit = self.builder.get_insert_block().unwrap();
+                if arm_exit.get_terminator().is_none() {
+                    self.builder.build_unconditional_branch(merge_bb)
+                        .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+                    if let Some(yv) = arm_yield { phi_parts.push((yv, arm_exit)); }
+                }
+            }
+        }
+        MonoMatchKind::String => {
+            // String match → if-else strcmp chain
+            let ptr = self.tmap.ptr();
+            let i64 = self.ctx.i64_type();
+            let scrutinee_ptr = scrutinee.unwrap().into_pointer_value();
+            let strcmp_fn = self.fns.get("strcmp").cloned()
+                .unwrap_or_else(|| {
+                    let ft = i64.fn_type(&[ptr.into(), ptr.into()], false);
+                    let fv2 = self.module.add_function("strcmp", ft, None);
+                    self.fns.insert("strcmp".into(), fv2);
+                    fv2
+                });
+            // Build a chain: for each arm, compare and branch
+            let mut next_bb = self.ctx.append_basic_block(fv, "match.str0");
+            self.builder.build_unconditional_branch(next_bb)
+                .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+            let n_arms = m.arms.len();
+            for (idx, arm) in m.arms.iter().enumerate() {
+                self.builder.position_at_end(next_bb);
+                let body_bb = self.ctx.append_basic_block(fv, &format!("match.strbody{idx}"));
+                match &arm.pattern {
+                    MonoPattern::String(s) => {
+                        // strcmp(scrutinee, literal) == 0 → branch to body
+                        let lit = self.builder.build_global_string_ptr(s, "strpat")
+                            .map_err(|e| CodeGenError::BuildError(e.to_string()))?
+                            .as_pointer_value();
+                        let cmp_result = self.builder.build_call(
+                            strcmp_fn, &[scrutinee_ptr.into(), lit.into()], "strcmp_res"
+                        ).map_err(|e| CodeGenError::BuildError(e.to_string()))?
+                        .try_as_basic_value().left().unwrap().into_int_value();
+                        let zero = i64.const_int(0, false);
+                        let is_eq = self.builder.build_int_compare(
+                            inkwell::IntPredicate::EQ, cmp_result, zero, "streq"
+                        ).map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+                        let else_bb = self.ctx.append_basic_block(fv, &format!("match.strelse{idx}"));
+                        self.builder.build_conditional_branch(is_eq, body_bb, else_bb)
+                            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+                        next_bb = else_bb;
+                    }
+                    MonoPattern::Named(s) if s == "_" => {
+                        // Wildcard — always branch to body
+                        self.builder.build_unconditional_branch(body_bb)
+                            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+                    }
+                    _ => {
+                        self.builder.build_unconditional_branch(body_bb)
+                            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+                    }
+                }
+                // Emit body
+                self.builder.position_at_end(body_bb);
+                self.scopes.push(Scope::new());
+                let mut arm_yield: Option<BasicValueEnum> = None;
+                for stmt in &arm.body.stmts {
+                    if let MonoStmtKind::Yield(e) = &stmt.kind { arm_yield = self.emit_expr(e)?; }
+                    else { self.emit_stmt(stmt)?; }
+                }
+                self.emit_scope_release();
+                self.scopes.pop();
+                let arm_exit = self.builder.get_insert_block().unwrap();
+                if arm_exit.get_terminator().is_none() {
+                    self.builder.build_unconditional_branch(merge_bb)
+                        .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+                    if let Some(yv) = arm_yield { phi_parts.push((yv, arm_exit)); }
+                }
+                let _ = n_arms;
+            }
+            // Dangling else_bb → unreachable (wildcard should catch all)
+            self.builder.position_at_end(next_bb);
+            self.builder.build_unreachable().map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+        }
+        MonoMatchKind::Enum => {
             // Extract the discriminant tag from the { i64 tag, ptr payload } enum struct.
             let i64 = self.ctx.i64_type();
             let ptr = self.tmap.ptr();
@@ -1054,19 +1223,24 @@ impl<'ctx> CodeGen<'ctx> {
             // Build switch: one case per non-wildcard arm.
             let mut cases: Vec<(inkwell::values::IntValue, inkwell::basic_block::BasicBlock)> = Vec::new();
             for (arm, &arm_bb) in m.arms.iter().zip(arm_bbs.iter()) {
-                if arm.pattern == "_" { continue; }
-                let variant_result = if !scrutinee_enum_name.is_empty() {
-                    self.find_variant_in(&arm.pattern, &scrutinee_enum_name)
-                } else {
-                    self.find_variant(&arm.pattern)
-                };
-                if let Some((_, disc, _)) = variant_result {
-                    cases.push((i64.const_int(disc as u64, false), arm_bb));
+                match &arm.pattern {
+                    MonoPattern::Named(s) if s == "_" => { continue; }
+                    MonoPattern::Named(pname) => {
+                        let variant_result = if !scrutinee_enum_name.is_empty() {
+                            self.find_variant_in(pname, &scrutinee_enum_name)
+                        } else {
+                            self.find_variant(pname)
+                        };
+                        if let Some((_, disc, _)) = variant_result {
+                            cases.push((i64.const_int(disc as u64, false), arm_bb));
+                        }
+                    }
+                    _ => {}
                 }
             }
             // Wildcard arm becomes the default; if none, default falls through to merge.
             let wildcard_bb = m.arms.iter().zip(arm_bbs.iter())
-                .find(|(a, _)| a.pattern == "_")
+                .find(|(a, _)| matches!(&a.pattern, MonoPattern::Named(s) if s == "_"))
                 .map(|(_, &bb)| bb)
                 .unwrap_or(default_bb);
 
@@ -1146,7 +1320,8 @@ impl<'ctx> CodeGen<'ctx> {
                     if let Some(yv) = arm_yield { phi_parts.push((yv, arm_exit)); }
                 }
             }
-        } else {
+        }
+        _ => {
             // Class hierarchy match — original unconditional fall-through logic.
             let first_arm_bb = self.ctx.append_basic_block(fv, "match.arm0");
             self.builder.build_unconditional_branch(first_arm_bb)
@@ -1198,6 +1373,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
         }
+        } // end match m.kind
 
         self.builder.position_at_end(merge_bb);
         if !phi_parts.is_empty() {

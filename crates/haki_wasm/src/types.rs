@@ -36,3 +36,38 @@ pub fn sem_to_result(ty: &SemTy) -> Option<ValType> {
         other => sem_to_val(other).ok(),
     }
 }
+
+/// Map an AST TyKind to a Wasm ValType for extern fn declarations.
+/// Same mapping as sem_to_val: int→i64, float→f64, bool→i32, everything else→i32 (ptr).
+pub fn ast_ty_to_val(ty: &haki_ast::Ty) -> ValType {
+    match &ty.kind {
+        haki_ast::TyKind::Named(id) => match id.name.as_str() {
+            "int"   => ValType::I64,
+            "float" => ValType::F64,
+            "bool"  => ValType::I32,
+            _       => ValType::I32,  // string, Named types → ptr
+        },
+        haki_ast::TyKind::Generic(_, _)
+        | haki_ast::TyKind::Optional(_)
+        | haki_ast::TyKind::Tuple(_)
+        | haki_ast::TyKind::Fn(_, _) => ValType::I32,
+    }
+}
+
+/// Map an AST ReturnTy to an optional Wasm ValType.
+/// Returns None for void (no return value).
+pub fn ast_return_to_val(ret: &Option<haki_ast::ReturnTy>) -> Option<ValType> {
+    match ret {
+        None => None,
+        Some(haki_ast::ReturnTy::Single(ty)) => {
+            let v = ast_ty_to_val(ty);
+            // void-equivalent Named("void") returns None
+            if matches!(&ty.kind, haki_ast::TyKind::Named(id) if id.name == "void") {
+                None
+            } else {
+                Some(v)
+            }
+        }
+        Some(haki_ast::ReturnTy::Tuple(_)) => Some(ValType::I32), // tuple → ptr
+    }
+}

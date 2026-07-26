@@ -184,22 +184,181 @@ impl Parser {
         Ok(SourceFile { items, span: Span::new(lo, hi) })
     }
 
+    /// Error-recovering file parse for the LSP.
+    ///
+    /// On error, records the error, calls `synchronize()` to skip to the next
+    /// safe top-level keyword, and continues parsing. Always returns a (partial)
+    /// SourceFile; invalid items are simply absent from the AST.
+    pub fn parse_file_recovery(&mut self) -> crate::ParseResult {
+        let lo = self.current_span().lo;
+        let mut items  = Vec::new();
+        let mut errors = Vec::new();
+
+        while !self.at_eof() {
+            match self.parse_item() {
+                Ok(item)  => items.push(item),
+                Err(e) => {
+                    errors.push(e);
+                    self.synchronize();
+                }
+            }
+        }
+
+        let hi = self.current_span().hi;
+        crate::ParseResult {
+            ast: SourceFile { items, span: Span::new(lo, hi) },
+            errors,
+        }
+    }
+
+    /// Advance past tokens until we reach a top-level synchronization point.
+    ///
+    /// Strategy: skip until brace depth is 0 AND the next token is a top-level
+    /// keyword (`fn`, `struct`, `class`, `enum`, `protocol`, `impl`, `import`).
+    /// This correctly handles errors inside function bodies — we skip the rest of
+    /// the body before looking for the next top-level item.
+    fn synchronize(&mut self) {
+        let mut depth: i32 = 0;
+        loop {
+            match self.peek_kind() {
+                TokenKind::Eof => return,
+                TokenKind::LBrace => {
+                    depth += 1;
+                    self.advance();
+                }
+                TokenKind::RBrace => {
+                    if depth == 0 {
+                        // Stray `}` at top level — consume and continue scanning
+                        self.advance();
+                    } else {
+                        depth -= 1;
+                        self.advance();
+                        // After closing the last open brace, check if we're back
+                        // at top level and the next token is a sync point
+                        if depth == 0 {
+                            match self.peek_kind() {
+                                TokenKind::Fn
+                                | TokenKind::Struct
+                                | TokenKind::Class
+                                | TokenKind::Enum
+                                | TokenKind::Protocol
+                                | TokenKind::Impl
+                                | TokenKind::Import
+                                | TokenKind::Eof => return,
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                TokenKind::Fn
+                | TokenKind::Struct
+                | TokenKind::Class
+                | TokenKind::Enum
+                | TokenKind::Protocol
+                | TokenKind::Impl
+                | TokenKind::Import
+                | TokenKind::Extern
+                    if depth == 0 =>
+                {
+                    return;
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+    }
+
     // ── Items ─────────────────────────────────────────────────────────────
 
     fn parse_item(&mut self) -> Result<Item, ParseError> {
         let lo = self.current_span().lo;
+
+        // Collect zero or more leading `@attr(args)` annotations.
+        let attributes = self.parse_attributes()?;
+
         let kind = match self.peek_kind() {
             TokenKind::Import   => self.parse_import()?,
-            TokenKind::Struct   => ItemKind::Struct(self.parse_struct()?),
+            TokenKind::Struct   => ItemKind::Struct(self.parse_struct_with_attrs(attributes)?),
             TokenKind::Class    => ItemKind::Class(self.parse_class()?),
             TokenKind::Enum     => ItemKind::Enum(self.parse_enum()?),
             TokenKind::Protocol => ItemKind::Protocol(self.parse_protocol()?),
             TokenKind::Impl     => ItemKind::Impl(self.parse_impl()?),
-            TokenKind::Fn       => ItemKind::Fn(self.parse_fn_def()?),
-            _ => return Err(ParseError::unexpected(self.peek_kind(), self.current_span())),
+            TokenKind::Fn       => ItemKind::Fn(self.parse_fn_def_with_attrs(attributes)?),
+            TokenKind::Extern   => ItemKind::ExternFn(self.parse_extern_fn_with_attrs(attributes)?),
+            _ => {
+                if !attributes.is_empty() {
+                    return Err(ParseError::expected(
+                        "fn, struct, class, or extern after attribute",
+                        self.peek_kind(), self.current_span()
+                    ));
+                }
+                return Err(ParseError::unexpected(self.peek_kind(), self.current_span()))
+            }
         };
         let hi = self.current_span().lo;
         Ok(Item { kind, span: Span::new(lo, hi) })
+    }
+
+    /// Parse zero or more `@name` or `@name("arg1", "arg2")` attribute declarations.
+    fn parse_attributes(&mut self) -> Result<Vec<Attribute>, ParseError> {
+        let mut attrs = Vec::new();
+        while matches!(self.peek_kind(), TokenKind::At) {
+            let lo = self.current_span().lo;
+            self.advance(); // consume `@`
+
+            // Attribute name must be an identifier
+            let name_ident = self.expect_ident()?;
+            let name = name_ident.name;
+
+            // Optional argument list: `("arg1", "arg2")`
+            let mut args = Vec::new();
+            if matches!(self.peek_kind(), TokenKind::LParen) {
+                self.advance(); // consume `(`
+                while !matches!(self.peek_kind(), TokenKind::RParen | TokenKind::Eof) {
+                    // Arguments must be string literals
+                    match self.peek_kind().clone() {
+                        TokenKind::String(s) => {
+                            self.advance();
+                            args.push(s);
+                        }
+                        _ => return Err(ParseError::expected(
+                            "string literal in attribute arguments",
+                            self.peek_kind(), self.current_span()
+                        )),
+                    }
+                    if !matches!(self.peek_kind(), TokenKind::RParen) {
+                        self.expect(&TokenKind::Comma)?;
+                    }
+                }
+                self.expect(&TokenKind::RParen)?;
+            }
+
+            let hi = self.current_span().lo;
+            attrs.push(Attribute { name, args, span: Span::new(lo, hi) });
+        }
+        Ok(attrs)
+    }
+
+    /// Wrapper: parse a `fn` definition and attach pre-parsed attributes.
+    fn parse_fn_def_with_attrs(&mut self, attributes: Vec<Attribute>) -> Result<FnDef, ParseError> {
+        let mut f = self.parse_fn_def()?;
+        f.attributes = attributes;
+        Ok(f)
+    }
+
+    /// Wrapper: parse a `struct` definition and attach pre-parsed attributes.
+    fn parse_struct_with_attrs(&mut self, attributes: Vec<Attribute>) -> Result<StructDef, ParseError> {
+        let mut s = self.parse_struct()?;
+        s.attributes = attributes;
+        Ok(s)
+    }
+
+    /// Wrapper: parse an `extern` declaration and attach pre-parsed attributes.
+    fn parse_extern_fn_with_attrs(&mut self, attributes: Vec<Attribute>) -> Result<ExternFnDef, ParseError> {
+        let mut f = self.parse_extern_fn()?;
+        f.attributes = attributes;
+        Ok(f)
     }
 
     /// Desugar `try f()` into a block expression:
@@ -316,6 +475,48 @@ impl Parser {
         Ok(EnumDef { name, type_params, variants, span: Span::new(lo, hi) })
     }
 
+    /// `extern "js" fn name(params) -> RetTy`
+    /// Parses an extern function declaration with no body.
+    fn parse_extern_fn(&mut self) -> Result<ExternFnDef, ParseError> {
+        let lo = self.current_span().lo;
+        self.expect(&TokenKind::Extern)?;
+
+        // ABI string: currently only "js" is supported
+        let abi = match self.peek_kind().clone() {
+            TokenKind::String(s) => { self.advance(); s }
+            _ => return Err(ParseError::expected(r#""js""#, self.peek_kind(), self.current_span())),
+        };
+
+        self.expect(&TokenKind::Fn)?;
+        let name = self.expect_ident()?;
+
+        // Parameter list
+        self.expect(&TokenKind::LParen)?;
+        let mut params = Vec::new();
+        while !matches!(self.peek_kind(), TokenKind::RParen | TokenKind::Eof) {
+            let p_name = self.expect_ident()?;
+            self.expect(&TokenKind::Colon)?;
+            let p_ty = self.parse_ty()?;
+            let p_span = p_name.span;
+            params.push(Param { name: p_name, ty: p_ty, span: p_span });
+            if !matches!(self.peek_kind(), TokenKind::RParen) {
+                self.expect(&TokenKind::Comma)?;
+            }
+        }
+        self.expect(&TokenKind::RParen)?;
+
+        // Optional return type
+        let return_ty = if matches!(self.peek_kind(), TokenKind::Arrow) {
+            self.advance();
+            Some(self.parse_return_ty()?)
+        } else {
+            None
+        };
+
+        let hi = self.current_span().lo;
+        Ok(ExternFnDef { abi, name, params, return_ty, attributes: vec![], span: Span::new(lo, hi) })
+    }
+
     /// `import "path"` or `import "path" as alias`
     fn parse_import(&mut self) -> Result<ItemKind, ParseError> {
         let lo = self.current_span().lo;
@@ -364,7 +565,7 @@ impl Parser {
 
         let hi = self.current_span().hi;
         self.expect(&TokenKind::RBrace)?;
-        Ok(StructDef { name, type_params, fields, methods, span: Span::new(lo, hi) })
+        Ok(StructDef { name, type_params, fields, methods, attributes: vec![], span: Span::new(lo, hi) })
     }
 
     // ── Class definition ──────────────────────────────────────────────────
@@ -420,6 +621,7 @@ impl Parser {
                     type_params: sig.type_params,
                     params:    sig.params,
                     return_ty: sig.return_ty,
+                    attributes: vec![],
                     body,
                     span:      sig.span,
                 });
@@ -489,7 +691,7 @@ impl Parser {
         };
         let body = self.parse_block()?;
         let hi = self.current_span().lo;
-        Ok(FnDef { name, type_params, params, return_ty, body, span: Span::new(lo, hi) })
+        Ok(FnDef { name, type_params, params, return_ty, body, attributes: vec![], span: Span::new(lo, hi) })
     }
 
     // ── Type parameters ───────────────────────────────────────────────────
@@ -896,37 +1098,67 @@ impl Parser {
         let mut arms = Vec::new();
         while !matches!(self.peek_kind(), TokenKind::RBrace | TokenKind::Eof) {
             let arm_lo = self.current_span().lo;
-            // Pattern: identifier (type/variant name) or `_` (wildcard)
-            let pattern = if matches!(self.peek_kind(), TokenKind::Under) {
-                self.advance();
-                Ident::new("_", self.current_span())
-            } else {
-                self.expect_ident()?
-            };
 
-            // Bindings:
-            // - Enum unit:      `Pending { body }`        → bindings = []
-            // - Enum payload:   `Ok(value) { body }`      → bindings = [value]
-            // - Class match:    `NetworkError e { body }`  → bindings = [e]
-            // - Wildcard:       `_ { body }`               → bindings = []
-            let bindings = if matches!(self.peek_kind(), TokenKind::LParen) {
-                // `Variant(x, y, ...)` — enum payload destructuring
-                self.advance(); // consume `(`
-                let mut names = Vec::new();
-                while !matches!(self.peek_kind(), TokenKind::RParen | TokenKind::Eof) {
-                    names.push(self.expect_ident()?);
-                    if !matches!(self.peek_kind(), TokenKind::RParen) {
-                        self.expect(&TokenKind::Comma)?;
+            // Pattern: identifier/wildcard, integer literal, or string literal
+            let pattern = match self.peek_kind().clone() {
+                // Wildcard: `_`
+                TokenKind::Under => {
+                    self.advance();
+                    MatchPattern::Ident(Ident::new("_", self.current_span()))
+                }
+                // Integer literal: `0`, `42`, `404`
+                TokenKind::Int(n) => {
+                    let n = n;
+                    self.advance();
+                    MatchPattern::Int(n)
+                }
+                // Negative integer literal: `-1`, `-42`
+                TokenKind::Minus => {
+                    self.advance();
+                    if let TokenKind::Int(n) = self.peek_kind().clone() {
+                        self.advance();
+                        MatchPattern::Int(-n)
+                    } else {
+                        return Err(ParseError::unexpected(self.peek_kind(), self.current_span()));
                     }
                 }
-                self.expect(&TokenKind::RParen)?;
-                names
-            } else if matches!(self.peek_kind(), TokenKind::LBrace | TokenKind::RBrace | TokenKind::Eof) {
-                // `Variant { body }` — unit variant or wildcard, no binding
-                vec![]
-            } else {
-                // `TypeName binding { body }` — class hierarchy match (legacy)
-                vec![self.expect_ident()?]
+                // String literal: `"GET"`, `"error"`
+                TokenKind::String(s) => {
+                    let s = s.clone();
+                    self.advance();
+                    MatchPattern::String(s)
+                }
+                // Named pattern: variant name, class name
+                _ => {
+                    MatchPattern::Ident(self.expect_ident()?)
+                }
+            };
+
+            // Bindings (only valid for Ident patterns, not literals)
+            let bindings = match &pattern {
+                MatchPattern::Int(_) | MatchPattern::String(_) => vec![],
+                MatchPattern::Ident(ident) if ident.name == "_" => vec![],
+                MatchPattern::Ident(_) => {
+                    if matches!(self.peek_kind(), TokenKind::LParen) {
+                        // `Variant(x, y, ...)` — enum payload destructuring
+                        self.advance(); // consume `(`
+                        let mut names = Vec::new();
+                        while !matches!(self.peek_kind(), TokenKind::RParen | TokenKind::Eof) {
+                            names.push(self.expect_ident()?);
+                            if !matches!(self.peek_kind(), TokenKind::RParen) {
+                                self.expect(&TokenKind::Comma)?;
+                            }
+                        }
+                        self.expect(&TokenKind::RParen)?;
+                        names
+                    } else if matches!(self.peek_kind(), TokenKind::LBrace | TokenKind::RBrace | TokenKind::Eof) {
+                        // `Variant { body }` — unit variant, no binding
+                        vec![]
+                    } else {
+                        // `TypeName binding { body }` — class hierarchy match
+                        vec![self.expect_ident()?]
+                    }
+                }
             };
 
             let body = self.parse_block()?;

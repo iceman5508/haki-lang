@@ -1,0 +1,177 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Haki",
+  "scopeName": "source.haki",
+  "fileTypes": ["haki"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#functions" },
+    { "include": "#numbers" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.documentation.haki",
+          "match": "///.*$"
+        },
+        {
+          "name": "comment.line.double-slash.haki",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.haki",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "captures": {
+            "0": { "name": "punctuation.definition.comment.haki" }
+          }
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.haki",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.haki",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.haki",
+          "match": "\\b(if|else|while|for|in|match|return|yield|break|continue|defer)\\b"
+        },
+        {
+          "name": "keyword.declaration.haki",
+          "match": "\\b(fn|struct|class|protocol|impl|enum|import|as|extends)\\b"
+        },
+        {
+          "name": "storage.modifier.haki",
+          "match": "\\b(const|let|weak|async|await|try)\\b"
+        },
+        {
+          "name": "keyword.operator.haki",
+          "match": "\\b(and|or|not)\\b"
+        },
+        {
+          "name": "constant.language.haki",
+          "match": "\\b(true|false|null|Self)\\b"
+        },
+        {
+          "name": "support.function.builtin.haki",
+          "match": "\\b(print|panic|print_int|print_float|print_bool|int_to_string|float_to_string|string_length|argv|readFile|writeFile|fileExists|thread_spawn|jsonString|jsonInt|jsonBool|jsonDecode|jsonDecodeGet)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.haki",
+          "match": "\\b(int|float|bool|string|void)\\b"
+        },
+        {
+          "name": "support.type.haki",
+          "match": "\\b(Array|Map|Task|Mutex|Error|MutexGuard)\\b"
+        },
+        {
+          "comment": "Type names (capitalized identifiers)",
+          "name": "entity.name.type.haki",
+          "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "comment": "Function definition name",
+          "match": "\\b(fn)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.haki" },
+            "2": { "name": "entity.name.function.haki" }
+          }
+        },
+        {
+          "comment": "Function call",
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()",
+          "captures": {
+            "1": { "name": "entity.name.function.call.haki" }
+          }
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.haki",
+          "match": "\\b[0-9]+\\.[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.haki",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arrow.haki",
+          "match": "->"
+        },
+        {
+          "name": "keyword.operator.comparison.haki",
+          "match": "(==|!=|<=|>=|<|>)"
+        },
+        {
+          "name": "keyword.operator.logical.haki",
+          "match": "(&&|\\|\\||!)"
+        },
+        {
+          "name": "keyword.operator.assignment.haki",
+          "match": "(?<![=!<>])=(?!=)"
+        },
+        {
+          "name": "keyword.operator.arithmetic.haki",
+          "match": "[+\\-*/%]"
+        },
+        {
+          "name": "keyword.operator.optional.haki",
+          "match": "\\?"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.definition.block.haki",
+          "match": "[{}]"
+        },
+        {
+          "name": "punctuation.section.brackets.haki",
+          "match": "[\\[\\]]"
+        },
+        {
+          "name": "punctuation.section.parens.haki",
+          "match": "[()]"
+        },
+        {
+          "name": "punctuation.separator.haki",
+          "match": "[,;:]"
+        },
+        {
+          "name": "punctuation.accessor.haki",
+          "match": "\\."
+        }
+      ]
+    }
+  }
+}

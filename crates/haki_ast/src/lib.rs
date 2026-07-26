@@ -36,6 +36,35 @@ impl Span {
     }
 }
 
+// ── Attribute ─────────────────────────────────────────────────────────────────
+
+/// A declaration attribute: `@name` or `@name("arg1", "arg2", ...)`.
+///
+/// Attributes appear on the lines immediately preceding a declaration:
+///
+///   @link("pq")
+///   extern "c" fn PQconnectdb(conninfo: string) -> int
+///
+///   @deprecated("use connect() instead")
+///   fn old_connect(url: string) -> PgConn { ... }
+///
+/// The compiler recognises these built-in attributes:
+///   @link("libname")   — pass -llibname to the linker (extern "c" only)
+///   @inline            — hint to emit an inline/always_inline annotation
+///   @deprecated("msg") — emit a deprecation warning at call sites
+///
+/// Unknown attributes are stored and ignored by the compiler, allowing
+/// tooling (documentation generators, linters) to define their own.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Attribute {
+    /// The attribute name, without the `@` sigil (e.g. `"link"`, `"deprecated"`).
+    pub name: String,
+    /// Zero or more string arguments (e.g. `["pq"]` for `@link("pq")`).
+    /// Non-string arguments are not supported in v1.8.
+    pub args: Vec<String>,
+    pub span: Span,
+}
+
 // ── Identifiers ──────────────────────────────────────────────────────────────
 
 /// A name with its source location.
@@ -171,6 +200,24 @@ pub enum ItemKind {
     Impl(ImplBlock),
     /// `fn name<T>(params) -> RetTy { ... }`
     Fn(FnDef),
+    /// `extern "js" fn name(params) -> RetTy`
+    /// No body — emits as a Wasm import from module "env".
+    ExternFn(ExternFnDef),
+}
+
+/// An extern function declaration — a function provided by the host environment.
+/// `extern "js" fn console_log(msg: string)` maps to `(import "env" "console_log" ...)` in Wasm.
+/// `extern "c" fn PQconnectdb(conninfo: string) -> int` binds a native C function.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternFnDef {
+    /// The ABI: `"js"` (Wasm host import) or `"c"` (native C library function).
+    pub abi:        String,
+    pub name:       Ident,
+    pub params:     Vec<Param>,
+    pub return_ty:  Option<ReturnTy>,
+    /// Attributes on this declaration, e.g. `@link("pq")`.
+    pub attributes: Vec<Attribute>,
+    pub span:       Span,
 }
 
 // ── Enum ──────────────────────────────────────────────────────────────────────
@@ -201,9 +248,10 @@ pub struct StructDef {
     pub name: Ident,
     pub type_params: Vec<TypeParam>,
     pub fields: Vec<FieldDef>,
-    /// Methods defined inside the struct body (syntactic sugar — equivalent to
-    /// a separate `impl` block in the later passes).
+    /// Methods defined inside the struct body.
     pub methods: Vec<FnDef>,
+    /// Attributes on this declaration, e.g. `@deprecated("use NewStruct")`.
+    pub attributes: Vec<Attribute>,
     pub span: Span,
 }
 
@@ -267,6 +315,8 @@ pub struct FnDef {
     pub params: Vec<Param>,
     pub return_ty: Option<ReturnTy>,
     pub body: Block,
+    /// Attributes on this declaration, e.g. `@inline`, `@deprecated("msg")`.
+    pub attributes: Vec<Attribute>,
     pub span: Span,
 }
 
@@ -548,17 +598,31 @@ pub struct MatchExpr {
 /// Enum unit variant:      `Pending { yield "waiting" }`
 /// Enum payload variant:   `Ok(value) { yield value }`
 /// Wildcard:               `_ { yield "other" }`
+/// Integer literal:        `42 { yield "found it" }`
+/// String literal:         `"GET" { yield handleGet() }`
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
-    /// The variant or type name: `Ok`, `NetworkError`, `_`
-    pub pattern: Ident,
+    pub pattern: MatchPattern,
     /// Bound variable names — one per payload field.
     /// For class match: `[e]` (the bound object).
     /// For enum unit: `[]`.
     /// For enum payload: `[value]` or `[x, y]` etc.
+    /// For literal/wildcard: always `[]`.
     pub bindings: Vec<Ident>,
     pub body: Block,
     pub span: Span,
+}
+
+/// The pattern in a match arm.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MatchPattern {
+    /// A named pattern: variant name, class name, or `_` wildcard.
+    /// `_` is detected by checking `ident.name == "_"`.
+    Ident(Ident),
+    /// An integer literal pattern: `0`, `42`, `-1`.
+    Int(i64),
+    /// A string literal pattern: `"GET"`, `"POST"`, `"error"`.
+    String(String),
 }
 
 // ── Operators ─────────────────────────────────────────────────────────────────

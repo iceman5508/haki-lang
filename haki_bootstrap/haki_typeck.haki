@@ -5,7 +5,7 @@
 //
 // Scope: bootstrap subset — enough to typecheck the compiler itself.
 
-import "./haki_compiler" as compiler
+import "/home/claude/haki_bootstrap/haki_compiler" as compiler
 
 // ── Type representations ───────────────────────────────────────────────────────
 
@@ -312,5 +312,22 @@ fn main() {
     const addInfo, found = symLookupFn(sym, "add")
     if found {
         print("add: " + int_to_string(addInfo.nParams) + " params -> " + tyName(addInfo.retTy))
+    }
+}
+
+// ── Type string conversion (used by typeinfer) ────────────────────────────────
+
+fn semTyToStr(ty: SemTy) -> string {
+    return match ty {
+        TyInt         { yield "int" }
+        TyFloat       { yield "float" }
+        TyBool        { yield "bool" }
+        TyString      { yield "string" }
+        TyVoid        { yield "void" }
+        TyNamed(n)    { yield n }
+        TyOptional(n) { yield n + "?" }
+        TyArray(n)    { yield "Array<" + n + ">" }
+        TyFn(p, r)    { yield "fn(" + p + ")->" + r }
+        TyError       { yield "void*" }
     }
 }

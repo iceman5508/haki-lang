@@ -53,6 +53,11 @@ pub struct FnInfo {
     pub params: Vec<Param>,
     pub return_ty: Option<ReturnTy>,
     pub span: Span,
+    /// True if this is an `extern "js"` declaration — no Haki body.
+    /// In Wasm output it becomes an import; in other backends it's ignored.
+    pub is_extern: bool,
+    /// For extern fns: the ABI string, e.g. `"js"`.
+    pub extern_abi: Option<String>,
 }
 
 impl FnInfo {
@@ -63,6 +68,8 @@ impl FnInfo {
             params: f.params.clone(),
             return_ty: f.return_ty.clone(),
             span: f.span,
+            is_extern: false,
+            extern_abi: None,
         }
     }
 
@@ -73,6 +80,20 @@ impl FnInfo {
             params: s.params.clone(),
             return_ty: s.return_ty.clone(),
             span: s.span,
+            is_extern: false,
+            extern_abi: None,
+        }
+    }
+
+    pub fn from_extern_fn_def(f: &ExternFnDef) -> Self {
+        Self {
+            name: f.name.name.clone(),
+            type_params: vec![],
+            params: f.params.clone(),
+            return_ty: f.return_ty.clone(),
+            span: f.span,
+            is_extern: true,
+            extern_abi: Some(f.abi.clone()),
         }
     }
 }
@@ -107,7 +128,7 @@ pub struct ImplRecord {
 /// The global symbol table built during Pass 1.
 ///
 /// Lookup methods are used heavily by the inference pass.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SymbolTable {
     /// All named types (struct + class), keyed by type name.
     pub types: HashMap<String, TypeDef>,
@@ -210,7 +231,10 @@ impl SymbolTable {
                     }],
                     return_ty: None,
                     span: Span::dummy(),
-                },
+                
+            is_extern: false,
+            extern_abi: None,
+        },
                 // fn removeLast() -> (T?, Error?)
                 FnInfo {
                     name: "removeLast".into(),
@@ -221,7 +245,10 @@ impl SymbolTable {
                         Ty { kind: TyKind::Optional(Box::new(Ty { kind: TyKind::Named(Ident::new("Error", Span::dummy())), span: Span::dummy() })), span: Span::dummy() },
                     ])),
                     span: Span::dummy(),
-                },
+                
+            is_extern: false,
+            extern_abi: None,
+        },
                 // fn contains(item: T) -> bool
                 FnInfo {
                     name: "contains".into(), type_params: vec![],
@@ -229,7 +256,10 @@ impl SymbolTable {
                         ty: Ty { kind: TyKind::Named(Ident::new("T", Span::dummy())), span: Span::dummy() }, span: Span::dummy() }],
                     return_ty: Some(ReturnTy::Single(Ty { kind: TyKind::Named(Ident::new("bool", Span::dummy())), span: Span::dummy() })),
                     span: Span::dummy(),
-                },
+                
+            is_extern: false,
+            extern_abi: None,
+        },
                 // fn indexOf(item: T) -> int
                 FnInfo {
                     name: "indexOf".into(), type_params: vec![],
@@ -237,7 +267,10 @@ impl SymbolTable {
                         ty: Ty { kind: TyKind::Named(Ident::new("T", Span::dummy())), span: Span::dummy() }, span: Span::dummy() }],
                     return_ty: Some(ReturnTy::Single(Ty { kind: TyKind::Named(Ident::new("int", Span::dummy())), span: Span::dummy() })),
                     span: Span::dummy(),
-                },
+                
+            is_extern: false,
+            extern_abi: None,
+        },
                 // fn removeAt(idx: int) -> (T?, Error?)
                 FnInfo {
                     name: "removeAt".into(), type_params: vec![],
@@ -248,7 +281,10 @@ impl SymbolTable {
                         Ty { kind: TyKind::Optional(Box::new(Ty { kind: TyKind::Named(Ident::new("Error", Span::dummy())), span: Span::dummy() })), span: Span::dummy() },
                     ])),
                     span: Span::dummy(),
-                },
+                
+            is_extern: false,
+            extern_abi: None,
+        },
                 // fn first() -> T?
                 FnInfo {
                     name: "first".into(), type_params: vec![], params: vec![],
@@ -256,7 +292,10 @@ impl SymbolTable {
                         Ty { kind: TyKind::Named(Ident::new("T", Span::dummy())), span: Span::dummy() }
                     )), span: Span::dummy() })),
                     span: Span::dummy(),
-                },
+                
+            is_extern: false,
+            extern_abi: None,
+        },
                 // fn last() -> T?
                 FnInfo {
                     name: "last".into(), type_params: vec![], params: vec![],
@@ -264,7 +303,10 @@ impl SymbolTable {
                         Ty { kind: TyKind::Named(Ident::new("T", Span::dummy())), span: Span::dummy() }
                     )), span: Span::dummy() })),
                     span: Span::dummy(),
-                },
+                
+            is_extern: false,
+            extern_abi: None,
+        },
                 // fn join(sep: string) -> string  [only valid for Array<string>]
                 FnInfo {
                     name: "join".into(), type_params: vec![],
@@ -272,7 +314,10 @@ impl SymbolTable {
                         ty: Ty { kind: TyKind::Named(Ident::new("string", Span::dummy())), span: Span::dummy() }, span: Span::dummy() }],
                     return_ty: Some(ReturnTy::Single(Ty { kind: TyKind::Named(Ident::new("string", Span::dummy())), span: Span::dummy() })),
                     span: Span::dummy(),
-                },
+                
+            is_extern: false,
+            extern_abi: None,
+        },
             ],
             superclass: None,
             span: Span::dummy(),
@@ -311,7 +356,10 @@ impl SymbolTable {
                         span: Span::dummy(),
                     })),
                     span: Span::dummy(),
-                },
+                
+            is_extern: false,
+            extern_abi: None,
+        },
                 FnInfo {
                     name: "set".into(),
                     type_params: vec![],
@@ -329,7 +377,10 @@ impl SymbolTable {
                     ],
                     return_ty: None,
                     span: Span::dummy(),
-                },
+                
+            is_extern: false,
+            extern_abi: None,
+        },
                 FnInfo {
                     name: "has".into(),
                     type_params: vec![],
@@ -340,7 +391,10 @@ impl SymbolTable {
                     }],
                     return_ty: Some(ReturnTy::Single(bool_ty_node.clone())),
                     span: Span::dummy(),
-                },
+                
+            is_extern: false,
+            extern_abi: None,
+        },
                 FnInfo {
                     name: "delete".into(),
                     type_params: vec![],
@@ -351,7 +405,10 @@ impl SymbolTable {
                     }],
                     return_ty: None,
                     span: Span::dummy(),
-                },
+                
+            is_extern: false,
+            extern_abi: None,
+        },
                 // getOrDefault(key, default) -> V — returns default if key not found
                 FnInfo {
                     name: "getOrDefault".into(),
@@ -362,7 +419,10 @@ impl SymbolTable {
                     ],
                     return_ty: Some(ReturnTy::Single(v_ty_node.clone())),
                     span: Span::dummy(),
-                },
+                
+            is_extern: false,
+            extern_abi: None,
+        },
             ],
             superclass: None,
             span: Span::dummy(),
@@ -393,7 +453,10 @@ impl SymbolTable {
                         span: Span::dummy(),
                     })),
                     span: Span::dummy(),
-                }
+                
+            is_extern: false,
+            extern_abi: None,
+        }
             }).collect();
 
             self.protocols.insert(proto_name.to_string(), ProtocolInfo {
@@ -419,7 +482,10 @@ impl SymbolTable {
                     span: Span::dummy(),
                 })),
                 span: Span::dummy(),
-            }],
+            
+            is_extern: false,
+            extern_abi: None,
+        }],
             default_methods: HashMap::new(),
             span: Span::dummy(),
         });
@@ -445,34 +511,34 @@ impl SymbolTable {
             ],
             methods: vec![
                 // fn split(sep: string) -> Array<string>
-                FnInfo { name: "split".into(),       type_params: vec![], params: vec![str_param("sep")],    return_ty: Some(ReturnTy::Single(str_arr_ty.clone())),   span: Span::dummy() },
+                FnInfo { name: "split".into(),       type_params: vec![], params: vec![str_param("sep")],    return_ty: Some(ReturnTy::Single(str_arr_ty.clone())),   span: Span::dummy(), is_extern: false, extern_abi: None, },
                 // fn trim() -> string
-                FnInfo { name: "trim".into(),         type_params: vec![], params: vec![],                    return_ty: Some(ReturnTy::Single(str_ty_node.clone())),  span: Span::dummy() },
+                FnInfo { name: "trim".into(),         type_params: vec![], params: vec![],                    return_ty: Some(ReturnTy::Single(str_ty_node.clone())),  span: Span::dummy(), is_extern: false, extern_abi: None, },
                 // fn trimStart() -> string
-                FnInfo { name: "trimStart".into(),    type_params: vec![], params: vec![],                    return_ty: Some(ReturnTy::Single(str_ty_node.clone())),  span: Span::dummy() },
+                FnInfo { name: "trimStart".into(),    type_params: vec![], params: vec![],                    return_ty: Some(ReturnTy::Single(str_ty_node.clone())),  span: Span::dummy(), is_extern: false, extern_abi: None, },
                 // fn trimEnd() -> string
-                FnInfo { name: "trimEnd".into(),      type_params: vec![], params: vec![],                    return_ty: Some(ReturnTy::Single(str_ty_node.clone())),  span: Span::dummy() },
+                FnInfo { name: "trimEnd".into(),      type_params: vec![], params: vec![],                    return_ty: Some(ReturnTy::Single(str_ty_node.clone())),  span: Span::dummy(), is_extern: false, extern_abi: None, },
                 // fn toUpper() -> string
-                FnInfo { name: "toUpper".into(),      type_params: vec![], params: vec![],                    return_ty: Some(ReturnTy::Single(str_ty_node.clone())),  span: Span::dummy() },
+                FnInfo { name: "toUpper".into(),      type_params: vec![], params: vec![],                    return_ty: Some(ReturnTy::Single(str_ty_node.clone())),  span: Span::dummy(), is_extern: false, extern_abi: None, },
                 // fn toLower() -> string
-                FnInfo { name: "toLower".into(),      type_params: vec![], params: vec![],                    return_ty: Some(ReturnTy::Single(str_ty_node.clone())),  span: Span::dummy() },
+                FnInfo { name: "toLower".into(),      type_params: vec![], params: vec![],                    return_ty: Some(ReturnTy::Single(str_ty_node.clone())),  span: Span::dummy(), is_extern: false, extern_abi: None, },
                 // fn contains(sub: string) -> bool
-                FnInfo { name: "contains".into(),     type_params: vec![], params: vec![str_param("sub")],   return_ty: Some(ReturnTy::Single(bool_ty_node2.clone())), span: Span::dummy() },
+                FnInfo { name: "contains".into(),     type_params: vec![], params: vec![str_param("sub")],   return_ty: Some(ReturnTy::Single(bool_ty_node2.clone())), span: Span::dummy(), is_extern: false, extern_abi: None, },
                 // fn startsWith(prefix: string) -> bool
-                FnInfo { name: "startsWith".into(),   type_params: vec![], params: vec![str_param("prefix")],return_ty: Some(ReturnTy::Single(bool_ty_node2.clone())), span: Span::dummy() },
+                FnInfo { name: "startsWith".into(),   type_params: vec![], params: vec![str_param("prefix")],return_ty: Some(ReturnTy::Single(bool_ty_node2.clone())), span: Span::dummy(), is_extern: false, extern_abi: None, },
                 // fn endsWith(suffix: string) -> bool
-                FnInfo { name: "endsWith".into(),     type_params: vec![], params: vec![str_param("suffix")],return_ty: Some(ReturnTy::Single(bool_ty_node2.clone())), span: Span::dummy() },
+                FnInfo { name: "endsWith".into(),     type_params: vec![], params: vec![str_param("suffix")],return_ty: Some(ReturnTy::Single(bool_ty_node2.clone())), span: Span::dummy(), is_extern: false, extern_abi: None, },
                 // fn replace(from: string, to: string) -> string
-                FnInfo { name: "replace".into(),      type_params: vec![], params: vec![str_param("from"), str_param("to")], return_ty: Some(ReturnTy::Single(str_ty_node.clone())), span: Span::dummy() },
+                FnInfo { name: "replace".into(),      type_params: vec![], params: vec![str_param("from"), str_param("to")], return_ty: Some(ReturnTy::Single(str_ty_node.clone())), span: Span::dummy(), is_extern: false, extern_abi: None, },
                 // fn indexOf(sub: string) -> int   (-1 = not found)
-                FnInfo { name: "indexOf".into(),      type_params: vec![], params: vec![str_param("sub")],   return_ty: Some(ReturnTy::Single(int_ty_node2.clone())), span: Span::dummy() },
+                FnInfo { name: "indexOf".into(),      type_params: vec![], params: vec![str_param("sub")],   return_ty: Some(ReturnTy::Single(int_ty_node2.clone())), span: Span::dummy(), is_extern: false, extern_abi: None, },
                 // fn substring(start: int, end: int) -> string
                 FnInfo { name: "substring".into(),    type_params: vec![],
                     params: vec![
                         Param { name: Ident::new("start", Span::dummy()), ty: Ty { kind: TyKind::Named(Ident::new("int", Span::dummy())), span: Span::dummy() }, span: Span::dummy() },
                         Param { name: Ident::new("end",   Span::dummy()), ty: Ty { kind: TyKind::Named(Ident::new("int", Span::dummy())), span: Span::dummy() }, span: Span::dummy() },
                     ],
-                    return_ty: Some(ReturnTy::Single(str_ty_node.clone())), span: Span::dummy() },
+                    return_ty: Some(ReturnTy::Single(str_ty_node.clone())), span: Span::dummy(), is_extern: false, extern_abi: None, },
             ],
             superclass: None,
             span: Span::dummy(),
@@ -515,7 +581,7 @@ impl SymbolTable {
             kind: TypeKind::Class, name: "HttpServer".into(), type_params: vec![],
             fields: vec![],
             methods: vec![
-                FnInfo { name: "listen".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy() },
+                FnInfo { name: "listen".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None, },
             ],
             superclass: None, span: Span::dummy(),
         };
@@ -530,6 +596,9 @@ impl SymbolTable {
             ],
             return_ty: Some(ReturnTy::Single(Ty { kind: TyKind::Named(Ident::new("HttpServer", Span::dummy())), span: Span::dummy() })),
             span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });
 
         // ── Router ──────────────────────────────────────────────────────────
@@ -551,22 +620,22 @@ impl SymbolTable {
                 FnInfo { name: "get".into(),    type_params: vec![], params: vec![
                     Param { name: Ident::new("pattern", Span::dummy()), ty: str_ty3.clone(), span: Span::dummy() },
                     Param { name: Ident::new("handler", Span::dummy()), ty: handler_ty.clone(), span: Span::dummy() },
-                ], return_ty: None, span: Span::dummy() },
+                ], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None, },
                 FnInfo { name: "post".into(),   type_params: vec![], params: vec![
                     Param { name: Ident::new("pattern", Span::dummy()), ty: str_ty3.clone(), span: Span::dummy() },
                     Param { name: Ident::new("handler", Span::dummy()), ty: handler_ty.clone(), span: Span::dummy() },
-                ], return_ty: None, span: Span::dummy() },
+                ], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None, },
                 FnInfo { name: "put".into(),    type_params: vec![], params: vec![
                     Param { name: Ident::new("pattern", Span::dummy()), ty: str_ty3.clone(), span: Span::dummy() },
                     Param { name: Ident::new("handler", Span::dummy()), ty: handler_ty.clone(), span: Span::dummy() },
-                ], return_ty: None, span: Span::dummy() },
+                ], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None, },
                 FnInfo { name: "delete".into(), type_params: vec![], params: vec![
                     Param { name: Ident::new("pattern", Span::dummy()), ty: str_ty3.clone(), span: Span::dummy() },
                     Param { name: Ident::new("handler", Span::dummy()), ty: handler_ty.clone(), span: Span::dummy() },
-                ], return_ty: None, span: Span::dummy() },
+                ], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None, },
                 FnInfo { name: "handle".into(), type_params: vec![], params: vec![
                     Param { name: Ident::new("req", Span::dummy()), ty: req_ty.clone(), span: Span::dummy() },
-                ], return_ty: Some(ReturnTy::Single(resp_ty.clone())), span: Span::dummy() },
+                ], return_ty: Some(ReturnTy::Single(resp_ty.clone())), span: Span::dummy(), is_extern: false, extern_abi: None, },
             ],
             superclass: None,
             span: Span::dummy(),
@@ -578,6 +647,9 @@ impl SymbolTable {
             name: "Router".into(), type_params: vec![], params: vec![],
             return_ty: Some(ReturnTy::Single(Ty { kind: TyKind::Named(Ident::new("Router", Span::dummy())), span: Span::dummy() })),
             span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });
 
         // requestParam(req, key) -> string — extract a route param
@@ -589,6 +661,9 @@ impl SymbolTable {
             ],
             return_ty: Some(ReturnTy::Single(str_ty3.clone())),
             span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });
 
         // routerDispatch(router, req) -> HttpResponse — dispatch a request through a router
@@ -602,6 +677,9 @@ impl SymbolTable {
             ],
             return_ty: Some(ReturnTy::Single(resp_ty.clone())),
             span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });
 
         // requestQuery(req, key) -> string — extract a query param
@@ -613,6 +691,9 @@ impl SymbolTable {
             ],
             return_ty: Some(ReturnTy::Single(str_ty3.clone())),
             span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });
 
         // JSON free functions
@@ -620,11 +701,17 @@ impl SymbolTable {
             name: "jsonString".into(), type_params: vec![],
             params: vec![Param { name: Ident::new("v", Span::dummy()), ty: str_ty2.clone(), span: Span::dummy() }],
             return_ty: Some(ReturnTy::Single(str_ty2.clone())), span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });
         self.functions.insert("jsonInt".into(), FnInfo {
             name: "jsonInt".into(), type_params: vec![],
             params: vec![Param { name: Ident::new("v", Span::dummy()), ty: int_ty2.clone(), span: Span::dummy() }],
             return_ty: Some(ReturnTy::Single(str_ty2.clone())), span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });
         // ── haki_ui — v0.5 ─────────────────────────────────────────────────
 
@@ -647,8 +734,8 @@ impl SymbolTable {
         let view_placeholder = TypeDef {
             kind: TypeKind::Class, name: "View".into(), type_params: vec![],
             fields: vec![], methods: vec![
-                FnInfo { name: "body".into(),   type_params: vec![], params: vec![], return_ty: view_ret.clone(), span: Span::dummy() },
-                FnInfo { name: "render".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy() },
+                FnInfo { name: "body".into(),   type_params: vec![], params: vec![], return_ty: view_ret.clone(), span: Span::dummy(), is_extern: false, extern_abi: None, },
+                FnInfo { name: "render".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None, },
             ],
             superclass: None, span: Span::dummy(),
         };
@@ -658,8 +745,8 @@ impl SymbolTable {
         let view_proto = ProtocolInfo {
             name: "View".into(),
             methods: vec![
-                FnInfo { name: "body".into(),   type_params: vec![], params: vec![], return_ty: view_ret.clone(), span: Span::dummy() },
-                FnInfo { name: "render".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy() },
+                FnInfo { name: "body".into(),   type_params: vec![], params: vec![], return_ty: view_ret.clone(), span: Span::dummy(), is_extern: false, extern_abi: None, },
+                FnInfo { name: "render".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None, },
             ],
             default_methods: HashMap::new(),
             span: Span::dummy(),
@@ -670,7 +757,7 @@ impl SymbolTable {
         let action_proto = ProtocolInfo {
             name: "Action".into(),
             methods: vec![
-                FnInfo { name: "invoke".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy() },
+                FnInfo { name: "invoke".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None, },
             ],
             default_methods: HashMap::new(),
             span: Span::dummy(),
@@ -684,8 +771,8 @@ impl SymbolTable {
                 FieldInfo { name: "content".into(), ty: str_ui.clone(), mutability: Mut::Const, is_weak: false, span: Span::dummy() },
             ],
             methods: vec![
-                FnInfo { name: "body".into(),   type_params: vec![], params: vec![], return_ty: view_ret.clone(), span: Span::dummy() },
-                FnInfo { name: "render".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy() },
+                FnInfo { name: "body".into(),   type_params: vec![], params: vec![], return_ty: view_ret.clone(), span: Span::dummy(), is_extern: false, extern_abi: None, },
+                FnInfo { name: "render".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None, },
             ],
             superclass: Some("View".into()), span: Span::dummy(),
         };
@@ -695,6 +782,9 @@ impl SymbolTable {
             params: vec![Param { name: Ident::new("content", Span::dummy()), ty: str_ui.clone(), span: Span::dummy() }],
             return_ty: Some(ReturnTy::Single(Ty { kind: TyKind::Named(Ident::new("Text", Span::dummy())), span: Span::dummy() })),
             span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });
 
         // Button(label: string, onTap: fn() -> void)
@@ -705,8 +795,8 @@ impl SymbolTable {
                 FieldInfo { name: "onTap".into(), ty: void_fn.clone(), mutability: Mut::Const, is_weak: false, span: Span::dummy() },
             ],
             methods: vec![
-                FnInfo { name: "body".into(),   type_params: vec![], params: vec![], return_ty: view_ret.clone(), span: Span::dummy() },
-                FnInfo { name: "render".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy() },
+                FnInfo { name: "body".into(),   type_params: vec![], params: vec![], return_ty: view_ret.clone(), span: Span::dummy(), is_extern: false, extern_abi: None, },
+                FnInfo { name: "render".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None, },
             ],
             superclass: Some("View".into()), span: Span::dummy(),
         };
@@ -719,6 +809,9 @@ impl SymbolTable {
             ],
             return_ty: Some(ReturnTy::Single(Ty { kind: TyKind::Named(Ident::new("Button", Span::dummy())), span: Span::dummy() })),
             span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });
 
         // VStack(children: Array<View>)
@@ -728,8 +821,8 @@ impl SymbolTable {
                 FieldInfo { name: "children".into(), ty: arr_view.clone(), mutability: Mut::Const, is_weak: false, span: Span::dummy() },
             ],
             methods: vec![
-                FnInfo { name: "body".into(),   type_params: vec![], params: vec![], return_ty: view_ret.clone(), span: Span::dummy() },
-                FnInfo { name: "render".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy() },
+                FnInfo { name: "body".into(),   type_params: vec![], params: vec![], return_ty: view_ret.clone(), span: Span::dummy(), is_extern: false, extern_abi: None, },
+                FnInfo { name: "render".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None, },
             ],
             superclass: Some("View".into()), span: Span::dummy(),
         };
@@ -739,6 +832,9 @@ impl SymbolTable {
             params: vec![Param { name: Ident::new("children", Span::dummy()), ty: arr_view.clone(), span: Span::dummy() }],
             return_ty: Some(ReturnTy::Single(Ty { kind: TyKind::Named(Ident::new("VStack", Span::dummy())), span: Span::dummy() })),
             span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });
 
         // HStack(children: Array<View>)
@@ -748,8 +844,8 @@ impl SymbolTable {
                 FieldInfo { name: "children".into(), ty: arr_view.clone(), mutability: Mut::Const, is_weak: false, span: Span::dummy() },
             ],
             methods: vec![
-                FnInfo { name: "body".into(),   type_params: vec![], params: vec![], return_ty: view_ret.clone(), span: Span::dummy() },
-                FnInfo { name: "render".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy() },
+                FnInfo { name: "body".into(),   type_params: vec![], params: vec![], return_ty: view_ret.clone(), span: Span::dummy(), is_extern: false, extern_abi: None, },
+                FnInfo { name: "render".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None, },
             ],
             superclass: Some("View".into()), span: Span::dummy(),
         };
@@ -759,6 +855,9 @@ impl SymbolTable {
             params: vec![Param { name: Ident::new("children", Span::dummy()), ty: arr_view.clone(), span: Span::dummy() }],
             return_ty: Some(ReturnTy::Single(Ty { kind: TyKind::Named(Ident::new("HStack", Span::dummy())), span: Span::dummy() })),
             span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });
 
         // Spacer()
@@ -766,8 +865,8 @@ impl SymbolTable {
             kind: TypeKind::Class, name: "Spacer".into(), type_params: vec![],
             fields: vec![],
             methods: vec![
-                FnInfo { name: "body".into(),   type_params: vec![], params: vec![], return_ty: view_ret.clone(), span: Span::dummy() },
-                FnInfo { name: "render".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy() },
+                FnInfo { name: "body".into(),   type_params: vec![], params: vec![], return_ty: view_ret.clone(), span: Span::dummy(), is_extern: false, extern_abi: None, },
+                FnInfo { name: "render".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None, },
             ],
             superclass: Some("View".into()), span: Span::dummy(),
         };
@@ -776,6 +875,9 @@ impl SymbolTable {
             name: "Spacer".into(), type_params: vec![], params: vec![],
             return_ty: Some(ReturnTy::Single(Ty { kind: TyKind::Named(Ident::new("Spacer", Span::dummy())), span: Span::dummy() })),
             span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });
 
         // TextField(value: string, onChange: fn(string) -> void)
@@ -786,8 +888,8 @@ impl SymbolTable {
                 FieldInfo { name: "onChange".into(), ty: str_fn.clone(),  mutability: Mut::Const, is_weak: false, span: Span::dummy() },
             ],
             methods: vec![
-                FnInfo { name: "body".into(),   type_params: vec![], params: vec![], return_ty: view_ret.clone(), span: Span::dummy() },
-                FnInfo { name: "render".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy() },
+                FnInfo { name: "body".into(),   type_params: vec![], params: vec![], return_ty: view_ret.clone(), span: Span::dummy(), is_extern: false, extern_abi: None, },
+                FnInfo { name: "render".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None, },
             ],
             superclass: Some("View".into()), span: Span::dummy(),
         };
@@ -800,6 +902,9 @@ impl SymbolTable {
             ],
             return_ty: Some(ReturnTy::Single(Ty { kind: TyKind::Named(Ident::new("TextField", Span::dummy())), span: Span::dummy() })),
             span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });
 
         // App(title: string, root: View) — root is any class implementing View.
@@ -808,7 +913,7 @@ impl SymbolTable {
             kind: TypeKind::Class, name: "App".into(), type_params: vec![],
             fields: vec![],
             methods: vec![
-                FnInfo { name: "run".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy() },
+                FnInfo { name: "run".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None, },
             ],
             superclass: None, span: Span::dummy(),
         };
@@ -821,6 +926,9 @@ impl SymbolTable {
             ],
             return_ty: Some(ReturnTy::Single(Ty { kind: TyKind::Named(Ident::new("App", Span::dummy())), span: Span::dummy() })),
             span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });
 
         // Suppress unused variable warnings
@@ -830,6 +938,9 @@ impl SymbolTable {
             name: "jsonBool".into(), type_params: vec![],
             params: vec![Param { name: Ident::new("v", Span::dummy()), ty: Ty { kind: TyKind::Named(Ident::new("bool", Span::dummy())), span: Span::dummy() }, span: Span::dummy() }],
             return_ty: Some(ReturnTy::Single(str_ty2.clone())), span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });
 
         // ── Phase 4: renderTemplate + serveFile ──────────────────────────────
@@ -859,6 +970,9 @@ impl SymbolTable {
             ],
             return_ty: Some(ReturnTy::Tuple(vec![str_ty4.clone(), err_ty.clone()])),
             span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });
 
         // serveFile(path) -> HttpResponse
@@ -867,6 +981,9 @@ impl SymbolTable {
             params: vec![Param { name: Ident::new("path", Span::dummy()), ty: str_ty4.clone(), span: Span::dummy() }],
             return_ty: Some(ReturnTy::Single(resp_ty2.clone())),
             span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });
 
         // ── Phase 5: jsonDecode ──────────────────────────────────────────────
@@ -877,6 +994,9 @@ impl SymbolTable {
             params: vec![Param { name: Ident::new("s", Span::dummy()), ty: str_ty4.clone(), span: Span::dummy() }],
             return_ty: Some(ReturnTy::Tuple(vec![map_str_str.clone(), err_ty.clone()])),
             span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });
 
         // jsonDecodeGet(s, key) -> string  (convenience — gets a key from a decoded object)
@@ -888,6 +1008,9 @@ impl SymbolTable {
             ],
             return_ty: Some(ReturnTy::Single(str_ty4.clone())),
             span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });        let thread_def = TypeDef {
             kind: TypeKind::Class,
             name: "Thread".into(),
@@ -900,7 +1023,10 @@ impl SymbolTable {
                     params: vec![],
                     return_ty: None, // void
                     span: Span::dummy(),
-                },
+                
+            is_extern: false,
+            extern_abi: None,
+        },
             ],
             superclass: None,
             span: Span::dummy(),
@@ -925,6 +1051,9 @@ impl SymbolTable {
                 span: Span::dummy(),
             })),
             span: Span::dummy(),
+        
+            is_extern: false,
+            extern_abi: None,
         });
 
         // `Task<T>` — result of `async fn(args)`. ARC reference type.
@@ -942,7 +1071,10 @@ impl SymbolTable {
                     params: vec![],
                     return_ty: Some(ReturnTy::Single(t_ty.clone())),
                     span: Span::dummy(),
-                },
+                
+            is_extern: false,
+            extern_abi: None,
+        },
             ],
             superclass: None,
             span: Span::dummy(),
@@ -970,7 +1102,10 @@ impl SymbolTable {
                     params: vec![],
                     return_ty: Some(ReturnTy::Single(mutex_guard_ty)),
                     span: Span::dummy(),
-                },
+                
+            is_extern: false,
+            extern_abi: None,
+        },
             ],
             superclass: None,
             span: Span::dummy(),
@@ -1010,9 +1145,6 @@ impl SymbolTable {
 
     fn collect_item(&mut self, item: &Item) -> TypeResult<()> {
         match &item.kind {
-            // Imports are resolved by the compiler driver before typechecking.
-            // By the time collect_item runs, imported symbols are already merged
-            // into this symbol table. Nothing to do here.
             ItemKind::Import { .. } => Ok(()),
             ItemKind::Struct(s)   => self.collect_struct(s),
             ItemKind::Class(c)    => self.collect_class(c),
@@ -1020,6 +1152,10 @@ impl SymbolTable {
             ItemKind::Protocol(p) => self.collect_protocol(p),
             ItemKind::Impl(i)     => self.collect_impl(i),
             ItemKind::Fn(f)       => self.collect_fn(f),
+            ItemKind::ExternFn(f) => {
+                self.functions.insert(f.name.name.clone(), FnInfo::from_extern_fn_def(f));
+                Ok(())
+            }
         }
     }
 
@@ -1097,7 +1233,10 @@ impl SymbolTable {
                 params: f.params.iter().map(|p| p.clone()).collect(),
                 return_ty: f.return_ty.clone(),
                 span: f.span,
-            })
+            
+            is_extern: false,
+            extern_abi: None,
+        })
             .collect();
         let mut all_methods: Vec<FnInfo> = p.methods.iter().map(FnInfo::from_fn_sig).collect();
         all_methods.extend(default_sigs);

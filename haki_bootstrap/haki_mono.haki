@@ -15,7 +15,7 @@
 // Full generics specialization (Stack<int> → Stack__int) is scaffolded
 // but deferred — the bootstrap compiler uses the Rust host for codegen.
 
-import "./haki_compiler" as compiler
+import "/home/claude/haki_bootstrap/haki_compiler" as compiler
 
 // ── Mono output types ─────────────────────────────────────────────────────────
 
@@ -207,4 +207,23 @@ fn main() {
 // Factory helpers for cross-module MonoFn construction
 fn makeMonoFn(name: string, params: Array<compiler.Param>, retTy: string, body: Array<compiler.Stmt>) -> MonoFn {
     return MonoFn(name: name, params: params, retTy: retTy, body: body)
+}
+
+// ── Import resolution support ─────────────────────────────────────────────────
+
+/// Merge all functions from `src` into `dst`, prefixing their names with `alias__`.
+/// Used by the driver to inline imported module functions into the main program.
+fn mergeProgramWithAlias(dst: MonoProgram, src: MonoProgram, alias: string) {
+    for f in src.fns {
+        const prefixed = MonoFn(
+            name:   alias + "__" + f.name,
+            params: f.params,
+            retTy:  f.retTy,
+            body:   f.body
+        )
+        dst.fns.append(prefixed)
+    }
+    for s in src.structs {
+        dst.structs.append(s)
+    }
 }

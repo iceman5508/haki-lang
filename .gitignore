@@ -8,3 +8,14 @@ Cargo.lock  # remove this line if you want to commit the lockfile
 *.ll
 haki_runtime.c
 *.haki
+
+# Bootstrap compiled binaries (ELF/Mach-O — not source)
+haki_bootstrap/haki_cemit
+haki_bootstrap/haki_compiler
+haki_bootstrap/haki_mono
+haki_bootstrap/haki_typeck
+haki_bootstrap/hakic
+
+# mod_haki compiled binaries
+mod_haki/haki_fastcgi
+mod_haki/test_harness

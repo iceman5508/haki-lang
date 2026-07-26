@@ -533,9 +533,9 @@ fn test_expr_match() {
     let ItemKind::Fn(f) = &item.kind else { panic!() };
     let StmtKind::Match(m) = &f.body.stmts[0].kind else { panic!() };
     assert_eq!(m.arms.len(), 2);
-    assert_eq!(m.arms[0].pattern.name, "NetworkError");
+    assert!(matches!(&m.arms[0].pattern, MatchPattern::Ident(id) if id.name == "NetworkError"));
     assert_eq!(m.arms[0].bindings[0].name, "e");
-    assert_eq!(m.arms[1].pattern.name, "Error");
+    assert!(matches!(&m.arms[1].pattern, MatchPattern::Ident(id) if id.name == "Error"));
 }
 
 #[test]
@@ -694,4 +694,67 @@ fn test_error_missing_fn_body() {
 #[test]
 fn test_error_unterminated_string() {
     assert!(parse(r#"fn f() { const x = "oops }"#).is_err());
+}
+
+// ── Error recovery tests ──────────────────────────────────────────────────────
+
+#[test]
+fn test_recovery_single_bad_item() {
+    // One broken item followed by one good item.
+    // The broken item is skipped; the good one is kept.
+    // Missing function name — valid tokens, invalid syntax
+    let result = haki_parser::parse_recovery(
+        "fn (a: int) { }\nfn add(a: int, b: int) -> int { return a + b }\n"
+    );
+    assert!(!result.is_ok(), "should have at least one error");
+    assert_eq!(result.ast.items.len(), 1, "good item should be in AST");
+    assert!(!result.errors.is_empty());
+}
+
+#[test]
+fn test_recovery_multiple_errors() {
+    // Missing function name, then good, then struct missing name, then good
+    let result = haki_parser::parse_recovery(
+        "fn (x: int) { }\nfn good1() { }\nstruct { }\nfn good2() { }\n"
+    );
+    assert_eq!(result.ast.items.len(), 2, "two good items should survive");
+    assert_eq!(result.errors.len(), 2, "two errors");
+}
+
+#[test]
+fn test_recovery_unclosed_paren() {
+    // Broken struct body (statement inside struct at top level = parse error)
+    // followed by a good fn — recovery must skip the broken struct and keep fine()
+    let result = haki_parser::parse_recovery(
+        "struct Bad { let x = 1 + 2 }\nfn fine() -> int { return 42 }\n"
+    );
+    assert!(!result.errors.is_empty(), "should have errors");
+    // fine() should survive after recovery skips Bad
+    assert!(result.ast.items.iter().any(|item| {
+        matches!(&item.kind, haki_ast::ItemKind::Fn(f) if f.name.name == "fine")
+    }), "fine() not found in AST; items: {:?}", result.ast.items.len());
+}
+
+#[test]
+fn test_recovery_all_valid() {
+    // No errors — parse_recovery and parse agree.
+    let result = haki_parser::parse_recovery(r#"
+fn add(a: int, b: int) -> int { return a + b }
+fn sub(a: int, b: int) -> int { return a - b }
+"#);
+    assert!(result.is_ok());
+    assert_eq!(result.ast.items.len(), 2);
+    assert!(result.errors.is_empty());
+}
+
+#[test]
+fn test_recovery_error_span() {
+    // Errors should carry valid spans pointing into the source.
+    let src = "fn @@@bad {\nfn ok() { }\n";
+    let result = haki_parser::parse_recovery(src);
+    assert!(!result.errors.is_empty());
+    for err in &result.errors {
+        let span = err.span();
+        assert!(span.lo <= span.hi, "error span lo <= hi");
+    }
 }
