@@ -1,0 +1,442 @@
+// haki_typeinfer.haki — Type inference pass for the Haki bootstrap compiler.
+//
+// Produces TypedExpr nodes from raw compiler.Expr nodes by threading type
+// information from the SymTable down through expression trees.
+//
+// Scope (v2.1): handles exactly what the bootstrap corpus uses.
+//   - Literal types: int, float, bool, string, null
+//   - Variable lookup from a scope chain
+//   - Binary operators: type-correct + vs string_concat, == vs strcmp, etc.
+//   - Function call return type from SymTable
+//   - Field access (conservative: void* for unknown)
+//   - If/match expressions (type of first branch)
+//   - Array literals → Array<T>
+//
+// Does NOT handle: generics instantiation, protocol dispatch, closures,
+// complex inference chains. These aren't needed for the bootstrap corpus.
+
+import "./haki_compiler" as compiler
+import "./haki_typeck"   as typeck
+
+// ── TypedExpr ──────────────────────────────────────────────────────────────────
+
+// All TypedExpr variants carry a `ty` string field:
+//   "int"    → int64_t in C
+//   "float"  → double in C
+//   "bool"   → int8_t in C
+//   "string" → const char* in C
+//   "void"   → void in C
+//   anything else → void* in C (named/generic types, arrays, etc.)
+
+struct TypedExpr {
+    const kind: compiler.Expr   // original raw expr — reused for structure
+    const ty:   string          // resolved type string
+}
+
+struct TypedStmt {
+    const kind:    compiler.Stmt  // original raw stmt
+    const declTy:  string         // for let/const: the declared/inferred type
+}
+
+// ── Scope ─────────────────────────────────────────────────────────────────────
+
+// A flat scope chain: variable name → type string.
+// We use parallel arrays rather than Map to avoid Map generics complexity.
+struct Scope {
+    let names: Array<string>
+    let types: Array<string>
+}
+
+fn scopeNew() -> Scope {
+    return Scope(names: [], types: [])
+}
+
+fn scopeSet(sc: Scope, name: string, ty: string) {
+    // Update if exists
+    let i = 0
+    while i < sc.names.length {
+        if sc.names[i] == name {
+            sc.types[i] = ty
+            return
+        }
+        i = i + 1
+    }
+    // Add new
+    sc.names.append(name)
+    sc.types.append(ty)
+}
+
+fn scopeGet(sc: Scope, name: string) -> string {
+    let i = 0
+    while i < sc.names.length {
+        if sc.names[i] == name { return sc.types[i] }
+        i = i + 1
+    }
+    return "void*"   // unknown → opaque pointer
+}
+
+fn scopeCopy(sc: Scope) -> Scope {
+    let copy = scopeNew()
+    let i = 0
+    while i < sc.names.length {
+        copy.names.append(sc.names[i])
+        copy.types.append(sc.types[i])
+        i = i + 1
+    }
+    return copy
+}
+
+// ── Primitive type helpers ─────────────────────────────────────────────────────
+
+fn isIntTy(ty: string) -> bool {
+    return ty == "int"
+}
+
+fn isFloatTy(ty: string) -> bool {
+    return ty == "float"
+}
+
+fn isStringTy(ty: string) -> bool {
+    return ty == "string"
+}
+
+fn isBoolTy(ty: string) -> bool {
+    return ty == "bool"
+}
+
+fn isNumericTy(ty: string) -> bool {
+    if ty == "int"   { return true }
+    if ty == "float" { return true }
+    return false
+}
+
+// Return the C operator string for a binary op given the operand type.
+fn binaryOpC(op: string, ty: string) -> string {
+    // Arithmetic
+    if op == "+"  && isNumericTy(ty)  { return "+" }
+    if op == "-"  && isNumericTy(ty)  { return "-" }
+    if op == "*"  && isNumericTy(ty)  { return "*" }
+    if op == "/"  && isNumericTy(ty)  { return "/" }
+    if op == "%"  && isNumericTy(ty)  { return "%" }
+    // Comparisons on numbers
+    if op == "<"  && isNumericTy(ty)  { return "<" }
+    if op == ">"  && isNumericTy(ty)  { return ">" }
+    if op == "<=" && isNumericTy(ty)  { return "<=" }
+    if op == ">=" && isNumericTy(ty)  { return ">=" }
+    if op == "==" && isNumericTy(ty)  { return "==" }
+    if op == "!=" && isNumericTy(ty)  { return "!=" }
+    // Bool operators
+    if op == "==" && isBoolTy(ty)     { return "==" }
+    if op == "!=" && isBoolTy(ty)     { return "!=" }
+    if op == "&&"                     { return "&&" }
+    if op == "||"                     { return "||" }
+    // String concat
+    if op == "+"  && isStringTy(ty)   { return "string_concat" }
+    // String equality via strcmp
+    if op == "==" && isStringTy(ty)   { return "string_eq" }
+    if op == "!=" && isStringTy(ty)   { return "string_neq" }
+    // Pointer equality (null checks, named types)
+    if op == "==" { return "ptr_eq" }
+    if op == "!=" { return "ptr_neq" }
+    // Fallback
+    return op
+}
+
+// ── Infer return type of a known builtin/runtime call ─────────────────────────
+
+fn builtinReturnTy(name: string) -> string {
+    // Print functions → void
+    if name == "print"         { return "void" }
+    if name == "print_int"     { return "void" }
+    if name == "print_float"   { return "void" }
+    if name == "print_bool"    { return "void" }
+    // String ops → string
+    if name == "int_to_string"    { return "string" }
+    if name == "float_to_string"  { return "string" }
+    if name == "bool_to_string"   { return "string" }
+    if name == "string_length"    { return "int" }
+    if name == "string_concat"    { return "string" }
+    if name == "string_substring" { return "string" }
+    if name == "string_contains"  { return "bool" }
+    if name == "string_split"     { return "string" }  // Array<string> but we use void*
+    if name == "string_to_upper"  { return "string" }
+    if name == "string_to_lower"  { return "string" }
+    if name == "string_trim"      { return "string" }
+    // Numeric
+    if name == "int_to_float"  { return "float" }
+    if name == "float_to_int"  { return "int" }
+    // File I/O → tuple → void*
+    if name == "readFile"   { return "void*" }
+    if name == "writeFile"  { return "void*" }
+    // Array ops → int or element or void*
+    if name == "haki_array_length" { return "int" }
+    // argv → Array → void*
+    if name == "argv" { return "void*" }
+    // Panic
+    if name == "panic" { return "void" }
+    return "void*"
+}
+
+// ── Type inference for expressions ────────────────────────────────────────────
+
+fn inferExprTy(e: compiler.Expr, sc: Scope, sym: typeck.SymTable) -> string {
+    const tag = match e {
+        EInt(n)             { yield "int_lit" }
+        EBool(b)            { yield "bool_lit" }
+        ENull               { yield "null" }
+        EString(s)          { yield "string_lit" }
+        EIdent(n)           { yield "ident" }
+        EUnary(op, inner)   { yield "unary" }
+        EBinary(op, l, r)   { yield "binary" }
+        ECall(n, args)      { yield "call" }
+        EField(recv, f)     { yield "field" }
+        EMethodCall(r,m,ma) { yield "method" }
+        EIndex(a, idx)      { yield "index" }
+        EArray(elems)       { yield "array" }
+        EIf(c, th, el)      { yield "if" }
+        EMatch(s, arms)     { yield "match" }
+        EBlock(stmts)       { yield "block" }
+        EAsync(inner)       { yield "async" }
+        _                   { yield "unknown" }
+    }
+
+    if tag == "int_lit"    { return "int" }
+    if tag == "bool_lit"   { return "bool" }
+    if tag == "null"       { return "void*" }
+    if tag == "string_lit" { return "string" }
+
+    if tag == "ident" {
+        const name = match e { EIdent(n) { yield n } _ { yield "" } }
+        return scopeGet(sc, name)
+    }
+
+    if tag == "unary" {
+        const op    = match e { EUnary(op, inner) { yield op }    _ { yield "" } }
+        const inner = match e { EUnary(op, inner) { yield inner } _ { yield compiler.nullExpr() } }
+        if op == "!" { return "bool" }
+        if op == "-" {
+            const ity = inferExprTy(inner, sc, sym)
+            return ity  // -int → int, -float → float
+        }
+        return "void*"
+    }
+
+    if tag == "binary" {
+        const op = match e { EBinary(op, l, r) { yield op } _ { yield "" } }
+        const l  = match e { EBinary(op, l, r) { yield l }  _ { yield compiler.nullExpr() } }
+        // Infer type of left operand — determines the operator semantics
+        const lty = inferExprTy(l, sc, sym)
+        // && and || always bool
+        if op == "&&" || op == "||" { return "bool" }
+        // Comparisons always bool
+        if op == "==" || op == "!=" { return "bool" }
+        if op == "<"  || op == ">"  { return "bool" }
+        if op == "<=" || op == ">=" { return "bool" }
+        // Arithmetic: result same type as operands
+        if op == "+" || op == "-" || op == "*" || op == "/" || op == "%" {
+            return lty
+        }
+        return lty
+    }
+
+    if tag == "call" {
+        const name = match e { ECall(n, args) { yield n } _ { yield "" } }
+        // Check builtin first
+        const bty = builtinReturnTy(name)
+        if bty != "void*" { return bty }
+        // Check sym table
+        const info, found = typeck.symLookupFn(sym, name)
+        if found {
+            // Map SemTy to string via the typeck helper
+            const retTyStr = typeck.semTyToStr(info.retTy)
+            if retTyStr == "int"    { return "int" }
+            if retTyStr == "float"  { return "float" }
+            if retTyStr == "bool"   { return "bool" }
+            if retTyStr == "string" { return "string" }
+            if retTyStr == "void"   { return "void" }
+        }
+        return "void*"
+    }
+
+    if tag == "field" {
+        // Conservative: return void* unless we know the specific field
+        const recv = match e { EField(recv, f) { yield recv } _ { yield compiler.nullExpr() } }
+        const f    = match e { EField(recv, f) { yield f }    _ { yield "" } }
+        // .length on arrays → int
+        if f == "length" { return "int" }
+        // .message on errors → string
+        if f == "message" { return "string" }
+        return "void*"
+    }
+
+    if tag == "method" {
+        const m = match e { EMethodCall(r,m,ma) { yield m } _ { yield "" } }
+        // Known methods that return non-void*
+        if m == "length"    { return "int" }
+        if m == "substring" { return "string" }
+        if m == "contains"  { return "bool" }
+        if m == "toUpper"   { return "string" }
+        if m == "toLower"   { return "string" }
+        if m == "trim"      { return "string" }
+        return "void*"
+    }
+
+    if tag == "index" { return "void*" }
+    if tag == "array" { return "void*" }  // Array<T> → opaque
+    if tag == "async" { return "void*" }
+
+    if tag == "if" {
+        const th = match e { EIf(c, th, el) { yield th } _ { yield compiler.emptyStmts() } }
+        // Type is the type of the then-branch's last expression (yield value)
+        if th.length > 0 {
+            const last = th[th.length - 1]
+            const lastTy = inferStmtYieldTy(last, sc, sym)
+            if string_length(lastTy) > 0 { return lastTy }
+        }
+        return "void*"
+    }
+
+    if tag == "match" {
+        // Type is the type of the first arm's yield value
+        const arms = match e { EMatch(s, arms) { yield arms } _ { yield compiler.emptyArms() } }
+        if arms.length > 0 {
+            const firstArm = arms[0]
+            const armTy = inferMatchArmTy(firstArm, sc, sym)
+            if string_length(armTy) > 0 { return armTy }
+        }
+        return "void*"
+    }
+
+    if tag == "block" {
+        const stmts = match e { EBlock(stmts) { yield stmts } _ { yield compiler.emptyStmts() } }
+        if stmts.length > 0 {
+            const last = stmts[stmts.length - 1]
+            const lastTy = inferStmtYieldTy(last, sc, sym)
+            if string_length(lastTy) > 0 { return lastTy }
+        }
+        return "void*"
+    }
+
+    return "void*"
+}
+
+fn inferStmtYieldTy(stmt: compiler.Stmt, sc: Scope, sym: typeck.SymTable) -> string {
+    const tag = match stmt {
+        SLet(isMut, name, init) { yield "let" }
+        SReturn(vals)           { yield "return" }
+        SYield(e)               { yield "yield" }
+        SExpr(e)                { yield "expr" }
+        _                       { yield "other" }
+    }
+    if tag == "yield" {
+        const e = match stmt { SYield(e) { yield e } _ { yield compiler.nullExpr() } }
+        return inferExprTy(e, sc, sym)
+    }
+    if tag == "expr" {
+        const e = match stmt { SExpr(e) { yield e } _ { yield compiler.nullExpr() } }
+        return inferExprTy(e, sc, sym)
+    }
+    return ""
+}
+
+fn inferMatchArmTy(arm: compiler.MatchArm, sc: Scope, sym: typeck.SymTable) -> string {
+    if arm.body.length > 0 {
+        const last = arm.body[arm.body.length - 1]
+        return inferStmtYieldTy(last, sc, sym)
+    }
+    return ""
+}
+
+// ── Build TypedExpr ────────────────────────────────────────────────────────────
+
+fn makeTyped(e: compiler.Expr, sc: Scope, sym: typeck.SymTable) -> TypedExpr {
+    const ty = inferExprTy(e, sc, sym)
+    return TypedExpr(kind: e, ty: ty)
+}
+
+// ── Scope population from function parameters ─────────────────────────────────
+
+fn populateScopeFromParams(sc: Scope, params: Array<compiler.Param>) {
+    for p in params {
+        // Map Haki type strings to our simplified type tags
+        const ty = simplifyTy(p.ty)
+        scopeSet(sc, p.name, ty)
+    }
+}
+
+fn simplifyTy(ty: string) -> string {
+    if ty == "int"    { return "int" }
+    if ty == "float"  { return "float" }
+    if ty == "bool"   { return "bool" }
+    if ty == "string" { return "string" }
+    if ty == "void"   { return "void" }
+    // Array types → void*
+    if string_length(ty) > 5 && ty.substring(0, 5) == "Array" { return "void*" }
+    if string_length(ty) > 3 && ty.substring(0, 3) == "Map"   { return "void*" }
+    // Optional types → void*
+    const n = string_length(ty)
+    if n > 1 && ty.substring(n - 1, n) == "?" { return "void*" }
+    // Named types (structs, etc.) → void*
+    return "void*"
+}
+
+// ── Walk a function body and annotate let bindings in scope ───────────────────
+
+fn inferFnScope(stmts: Array<compiler.Stmt>, sc: Scope, sym: typeck.SymTable) {
+    for stmt in stmts {
+        const tag = match stmt {
+            SLet(isMut, name, init) { yield "let" }
+            SIf(c, th, el)          { yield "if" }
+            SWhile(cond, body)      { yield "while" }
+            SFor(v, iter, body)     { yield "for" }
+            _                       { yield "other" }
+        }
+        if tag == "let" {
+            const name = match stmt { SLet(isMut, name, init) { yield name } _ { yield "" } }
+            const init = match stmt { SLet(isMut, name, init) { yield init } _ { yield compiler.nullExpr() } }
+            const ty = inferExprTy(init, sc, sym)
+            scopeSet(sc, name, ty)
+        }
+        if tag == "if" {
+            const th = match stmt { SIf(c, th, el) { yield th } _ { yield compiler.emptyStmts() } }
+            const el = match stmt { SIf(c, th, el) { yield el } _ { yield compiler.emptyStmts() } }
+            inferFnScope(th, sc, sym)
+            inferFnScope(el, sc, sym)
+        }
+        if tag == "while" {
+            const body = match stmt { SWhile(cond, body) { yield body } _ { yield compiler.emptyStmts() } }
+            inferFnScope(body, sc, sym)
+        }
+        if tag == "for" {
+            const v    = match stmt { SFor(v, iter, body) { yield v }    _ { yield "" } }
+            const body = match stmt { SFor(v, iter, body) { yield body } _ { yield compiler.emptyStmts() } }
+            scopeSet(sc, v, "void*")   // conservative: for loop var type unknown
+            inferFnScope(body, sc, sym)
+        }
+    }
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/// Look up the inferred type of an expression in the context of a function.
+/// This is the main entry point for the cemit layer.
+fn inferExpr(e: compiler.Expr, fnDef: compiler.FnDef, sym: typeck.SymTable) -> TypedExpr {
+    const sc = scopeNew()
+    populateScopeFromParams(sc, fnDef.params)
+    inferFnScope(fnDef.body, sc, sym)
+    return makeTyped(e, sc, sym)
+}
+
+/// Infer type of every expression in a function body, return scope.
+/// Used by the cemit to get a scope map for a function before emitting.
+fn buildFnScope(fnDef: compiler.FnDef, sym: typeck.SymTable) -> Scope {
+    const sc = scopeNew()
+    populateScopeFromParams(sc, fnDef.params)
+    inferFnScope(fnDef.body, sc, sym)
+    return sc
+}
+
+/// Infer the type of a single expression given a pre-built scope.
+fn inferWithScope(e: compiler.Expr, sc: Scope, sym: typeck.SymTable) -> string {
+    return inferExprTy(e, sc, sym)
+}

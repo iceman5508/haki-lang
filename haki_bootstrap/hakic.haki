@@ -3,10 +3,10 @@
 // Bootstrap-restricted Haki: no multi-return destructuring, no qualified calls.
 // Import resolution: recursively reads and merges all imported modules.
 
-import "/home/claude/haki_bootstrap/haki_compiler" as compiler
-import "/home/claude/haki_bootstrap/haki_typeck"   as typeck
-import "/home/claude/haki_bootstrap/haki_mono"     as mono
-import "/home/claude/haki_bootstrap/haki_cemit"    as cemit
+import "./haki_compiler" as compiler
+import "./haki_typeck"   as typeck
+import "./haki_mono"     as mono
+import "./haki_cemit"    as cemit
 
 fn printUsage() {
     print("usage: hakic <source.haki>")
@@ -61,7 +61,7 @@ fn resolveImports(dst: mono.MonoProgram, items: Array<compiler.Item>, visited: A
 fn doEmitC(srcPath: string, outPath: string) {
     const src, _srcErr = readFile(srcPath)
     const items, _pe3 = compiler__parse(src)
-    const rtSrc, _rtErr = readFile("/home/claude/haki_bootstrap/haki_runtime_core.c")
+    const rtSrc, _rtErr = readFile("./haki_runtime_core.c")
 
     // Standard path: emit user program with runtime embedded.
     // The bootstrap cemit handles this correctly for programs without

@@ -15,7 +15,7 @@
 // Full generics specialization (Stack<int> → Stack__int) is scaffolded
 // but deferred — the bootstrap compiler uses the Rust host for codegen.
 
-import "/home/claude/haki_bootstrap/haki_compiler" as compiler
+import "./haki_compiler" as compiler
 
 // ── Mono output types ─────────────────────────────────────────────────────────
 
