@@ -1639,8 +1639,14 @@ fn compile_and_run(args: RunArgs) {
                     eprintln!("hakic: cannot write C source: {e}"); process::exit(1);
                 }
                 // Compile C to native binary with gcc
+                // In run mode, output to temp dir so we exec an absolute path cleanly.
                 let out_path = args.output.clone().unwrap_or_else(|| {
-                    args.source.parent().unwrap_or(Path::new(".")).join(&stem)
+                    if args.run {
+                        // Run mode: put binary in temp dir, exec with absolute path
+                        work_dir.join(&stem)
+                    } else {
+                        args.source.parent().unwrap_or(Path::new(".")).join(&stem)
+                    }
                 });
                 if !quiet { eprintln!("[c-emit]  {} ({} bytes)", c_path.display(), c_src.len()); }
                 // Try gcc first (Linux, macOS, MinGW), then clang, then cl.exe (MSVC)
