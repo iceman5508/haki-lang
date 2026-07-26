@@ -561,6 +561,33 @@ fn main() {
         i += 1;
     }
 
+    // If the source is a .haki file and no output/emit flags specified,
+    // treat as `hakic run` — compile and execute immediately.
+    // This enables `hakic hello.haki` as the shortest possible invocation.
+    // Always uses --emit-c: the bare-path UX is the scripting path —
+    // fast, portable, no LLVM or libmicrohttpd dependency required.
+    let is_run_mode = output.is_none()
+        && !emit_ir && !emit_runtime && !emit_wasm && !emit_c_flag
+        && source.extension().and_then(|e| e.to_str()) == Some("haki");
+
+    if is_run_mode {
+        let run_args = RunArgs {
+            source:       source.clone(),
+            output:       None,
+            emit_ir:      false,
+            emit_runtime: false,
+            emit_wasm:    false,
+            emit_c:       true,  // bare-path always uses portable C backend
+            quiet,
+            run:          true,
+            run_args:     args[2..].iter()
+                            .filter(|a| !a.starts_with("--"))
+                            .cloned().collect(),
+        };
+        compile_and_run(run_args);
+        return;
+    }
+
     compile_and_run(RunArgs { source, output, emit_ir, emit_runtime, emit_wasm, emit_c: emit_c_flag, quiet, run: false, run_args: vec![] });
 }
 
@@ -1699,7 +1726,29 @@ fn compile_and_run(args: RunArgs) {
         return;
     }
 
-    // ── .ll → .o via llc ─────────────────────────────────────────────────
+    // ── .ll → .o via llc (or fall back to --emit-c if llc not found) ────────
+    if !tool_exists(&["llc", "llc-17", "llc-18", "llc-16"]) {
+        // llc not available — transparently fall back to the C backend.
+        // This is the common case for end users who installed hakic via
+        // Homebrew or the install script without a full LLVM toolchain.
+        if !args.quiet {
+            eprintln!("[info]    llc not found, using --emit-c backend");
+        }
+        let c_args = RunArgs {
+            source:       args.source.clone(),
+            output:       args.output.clone(),
+            emit_ir:      false,
+            emit_runtime: false,
+            emit_wasm:    false,
+            emit_c:       true,
+            quiet:        args.quiet,
+            run:          args.run,
+            run_args:     args.run_args.clone(),
+        };
+        compile_and_run(c_args);
+        return;
+    }
+
     let llc = find_tool(&["llc", "llc-17", "llc-18", "llc-16"]);
     run_step(Command::new(&llc).args([
         "-filetype=obj",
@@ -1809,6 +1858,13 @@ fn find_tool(candidates: &[&str]) -> String {
         }
     }
     candidates[0].to_string()
+}
+
+fn tool_exists(candidates: &[&str]) -> bool {
+    candidates.iter().any(|c| {
+        Command::new("which").arg(c).output()
+            .map_or(false, |o| o.status.success())
+    })
 }
 
 fn run_step(cmd: &mut Command, step: &str) {

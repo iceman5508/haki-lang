@@ -660,6 +660,19 @@ impl<'a> Cx<'a> {
                         _         => format!("/* unknown Error field {field} */NULL"),
                     });
                 }
+                // .length on Array or Map → runtime call
+                if field == "length" {
+                    match &recv.ty {
+                        SemTy::Generic(n, _) if n == "Array" =>
+                            return Ok(format!("haki_array_length({re})")),
+                        SemTy::Generic(n, _) if n == "Map" =>
+                            return Ok(format!("haki_map_length({re})")),
+                        // void* arrays (e.g. from argv()) — use array length
+                        SemTy::Named(n) if n == "Array" =>
+                            return Ok(format!("haki_array_length({re})")),
+                        _ => {}
+                    }
+                }
                 Ok(format!("{re}->{}", c_name(field)))
             }
 
