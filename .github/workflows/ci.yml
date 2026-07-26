@@ -22,7 +22,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           wget -O - https://apt.llvm.org/llvm.sh | sudo bash -s 17
-          sudo apt-get install -y llvm-17-dev libclang-17-dev clang-17 libmicrohttpd-dev
+          sudo apt-get install -y llvm-17-dev libclang-17-dev clang-17 libmicrohttpd-dev libgtk-3-dev
           echo "LLVM_SYS_170_PREFIX=/usr/lib/llvm-17" >> $GITHUB_ENV
 
       - name: Install LLVM (macOS)
