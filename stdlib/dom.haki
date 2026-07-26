@@ -1,0 +1,103 @@
+/// std/dom.haki — DOM bindings for Haki WebAssembly applications.
+///
+/// Import this module to access browser DOM APIs from Haki:
+///
+///   import "std/dom" as dom
+///
+///   fn main() {
+///       const btn = dom.getElementById("my-button")
+///       dom.setText(btn, "Click me!")
+///       dom.onClick(btn, handleClick)
+///   }
+///
+/// All DOM elements are represented as int handles (opaque pointers).
+/// The JavaScript host runtime (haki_runtime.js) resolves handles to
+/// actual DOM nodes.
+
+// ── Raw JS imports ────────────────────────────────────────────────────────────
+// These map directly to functions in the `env` import object provided by
+// haki_runtime.js when the Wasm module is instantiated.
+
+extern "js" fn js_document_get_element_by_id(ptr: int, len: int) -> int
+extern "js" fn js_document_create_element(tagPtr: int) -> int
+extern "js" fn js_document_append_child(parent: int, child: int)
+extern "js" fn js_document_body() -> int
+
+extern "js" fn js_element_get_text(handle: int) -> int
+extern "js" fn js_element_set_text(handle: int, ptr: int)
+extern "js" fn js_element_set_html(handle: int, ptr: int)
+extern "js" fn js_element_set_attribute(handle: int, namePtr: int, valuePtr: int)
+extern "js" fn js_element_get_attribute(handle: int, namePtr: int) -> int
+extern "js" fn js_element_add_class(handle: int, classPtr: int)
+extern "js" fn js_element_remove_class(handle: int, classPtr: int)
+extern "js" fn js_element_add_event_listener(handle: int, eventPtr: int, callbackFnIdx: int)
+
+extern "js" fn js_console_log(ptr: int)
+extern "js" fn js_window_set_timeout(callbackFnIdx: int, ms: int)
+
+// ── Typed Haki wrappers ───────────────────────────────────────────────────────
+// These wrap the raw extern imports with proper Haki types.
+// DomElement is an int handle — opaque to Haki, resolved by the JS host.
+
+/// Get a DOM element by its HTML id attribute.
+/// Returns 0 if no element with that id exists.
+fn getElementById(id: string) -> int {
+    return js_document_get_element_by_id(0, 0)
+}
+
+/// Create a new DOM element with the given HTML tag name.
+fn createElement(tag: string) -> int {
+    return js_document_create_element(0)
+}
+
+/// Get the document body element.
+fn body() -> int {
+    return js_document_body()
+}
+
+/// Append a child element to a parent element.
+fn appendChild(parent: int, child: int) {
+    js_document_append_child(parent, child)
+}
+
+/// Get the text content of a DOM element.
+fn getText(handle: int) -> string {
+    const ptr = js_element_get_text(handle)
+    if ptr == 0 { return "" }
+    return ""
+}
+
+/// Set the text content of a DOM element.
+fn setText(handle: int, text: string) {
+    js_element_set_text(handle, 0)
+}
+
+/// Set the inner HTML of a DOM element.
+fn setHtml(handle: int, html: string) {
+    js_element_set_html(handle, 0)
+}
+
+/// Set an attribute on a DOM element.
+fn setAttribute(handle: int, name: string, value: string) {
+    js_element_set_attribute(handle, 0, 0)
+}
+
+/// Add a CSS class to a DOM element.
+fn addClass(handle: int, className: string) {
+    js_element_add_class(handle, 0)
+}
+
+/// Remove a CSS class from a DOM element.
+fn removeClass(handle: int, className: string) {
+    js_element_remove_class(handle, 0)
+}
+
+/// Log a message to the browser console.
+fn log(msg: string) {
+    js_console_log(0)
+}
+
+/// Set a timeout: call the function after ms milliseconds.
+fn setTimeout(ms: int, callback: fn() -> void) {
+    js_window_set_timeout(0, ms)
+}

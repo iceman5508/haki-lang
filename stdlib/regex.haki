@@ -1,0 +1,34 @@
+/// std/regex — Basic pattern matching.
+///
+/// Usage: import "std/regex" as regex
+///
+/// v1.3 scope: POSIX extended regular expressions via C regcomp/regexec.
+/// Full PCRE support deferred to v1.4.
+
+/// Test if a string matches a pattern.
+/// Returns true if pattern matches anywhere in the string.
+///
+/// Example:
+///   regex.matches("hello world", "wor") → true
+///   regex.matches("abc123", "[0-9]+") → true
+fn matches(s: string, pattern: string) -> bool {
+    return haki_regex_matches(s, pattern)
+}
+
+/// Find the first match of pattern in s.
+/// Returns (match, null) if found, ("", Error) if not found or invalid pattern.
+fn find(s: string, pattern: string) -> (string, Error?) {
+    return haki_regex_find(s, pattern)
+}
+
+/// Replace all matches of pattern in s with replacement.
+/// Returns the new string (original unchanged).
+fn replaceAll(s: string, pattern: string, replacement: string) -> string {
+    return haki_regex_replace_all(s, pattern, replacement)
+}
+
+/// Split s on pattern. Returns Array<string>.
+/// Example: regex.split("one,two,,three", ",+") → ["one","two","three"]
+fn split(s: string, pattern: string) -> Array<string> {
+    return haki_regex_split(s, pattern)
+}

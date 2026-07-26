@@ -1,0 +1,60 @@
+/// std/json — JSON encoding and decoding.
+///
+/// Usage: import "std/json" as json
+///
+/// Encoding: Haki values → JSON strings
+/// Decoding: JSON strings → Map<string, string> (flat objects)
+///
+/// v1.3 scope: flat JSON objects. Nested objects and arrays are v1.4.
+
+/// Encode a string value as a JSON string (with quotes and escaping).
+fn string(value: string) -> string {
+    return jsonString(value)
+}
+
+/// Encode an integer as a JSON number.
+fn int(value: int) -> string {
+    return jsonInt(value)
+}
+
+/// Encode a boolean as JSON true/false.
+fn bool(value: bool) -> string {
+    return jsonBool(value)
+}
+
+/// Encode null.
+fn null() -> string {
+    return "null"
+}
+
+/// Build a JSON object from a Map<string, string>.
+/// Each value is treated as a pre-encoded JSON value.
+/// Example: json.object(Map("name": json.string("Isaac"), "age": json.int(30)))
+/// → {"name":"Isaac","age":30}
+fn object(fields: Map<string, string>) -> string {
+    return jsonEncodeObject(fields)
+}
+
+/// Build a JSON array from an Array<string>.
+/// Each element is treated as a pre-encoded JSON value.
+fn array(items: Array<string>) -> string {
+    return jsonEncodeArray(items)
+}
+
+/// Decode a flat JSON object string into Map<string, string>.
+/// All values are returned as strings regardless of their JSON type.
+/// Returns an error for malformed JSON or non-object input.
+fn decode(s: string) -> (Map<string, string>, Error?) {
+    return jsonDecode(s)
+}
+
+/// Convenience: decode a JSON string and get one field.
+fn decodeGet(s: string, key: string) -> string {
+    return jsonDecodeGet(s, key)
+}
+
+/// Encode a map as a proper JSON object with string values.
+/// Note: use json.object() for encoding; this is an alias.
+fn encode(fields: Map<string, string>) -> string {
+    return jsonEncodeObject(fields)
+}

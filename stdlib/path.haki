@@ -1,0 +1,73 @@
+/// std/path — File path utilities.
+/// Usage: import "std/path" as path
+
+/// Join two path segments, handling trailing/leading slashes.
+fn pathJoin(basePath: string, part: string) -> string {
+    const n = string_length(basePath)
+    if n == 0 { return part }
+    const lastChar = basePath.substring(n - 1, n)
+    if lastChar == "/" { return basePath + part }
+    return basePath + "/" + part
+}
+
+/// Return the directory component of a path.
+fn dir(p: string) -> string {
+    const n = string_length(p)
+    let i = n - 1
+    while i >= 0 {
+        const ch = p.substring(i, i + 1)
+        if ch == "/" {
+            if i == 0 { return "/" }
+            return p.substring(0, i)
+        }
+        i = i - 1
+    }
+    return "."
+}
+
+/// Return the final component of a path.
+fn base(p: string) -> string {
+    const n = string_length(p)
+    if n == 0 { return "" }
+    let i = n - 1
+    while i >= 0 {
+        const ch = p.substring(i, i + 1)
+        if ch == "/" { return p.substring(i + 1, n) }
+        i = i - 1
+    }
+    return p
+}
+
+/// Return the file extension including the dot.
+fn ext(p: string) -> string {
+    const n = string_length(p)
+    let i = n - 1
+    while i > 0 {
+        const ch = p.substring(i, i + 1)
+        if ch == "." { return p.substring(i, n) }
+        i = i - 1
+    }
+    return ""
+}
+
+/// Return the path without its extension.
+fn stem(p: string) -> string {
+    const e = ext(p)
+    if string_length(e) == 0 { return p }
+    const n = string_length(p)
+    const en = string_length(e)
+    return p.substring(0, n - en)
+}
+
+/// True if p is an absolute path (starts with /).
+fn isAbsolute(p: string) -> bool {
+    if string_length(p) == 0 { return false }
+    const first = p.substring(0, 1)
+    return first == "/"
+}
+
+/// True if the path does not contain ".." components.
+fn isSafe(p: string) -> bool {
+    const hasDotDot = p.contains("..")
+    return !hasDotDot
+}

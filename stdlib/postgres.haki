@@ -1,0 +1,171 @@
+/// std/postgres.haki — PostgreSQL bindings for Haki via libpq.
+///
+/// Import this module to connect to PostgreSQL databases:
+///
+///   import "std/postgres" as pg
+///
+///   fn main() {
+///       const conn, err = pg.connect("host=localhost dbname=mydb")
+///       if err != null { panic(err.message) }
+///       const rows, err2 = pg.query(conn, "SELECT id, name FROM users")
+///       if err2 != null { panic(err2.message) }
+///       const n = pg.rowCount(rows)
+///       print_int(n)
+///       pg.clearResult(rows)
+///       pg.disconnect(conn)
+///   }
+///
+/// Requires: libpq installed (brew install libpq / apt install libpq-dev)
+/// The @link("pq") attribute handles -lpq automatically.
+
+// ── Raw libpq C bindings ──────────────────────────────────────────────────────
+
+@link("pq")
+extern "c" fn PQconnectdb(conninfo: string) -> int
+
+@link("pq")
+extern "c" fn PQstatus(conn: int) -> int
+
+@link("pq")
+extern "c" fn PQerrorMessage(conn: int) -> string
+
+@link("pq")
+extern "c" fn PQexec(conn: int, query: string) -> int
+
+@link("pq")
+extern "c" fn PQexecParams(conn: int, query: string, nParams: int,
+                           paramTypes: int, paramValues: int,
+                           paramLengths: int, paramFormats: int,
+                           resultFormat: int) -> int
+
+@link("pq")
+extern "c" fn PQresultStatus(result: int) -> int
+
+@link("pq")
+extern "c" fn PQresultErrorMessage(result: int) -> string
+
+@link("pq")
+extern "c" fn PQntuples(result: int) -> int
+
+@link("pq")
+extern "c" fn PQnfields(result: int) -> int
+
+@link("pq")
+extern "c" fn PQfname(result: int, fieldNum: int) -> string
+
+@link("pq")
+extern "c" fn PQgetvalue(result: int, rowNum: int, fieldNum: int) -> string
+
+@link("pq")
+extern "c" fn PQgetisnull(result: int, rowNum: int, fieldNum: int) -> int
+
+@link("pq")
+extern "c" fn PQclear(result: int)
+
+@link("pq")
+extern "c" fn PQfinish(conn: int)
+
+// ── Constants (libpq ExecStatusType) ─────────────────────────────────────────
+// These match the libpq enum values. Used with resultStatus().
+
+const PGRES_EMPTY_QUERY    = 0
+const PGRES_COMMAND_OK     = 1
+const PGRES_TUPLES_OK      = 2
+const PGRES_COPY_OUT       = 3
+const PGRES_COPY_IN        = 4
+const PGRES_BAD_RESPONSE   = 5
+const PGRES_NONFATAL_ERROR = 6
+const PGRES_FATAL_ERROR    = 7
+
+const CONNECTION_OK  = 0
+const CONNECTION_BAD = 1
+
+// ── Typed Haki wrappers ───────────────────────────────────────────────────────
+// PgConn and PgResult are int handles — opaque to Haki, owned by libpq.
+// Always call disconnect() and clearResult() when done to avoid leaks.
+
+/// Open a PostgreSQL connection.
+/// Returns (conn_handle, null) on success or (0, Error) on failure.
+fn connect(conninfo: string) -> (int, Error?) {
+    const conn = PQconnectdb(conninfo)
+    const status = PQstatus(conn)
+    if status != CONNECTION_OK {
+        const msg = PQerrorMessage(conn)
+        PQfinish(conn)
+        return 0, Error(message: msg)
+    }
+    return conn, null
+}
+
+/// Close a PostgreSQL connection and free its resources.
+fn disconnect(conn: int) {
+    PQfinish(conn)
+}
+
+/// Execute a SQL query and return the result handle.
+/// Returns (result_handle, null) on success or (0, Error) on failure.
+fn query(conn: int, sql: string) -> (int, Error?) {
+    const result = PQexec(conn, sql)
+    const status = PQresultStatus(result)
+    if status != PGRES_TUPLES_OK {
+        if status != PGRES_COMMAND_OK {
+            const msg = PQresultErrorMessage(result)
+            PQclear(result)
+            return 0, Error(message: msg)
+        }
+    }
+    return result, null
+}
+
+/// Execute a SQL statement that returns no rows (INSERT, UPDATE, DELETE, DDL).
+fn exec(conn: int, sql: string) -> Error? {
+    const result = PQexec(conn, sql)
+    const status = PQresultStatus(result)
+    if status != PGRES_COMMAND_OK {
+        if status != PGRES_TUPLES_OK {
+            const msg = PQresultErrorMessage(result)
+            PQclear(result)
+            return Error(message: msg)
+        }
+    }
+    PQclear(result)
+    return null
+}
+
+/// Number of rows in a result set.
+fn rowCount(result: int) -> int {
+    return PQntuples(result)
+}
+
+/// Number of columns in a result set.
+fn colCount(result: int) -> int {
+    return PQnfields(result)
+}
+
+/// Get a column name by index (0-based).
+fn colName(result: int, col: int) -> string {
+    return PQfname(result, col)
+}
+
+/// Get a cell value as a string. Returns "" for NULL values.
+fn getValue(result: int, row: int, col: int) -> string {
+    const is_null = PQgetisnull(result, row, col)
+    if is_null != 0 { return "" }
+    return PQgetvalue(result, row, col)
+}
+
+/// Returns true if a cell is NULL.
+fn isNull(result: int, row: int, col: int) -> bool {
+    return PQgetisnull(result, row, col) != 0
+}
+
+/// Free a result set returned by query().
+/// Must be called when done with the result to avoid memory leaks.
+fn clearResult(result: int) {
+    PQclear(result)
+}
+
+/// Get the last error message from a connection.
+fn lastError(conn: int) -> string {
+    return PQerrorMessage(conn)
+}

@@ -1,0 +1,31 @@
+/// std/process — Subprocess spawning and output capture.
+///
+/// Usage: import "std/process" as process
+
+/// Run a command and capture its stdout.
+/// Returns (stdout, null) on success, ("", Error) on failure.
+///
+/// Example:
+///   const out, err = process.run("git", ["rev-parse", "HEAD"])
+///   if err != null { panic(err.message) }
+///   print(out)
+fn run(cmd: string, args: Array<string>) -> (string, Error?) {
+    return haki_process_run(cmd, args)
+}
+
+/// Run a command and return its exit code.
+/// stdout/stderr are inherited (printed directly to terminal).
+fn exec(cmd: string, args: Array<string>) -> (int, Error?) {
+    return haki_process_exec(cmd, args)
+}
+
+/// Run a shell command string (passed to /bin/sh -c on Unix).
+/// Returns (stdout, null) on success.
+fn shell(cmd: string) -> (string, Error?) {
+    return haki_process_shell(cmd)
+}
+
+/// Exit the current process with the given code.
+fn exit(code: int) {
+    haki_process_exit(code)
+}

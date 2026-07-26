@@ -1,0 +1,210 @@
+/// std/sqlite.haki — SQLite 3 bindings for Haki.
+///
+/// Import this module for embedded SQL databases:
+///
+///   import "std/sqlite" as db
+///
+///   fn main() {
+///       const conn, err = db.open("myapp.db")
+///       if err != null { panic(err.message) }
+///
+///       const err2 = db.exec(conn, "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)")
+///       if err2 != null { panic(err2.message) }
+///
+///       const rows, err3 = db.query(conn, "SELECT * FROM users")
+///       if err3 != null { panic(err3.message) }
+///       const n = db.rowCount(rows)
+///       print_int(n)
+///       db.closeResult(rows)
+///       db.close(conn)
+///   }
+///
+/// Requires: SQLite 3 (brew install sqlite / apt install libsqlite3-dev)
+/// The @link("sqlite3") attribute handles -lsqlite3 automatically.
+
+// ── Raw SQLite 3 C bindings ───────────────────────────────────────────────────
+
+@link("sqlite3")
+extern "c" fn sqlite3_open(filename: string, ppDb: int) -> int
+
+@link("sqlite3")
+extern "c" fn sqlite3_close(db: int) -> int
+
+@link("sqlite3")
+extern "c" fn sqlite3_errmsg(db: int) -> string
+
+@link("sqlite3")
+extern "c" fn sqlite3_exec(db: int, sql: string, callback: int,
+                           arg: int, errmsg: int) -> int
+
+@link("sqlite3")
+extern "c" fn sqlite3_prepare_v2(db: int, sql: string, nByte: int,
+                                  ppStmt: int, pzTail: int) -> int
+
+@link("sqlite3")
+extern "c" fn sqlite3_step(stmt: int) -> int
+
+@link("sqlite3")
+extern "c" fn sqlite3_finalize(stmt: int) -> int
+
+@link("sqlite3")
+extern "c" fn sqlite3_column_count(stmt: int) -> int
+
+@link("sqlite3")
+extern "c" fn sqlite3_column_name(stmt: int, n: int) -> string
+
+@link("sqlite3")
+extern "c" fn sqlite3_column_text(stmt: int, iCol: int) -> string
+
+@link("sqlite3")
+extern "c" fn sqlite3_column_int64(stmt: int, iCol: int) -> int
+
+@link("sqlite3")
+extern "c" fn sqlite3_column_double(stmt: int, iCol: int) -> float
+
+@link("sqlite3")
+extern "c" fn sqlite3_column_type(stmt: int, iCol: int) -> int
+
+@link("sqlite3")
+extern "c" fn sqlite3_bind_text(stmt: int, idx: int, val: string,
+                                 n: int, destructor: int) -> int
+
+@link("sqlite3")
+extern "c" fn sqlite3_bind_int64(stmt: int, idx: int, val: int) -> int
+
+@link("sqlite3")
+extern "c" fn sqlite3_bind_double(stmt: int, idx: int, val: float) -> int
+
+@link("sqlite3")
+extern "c" fn sqlite3_bind_null(stmt: int, idx: int) -> int
+
+@link("sqlite3")
+extern "c" fn sqlite3_reset(stmt: int) -> int
+
+@link("sqlite3")
+extern "c" fn sqlite3_changes(db: int) -> int
+
+// ── SQLite result codes ───────────────────────────────────────────────────────
+
+const SQLITE_OK       = 0
+const SQLITE_ERROR    = 1
+const SQLITE_ROW      = 100
+const SQLITE_DONE     = 101
+
+// ── SQLite column types ───────────────────────────────────────────────────────
+
+const SQLITE_INTEGER = 1
+const SQLITE_FLOAT   = 2
+const SQLITE_TEXT    = 3
+const SQLITE_BLOB    = 4
+const SQLITE_NULL    = 5
+
+// ── Haki runtime helper — sqlite3_open takes a pointer-to-pointer ─────────────
+// SQLite's open function writes the db handle into *ppDb, but Haki can't pass
+// a pointer-to-pointer directly. We use a thin C shim in the runtime that
+// handles the indirection and returns the handle as an int.
+
+@link("sqlite3")
+extern "c" fn haki_sqlite3_open(filename: string) -> int
+
+@link("sqlite3")
+extern "c" fn haki_sqlite3_prepare(db: int, sql: string) -> int
+
+// ── Typed Haki wrappers ───────────────────────────────────────────────────────
+
+/// Open a SQLite database file. Creates it if it doesn't exist.
+/// Returns (db_handle, null) on success or (0, Error) on failure.
+fn open(filename: string) -> (int, Error?) {
+    const db = haki_sqlite3_open(filename)
+    if db == 0 {
+        return 0, Error(message: "sqlite3_open failed")
+    }
+    return db, null
+}
+
+/// Close a SQLite database connection.
+fn close(db: int) {
+    sqlite3_close(db)
+}
+
+/// Execute a SQL statement with no result rows (INSERT, UPDATE, DELETE, DDL).
+fn exec(db: int, sql: string) -> Error? {
+    const stmt = haki_sqlite3_prepare(db, sql)
+    if stmt == 0 {
+        const msg = sqlite3_errmsg(db)
+        return Error(message: msg)
+    }
+    const rc = sqlite3_step(stmt)
+    sqlite3_finalize(stmt)
+    if rc != SQLITE_DONE {
+        if rc != SQLITE_ROW {
+            const msg = sqlite3_errmsg(db)
+            return Error(message: msg)
+        }
+    }
+    return null
+}
+
+/// Execute a SELECT query and return a prepared statement handle.
+/// Iterate rows with step(), read values with getInt/getText/getFloat.
+/// Call closeResult() when done.
+fn query(db: int, sql: string) -> (int, Error?) {
+    const stmt = haki_sqlite3_prepare(db, sql)
+    if stmt == 0 {
+        const msg = sqlite3_errmsg(db)
+        return 0, Error(message: msg)
+    }
+    return stmt, null
+}
+
+/// Advance to the next row. Returns true if a row is available.
+fn step(stmt: int) -> bool {
+    return sqlite3_step(stmt) == SQLITE_ROW
+}
+
+/// Number of columns in the current result set.
+fn colCount(stmt: int) -> int {
+    return sqlite3_column_count(stmt)
+}
+
+/// Get a column name by index (0-based).
+fn colName(stmt: int, col: int) -> string {
+    return sqlite3_column_name(stmt, col)
+}
+
+/// Get the current row's value at `col` as a string.
+fn getText(stmt: int, col: int) -> string {
+    const t = sqlite3_column_type(stmt, col)
+    if t == SQLITE_NULL { return "" }
+    return sqlite3_column_text(stmt, col)
+}
+
+/// Get the current row's value at `col` as an int.
+fn getInt(stmt: int, col: int) -> int {
+    return sqlite3_column_int64(stmt, col)
+}
+
+/// Get the current row's value at `col` as a float.
+fn getFloat(stmt: int, col: int) -> float {
+    return sqlite3_column_double(stmt, col)
+}
+
+/// True if the current row's value at `col` is NULL.
+fn isNull(stmt: int, col: int) -> bool {
+    return sqlite3_column_type(stmt, col) == SQLITE_NULL
+}
+
+/// Free a statement returned by query() or exec().
+fn closeResult(stmt: int) {
+    sqlite3_finalize(stmt)
+}
+
+/// Number of rows changed by the last INSERT/UPDATE/DELETE.
+fn rowsChanged(db: int) -> int {
+    return sqlite3_changes(db)
+}
+
+/// Get the last error message from a database connection.
+fn lastError(db: int) -> string {
+    return sqlite3_errmsg(db)
+}

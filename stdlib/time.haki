@@ -1,0 +1,30 @@
+/// std/time — Time and duration utilities.
+///
+/// Usage: import "std/time" as time
+
+/// Current Unix timestamp in milliseconds.
+fn nowMs() -> int {
+    return haki_time_now_ms()
+}
+
+/// Current Unix timestamp in seconds.
+fn nowSec() -> int {
+    return haki_time_now_ms() / 1000
+}
+
+/// Sleep for the given number of milliseconds.
+fn sleepMs(ms: int) {
+    haki_time_sleep_ms(ms)
+}
+
+/// Sleep for the given number of seconds.
+fn sleep(seconds: int) {
+    haki_time_sleep_ms(seconds * 1000)
+}
+
+/// Format a Unix timestamp (seconds) as an ISO 8601 string.
+/// Example: time.format(1700000000) → "2023-11-14T22:13:20Z"
+fn format(unixSec: int) -> string {
+    return haki_time_format(unixSec)
+}
+
