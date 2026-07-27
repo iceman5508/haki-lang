@@ -658,7 +658,17 @@ impl Parser {
     fn parse_impl(&mut self) -> Result<ImplBlock, ParseError> {
         let lo = self.current_span().lo;
         self.expect(&TokenKind::Impl)?;
-        let protocol = self.expect_ident()?;
+        // Protocol name may be dotted: `impl view.View for T`
+        // Parse the first ident, then consume any `.ident` segments,
+        // combining them into a single mangled name `view__View`.
+        let mut protocol = self.expect_ident()?;
+        while matches!(self.peek_kind(), TokenKind::Dot) {
+            self.advance(); // consume `.`
+            let part = self.expect_ident()?;
+            let combined = format!("{}__{}", protocol.name, part.name);
+            let span = Span::new(protocol.span.lo, part.span.hi);
+            protocol = Ident::new(combined, span);
+        }
         self.expect(&TokenKind::For)?;
         let target = self.expect_ident()?;
         let type_params = self.parse_type_params()?;
@@ -1231,16 +1241,31 @@ impl Parser {
                         }
                         _ => self.expect_ident()?,
                     };
-                    // Is it a method call?
+                    // Is it a method call or named-arg constructor call?
+                    // `obj.method(a, b)` → MethodCall
+                    // `module.Type(field: val)` → NamedCall on Field expr
                     if matches!(self.peek_kind(), TokenKind::LParen) {
                         self.advance(); // consume `(`
-                        let args = self.parse_call_args()?;
+                        let (named, positional) = self.parse_call_args_mixed()?;
                         self.expect(&TokenKind::RParen)?;
                         let hi = self.current_span().lo;
-                        lhs = Expr {
-                            kind: ExprKind::MethodCall(Box::new(lhs), field, args),
-                            span: Span::new(lo, hi),
-                        };
+                        if named.is_empty() {
+                            lhs = Expr {
+                                kind: ExprKind::MethodCall(Box::new(lhs), field, positional),
+                                span: Span::new(lo, hi),
+                            };
+                        } else {
+                            // Named args on a dotted path: `module.Type(field: val)`
+                            // Represent as NamedCall on a Field expression.
+                            let field_expr = Expr {
+                                kind: ExprKind::Field(Box::new(lhs), field),
+                                span: Span::new(lo, hi),
+                            };
+                            lhs = Expr {
+                                kind: ExprKind::NamedCall(Box::new(field_expr), named),
+                                span: Span::new(lo, hi),
+                            };
+                        }
                     } else {
                         let hi = field.span.hi;
                         lhs = Expr {

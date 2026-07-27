@@ -1181,7 +1181,13 @@ impl Inferer {
                     let typed_args = args.iter()
                         .map(|a| self.infer_expr(a, type_args))
                         .collect::<TypeResult<Vec<_>>>()?;
-                    let ret = self.sym.resolve_return_ty(&fi.return_ty, type_args)
+                    // For generic module functions (e.g. makeState<T>), infer T
+                    // from the concrete argument types before resolving the return type.
+                    let mut call_type_args = type_args.clone();
+                    for (tp, typed_arg) in fi.type_params.iter().zip(typed_args.iter()) {
+                        call_type_args.insert(tp.name.name.clone(), typed_arg.ty.clone());
+                    }
+                    let ret = self.sym.resolve_return_ty(&fi.return_ty, &call_type_args)
                         .unwrap_or(SemTy::Void);
                     // Emit as a Call with a mangled name `alias__method`.
                     let mangled = format!("{alias}__{}", method.name);
@@ -1437,6 +1443,14 @@ impl Inferer {
     ) -> TypeResult<TypedExpr> {
         let callee_name = match &callee.kind {
             ExprKind::Ident(id) => id.name.clone(),
+            // module.Type(field: val) -- resolve to module__Type
+            ExprKind::Field(recv, field) => {
+                if let ExprKind::Ident(recv_id) = &recv.kind {
+                    format!("{}__{}", recv_id.name, field.name)
+                } else {
+                    return Err(TypeError::UnknownFn { name: "complex_callee".into(), span });
+                }
+            }
             _ => return Err(TypeError::UnknownFn { name: "complex_callee".into(), span }),
         };
 

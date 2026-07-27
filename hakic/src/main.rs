@@ -35,6 +35,11 @@ fn stdlib_source(name: &str) -> Option<&'static str> {
         "std/time"    | "std/time.haki"    => Some(include_str!("../../stdlib/time.haki")),
         "std/process" | "std/process.haki" => Some(include_str!("../../stdlib/process.haki")),
         "std/regex"   | "std/regex.haki"   => Some(include_str!("../../stdlib/regex.haki")),
+        // haki_ui submodules
+        "std/haki_ui/element" | "std/haki_ui/element.haki" => Some(include_str!("../../stdlib/haki_ui/element.haki")),
+        "std/haki_ui/state"   | "std/haki_ui/state.haki"   => Some(include_str!("../../stdlib/haki_ui/state.haki")),
+        "std/haki_ui/app"     | "std/haki_ui/app.haki"     => Some(include_str!("../../stdlib/haki_ui/app.haki")),
+        "std/haki_ui/view"    | "std/haki_ui/view.haki"    => Some(include_str!("../../stdlib/haki_ui/view.haki")),
         _ => None,
     }
 }
@@ -527,7 +532,7 @@ fn main() {
 
     // Handle --version and --help before anything else.
     if args[1] == "--version" || args[1] == "-V" {
-        println!("haki 2.1.0 — Haki compiler");
+        println!("haki 2.2.0 — Haki compiler");
         println!("  haki          run any .haki file");
         println!("  haki-gtk      compile + run as GTK desktop app");
         println!("  haki-dom      compile to WebAssembly for the browser");
@@ -1856,13 +1861,18 @@ fn compile_and_run(args: RunArgs) {
     }
 
     // ── Codegen (LLVM — not compiled on Windows) ─────────────────────────────
+    // Skip LLVM entirely when --emit-c is set — the C emitter handles output directly.
     #[cfg(not(target_os = "windows"))]
-    let ir = match haki_codegen::emit_ir(&mono, &stem) {
-        Ok(ir) => ir,
-        Err(e) => { eprintln!("hakic: {e}"); process::exit(1); }
+    let ir = if args.emit_c {
+        String::new() // placeholder — not used when emit_c is set
+    } else {
+        match haki_codegen::emit_ir(&mono, &stem) {
+            Ok(ir) => ir,
+            Err(e) => { eprintln!("hakic: {e}"); process::exit(1); }
+        }
     };
     #[cfg(not(target_os = "windows"))]
-    log!("[codegen] {} bytes of IR", ir.len());
+    if !args.emit_c { log!("[codegen] {} bytes of IR", ir.len()); }
 
     // ── Write IR (non-Windows only) ───────────────────────────────────────────
     #[cfg(not(target_os = "windows"))]
@@ -1932,11 +1942,78 @@ fn compile_and_run(args: RunArgs) {
                     vec!["-std=gnu11", "-O2", "-lpthread", "-lm"]
                 };
 
+                // Write the GTK UI runtime C file alongside the user C if targeting GTK
+                // When targeting GTK, prepend a forward declaration for haki_app_run
+                // so the user C compiles before the GTK runtime C is linked.
+                if args.target_gtk {
+                    let decl = "void haki_app_run(const char* json, const char* title, long long width, long long height);
+";
+                    let mut patched = decl.to_string();
+                    patched.push_str(&c_src);
+                    let _ = fs::write(&c_path, &patched);
+                }
+                let gtk_runtime_path = if args.target_gtk {
+                    let p = work_dir.join("haki_ui_gtk_runtime.c");
+                    let _ = fs::write(&p, haki_stdlib::UI_RUNTIME_C_SOURCE);
+                    Some(p)
+                } else { None };
+
+                // macOS GTK include paths (from Homebrew)
+                // Use pkg-config to find GTK includes on macOS (handles Homebrew arm64/x86_64)
+                let gtk_includes_macos: Vec<String> = std::process::Command::new("pkg-config")
+                    .args(["--cflags", "gtk+-3.0"])
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace()
+                        .map(|s| s.to_string()).collect())
+                    .unwrap_or_else(|_| vec![
+                        "-I/opt/homebrew/include/gtk-3.0".into(),
+                        "-I/opt/homebrew/include/glib-2.0".into(),
+                        "-I/opt/homebrew/lib/glib-2.0/include".into(),
+                        "-I/opt/homebrew/include/pango-1.0".into(),
+                        "-I/opt/homebrew/include/harfbuzz".into(),
+                        "-I/opt/homebrew/include/cairo".into(),
+                        "-I/opt/homebrew/include/gdk-pixbuf-2.0".into(),
+                        "-I/opt/homebrew/include/atk-1.0".into(),
+                    ]);
+                let gtk_includes_macos: Vec<&str> = gtk_includes_macos.iter().map(|s| s.as_str()).collect();
+                // Linux GTK include paths
+                let gtk_includes_linux = vec![
+                    "-I/usr/include/gtk-3.0",
+                    "-I/usr/include/glib-2.0",
+                    "-I/usr/lib/x86_64-linux-gnu/glib-2.0/include",
+                    "-I/usr/include/pango-1.0",
+                    "-I/usr/include/harfbuzz",
+                    "-I/usr/include/cairo",
+                    "-I/usr/include/gdk-pixbuf-2.0",
+                    "-I/usr/include/atk-1.0",
+                ];
+                let gtk_libs_owned: Vec<String> = std::process::Command::new("pkg-config")
+                    .args(["--libs", "gtk+-3.0"])
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace()
+                        .map(|s| s.to_string()).collect())
+                    .unwrap_or_else(|_| vec![
+                        "-lgtk-3".into(), "-lgdk-3".into(),
+                        "-lpangocairo-1.0".into(), "-lpango-1.0".into(),
+                        "-lglib-2.0".into(), "-lgobject-2.0".into(),
+                        "-lcairo".into(), "-lgdk_pixbuf-2.0".into(), "-latk-1.0".into(),
+                    ]);
+                let gtk_libs: Vec<&str> = gtk_libs_owned.iter().map(|s| s.as_str()).collect();
+
                 let gcc_result = {
                     let mut cmd = std::process::Command::new("gcc");
                     cmd.args(&base_flags)
-                       .arg(c_path.to_str().unwrap())
-                       .arg("-o").arg(out_path.to_str().unwrap())
+                       .arg(c_path.to_str().unwrap());
+                    if let Some(ref gtk_c) = gtk_runtime_path {
+                        // Include GTK paths for the runtime compile
+                        #[cfg(target_os = "macos")]
+                        cmd.args(&gtk_includes_macos);
+                        #[cfg(not(target_os = "macos"))]
+                        cmd.args(&gtk_includes_linux);
+                        cmd.arg(gtk_c.to_str().unwrap());
+                        cmd.args(&gtk_libs);
+                    }
+                    cmd.arg("-o").arg(out_path.to_str().unwrap())
                        .args(&link_libs);
                     let status = cmd.status();
                     if status.is_err() {

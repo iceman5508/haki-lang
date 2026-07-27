@@ -1337,10 +1337,23 @@ impl SymbolTable {
     /// walk impl records, then check the superclass chain.
     /// For type parameters (e.g. `T`), check protocol bounds.
     pub fn lookup_method<'a>(&'a self, ty_name: &str, method: &str) -> Option<&'a FnInfo> {
-        // Direct methods on the type definition
-        if let Some(typedef) = self.types.get(ty_name) {
+        // Direct methods on the type definition.
+        // Methods on imported module types are renamed with the module alias prefix,
+        // e.g. State.set becomes state__set. We search for both the bare name and
+        // the alias-prefixed name (alias = everything before the last __ in ty_name).
+if let Some(typedef) = self.types.get(ty_name) {
+            // Try bare name first
             if let Some(m) = typedef.methods.iter().find(|m| m.name == method) {
                 return Some(m);
+            }
+            // Try alias-prefixed: state__State -> search for state__set
+            // Extract alias prefix from ty_name (everything before __)
+            if let Some(dunder) = ty_name.find("__") {
+                let alias = &ty_name[..dunder];
+                let prefixed = format!("{alias}__{method}");
+if let Some(m) = typedef.methods.iter().find(|m| m.name == prefixed) {
+                    return Some(m);
+                }
             }
         }
 

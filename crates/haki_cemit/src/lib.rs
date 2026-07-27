@@ -115,7 +115,7 @@ pub fn emit_c_so(prog: &MonoProgram) -> CResult<String> {
 
 fn emit_c_impl(prog: &MonoProgram, target_so: bool) -> CResult<String> {
     let mut out = String::with_capacity(64 * 1024);
-    let cx = Cx { prog };
+    let cx = Cx { prog, self_fields: std::cell::RefCell::new(std::collections::HashSet::new()) };
 
     // Header
     if target_so {
@@ -187,7 +187,7 @@ fn emit_c_impl(prog: &MonoProgram, target_so: bool) -> CResult<String> {
 
     // Struct definitions
     out.push_str("/* ── Struct definitions ── */\n");
-    for s in &prog.structs {
+for s in &prog.structs {
         cx.emit_struct_def(&mut out, s)?;
     }
     for c in &prog.classes {
@@ -229,6 +229,12 @@ fn emit_c_impl(prog: &MonoProgram, target_so: bool) -> CResult<String> {
             out.push_str(";\n");
         }
     }
+    for i in &prog.impls {
+        for m in &i.methods {
+            out.push_str(&cx.fn_prototype(m)?);
+            out.push_str(";\n");
+        }
+    }
     out.push('\n');
 
     // Function definitions
@@ -244,9 +250,34 @@ fn emit_c_impl(prog: &MonoProgram, target_so: bool) -> CResult<String> {
         }
     }
     for c in &prog.classes {
+        // Set self_fields so emit_var uses self->field for class field accesses
+        {
+            let mut sf = cx.self_fields.borrow_mut();
+            sf.clear();
+            for f in &c.fields { sf.insert(f.name.clone()); }
+        }
         for m in &c.methods {
             cx.emit_fn(&mut out, m)?;
         }
+        cx.self_fields.borrow_mut().clear();
+    }
+    // Emit impl block methods (protocol implementations)
+    for i in &prog.impls {
+        // Find the target class to get its field names for self-> injection
+        let target_fields: std::collections::HashSet<String> =
+            prog.classes.iter()
+                .find(|c| c.name == i.target)
+                .map(|c| c.fields.iter().map(|f| f.name.clone()).collect())
+                .unwrap_or_default();
+        {
+            let mut sf = cx.self_fields.borrow_mut();
+            sf.clear();
+            sf.extend(target_fields);
+        }
+        for m in &i.methods {
+            cx.emit_fn(&mut out, m)?;
+        }
+        cx.self_fields.borrow_mut().clear();
     }
 
     // For --target so: emit the ABI entry points that mod_haki calls
@@ -261,6 +292,9 @@ fn emit_c_impl(prog: &MonoProgram, target_so: bool) -> CResult<String> {
 
 struct Cx<'a> {
     prog: &'a MonoProgram,
+    /// Field names of the class whose method we're currently emitting.
+    /// When non-empty, `emit_var` prefixes matching names with `self->`.
+    self_fields: std::cell::RefCell<std::collections::HashSet<String>>,
 }
 
 impl<'a> Cx<'a> {
@@ -276,18 +310,28 @@ impl<'a> Cx<'a> {
             SemTy::Never             => "void".into(),
             SemTy::Named(n)          => {
                 match n.as_str() {
-                    "Error" => "void*".into(),  // HakiError* opaque
-                    _       => format!("{}*", c_name(n)),
+                    "Error"     => "void*".into(),  // HakiError* opaque
+                    "__env_ptr" => "void*".into(),  // closure env — opaque pointer
+                    _           => format!("{}*", c_name(n)),
                 }
             }
-            SemTy::Generic(n, _)     => {
+            SemTy::Generic(n, args) => {
                 // Map Haki generic types to their C runtime names
                 match n.as_str() {
                     "Array"  => "void*".into(),  // HakiArray* opaque as void*
                     "Map"    => "void*".into(),  // HakiMap* opaque as void*
                     "Task"   => "void*".into(),
                     "Mutex"  => "void*".into(),
-                    _        => format!("{}*", c_name(n)),
+                    // User-defined generic class: mangle to concrete name
+                    // e.g. state__State<int> → state__State__int*
+                    _ => {
+                        let suffix = args.iter().map(|a| self.c_ty_suffix(a)).collect::<Vec<_>>().join("__");
+                        if suffix.is_empty() {
+                            format!("{}*", c_name(n))
+                        } else {
+                            format!("{}__{suffix}*", c_name(n))
+                        }
+                    }
                 }
             }
             SemTy::Optional(inner)   => self.c_ty(inner), // nullable pointer
@@ -295,6 +339,23 @@ impl<'a> Cx<'a> {
             SemTy::Fn(_, _)          => "void*".into(),   // fat pointer
             SemTy::Closure(_, _)     => "void*".into(),   // fat pointer
             SemTy::Var(_)            => "void*".into(),
+        }
+    }
+
+    /// Returns just the type-arg suffix for mangling generic class names.
+    /// e.g. SemTy::Int → "int", SemTy::Named("User") → "User"
+    fn c_ty_suffix(&self, ty: &SemTy) -> String {
+        match ty {
+            SemTy::Int       => "int".into(),
+            SemTy::Float     => "f64".into(),
+            SemTy::Bool      => "bool".into(),
+            SemTy::String    => "string".into(),
+            SemTy::Named(n)  => c_name(n).to_string(),
+            SemTy::Generic(n, args) => {
+                let inner = args.iter().map(|a| self.c_ty_suffix(a)).collect::<Vec<_>>().join("__");
+                if inner.is_empty() { c_name(n).to_string() } else { format!("{}__{inner}", c_name(n)) }
+            }
+            _ => "void".into(),
         }
     }
 
@@ -382,6 +443,37 @@ impl<'a> Cx<'a> {
         // main: call haki_runtime_init with argc/argv
         if f.name == "main" {
             out.push_str("    haki_runtime_init(argc, argv);\n");
+        }
+        // Closure capture unpacking:
+        // For each captured variable, unpack from __env and also expand
+        // any class fields of the capture into bare names so the body can
+        // access them directly (e.g. `count` from `self.count`).
+        if !f.captures.is_empty() {
+            for (cap_name, cap_ty, _is_weak) in &f.captures {
+                let c_type = self.c_ty(cap_ty);
+                // Unpack the capture from __env
+                // __env is the first capture cast directly (single-capture fast path)
+                // For multiple captures we'd need a struct; for now handle single capture
+                out.push_str(&format!("    {c_type} {cn} = ({c_type})__env;\n",
+                    cn = c_name(cap_name)));
+                // If the capture is a class/struct, also inject its fields as bare names
+                let type_name = match cap_ty {
+                    SemTy::Named(n) => Some(n.clone()),
+                    _ => None,
+                };
+                if let Some(ref tname) = type_name {
+                    if let Some(cls) = self.prog.classes.iter().find(|c| c.name == *tname) {
+                        for field in &cls.fields {
+                            let fty = self.c_ty(&field.ty);
+                            out.push_str(&format!(
+                                "    {fty} {fname} = {cn}->{fname};\n",
+                                fname = c_name(&field.name),
+                                cn = c_name(cap_name),
+                            ));
+                        }
+                    }
+                }
+            }
         }
         // Emit deferred expressions tracked during block emission
         let mut deferred: Vec<String> = Vec::new();
@@ -712,9 +804,28 @@ impl<'a> Cx<'a> {
                     if is_class {
                         out.push_str(&format!("{indent}{nm}->__arc_count = 1;\n"));
                     }
+                    // Collect field types for pointer-to-int casting
+                    let let_field_types: std::collections::HashMap<String, SemTy> =
+                        self.prog.classes.iter()
+                            .find(|c| c.name == *type_name)
+                            .map(|c| c.fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect())
+                            .or_else(|| self.prog.structs.iter()
+                                .find(|s| s.name == *type_name)
+                                .map(|s| s.fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect()))
+                            .unwrap_or_default();
+
                     for na in named_args {
                         let ve = self.emit_expr(&na.value)?;
-                        out.push_str(&format!("{indent}{nm}->{} = {ve};\n", c_name(&na.name)));
+                        let field_ty = let_field_types.get(&na.name);
+                        let cast_ve = match field_ty {
+                            Some(SemTy::Int) if na.value.ty != SemTy::Int
+                                && na.value.ty != SemTy::Float
+                                && na.value.ty != SemTy::Bool => {
+                                format!("(int64_t)(void*)({ve})")
+                            }
+                            _ => ve,
+                        };
+                        out.push_str(&format!("{indent}{nm}->{} = {cast_ve};\n", c_name(&na.name)));
                     }
                     return Ok(());
                 }
@@ -904,9 +1015,29 @@ impl<'a> Cx<'a> {
                 if is_class {
                     parts.push(format!("__c_{cn}->__arc_count = 1; "));
                 }
+                // Look up the class/struct field types so we can cast pointer→int when needed
+                let class_field_types: std::collections::HashMap<String, SemTy> =
+                    self.prog.classes.iter()
+                        .find(|c| c.name == *name)
+                        .map(|c| c.fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect())
+                        .or_else(|| self.prog.structs.iter()
+                            .find(|s| s.name == *name)
+                            .map(|s| s.fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect()))
+                        .unwrap_or_default();
+
                 for na in named_args {
                     let ve = self.emit_expr(&na.value)?;
-                    parts.push(format!("__c_{cn}->{} = {ve}; ", c_name(&na.name)));
+                    // If field expects int64_t but value is a pointer, cast it
+                    let field_ty = class_field_types.get(&na.name);
+                    let cast_ve = match field_ty {
+                        Some(SemTy::Int) if na.value.ty != SemTy::Int
+                            && na.value.ty != SemTy::Float
+                            && na.value.ty != SemTy::Bool => {
+                            format!("(int64_t)(void*)({ve})")
+                        }
+                        _ => ve,
+                    };
+                    parts.push(format!("__c_{cn}->{} = {cast_ve}; ", c_name(&na.name)));
                 }
                 parts.push(format!("__c_{cn};"));
                 Ok(format!("({{ {} }})", parts.join("")))
@@ -927,17 +1058,21 @@ impl<'a> Cx<'a> {
                 if elems.is_empty() {
                     return Ok(format!("haki_array_new({})", array_elem_size(&elem_ty)));
                 }
-                // Use GNU statement expression — works in expression context
+                // Use span-unique names to avoid collisions when arrays are nested
+                let uid = e.span.lo;
+                let al = format!("__al_{uid}");
                 let mut parts = vec![
-                    format!("void* __al = haki_array_new({});", array_elem_size(&elem_ty)),
+                    format!("void* {al} = haki_array_new({});", array_elem_size(&elem_ty)),
                 ];
-                for el in elems {
+                for (i, el) in elems.iter().enumerate() {
                     let ev = self.emit_expr(el)?;
+                    let el_name = format!("__el_{uid}_{i}");
                     parts.push(format!(
-                        "{{ {elem_ty} __el = ({ev}); haki_array_append(__al, &__el); }}"
+                        "{{ {elem_ty} {el_name} = ({ev}); haki_array_append({al}, &{el_name}); }}"
                     ));
                 }
-                parts.push("__al".into());
+                // GNU statement expressions require the last expression to end with ;
+                parts.push(format!("{al};"));
                 Ok(format!("({{ {} }})", parts.join(" ")))
             }
 
@@ -1062,6 +1197,10 @@ impl<'a> Cx<'a> {
                     if enum_ty.ends_with('*') { &enum_ty[..enum_ty.len()-1] } else { "void" }
                 );
             }
+        }
+        // In a class method, bare field names are accessed via self->
+        if self.self_fields.borrow().contains(name) {
+            return format!("self->{}", c_name(name));
         }
         c_name(name)
     }

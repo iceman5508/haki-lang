@@ -282,6 +282,15 @@ pub fn register_builtins(sym: &mut SymbolTable) {
         params: vec![param("items", array_ty("string"))],
         return_ty: Some(ReturnTy::Single(str_ty())),
         span: Span::dummy(), is_extern: false, extern_abi: None });
+
+    // haki_ui platform functions — provided by haki_ui_gtk.c / haki_ui_dom.js at link time
+    sym.functions.insert("haki_app_run".into(), FnInfo {
+        name: "haki_app_run".into(), type_params: vec![],
+        params: vec![str_param("json"), str_param("title"),
+                     int_param("width"), int_param("height")],
+        return_ty: None,
+        span: Span::dummy(), is_extern: true,
+        extern_abi: Some("c".into()) });
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

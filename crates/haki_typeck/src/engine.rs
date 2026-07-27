@@ -133,7 +133,7 @@ impl<'src> MonoEngine<'src> {
             }
             TypedItemKind::Class(c) => {
                 if c.type_params.is_empty() {
-                    let mono_class = self.lower_class(c, &Subst::new(), None)?;
+                    let mono_class = self.lower_class(c, &Subst::new())?;
                     self.program.classes.push(mono_class);
                 }
             }
@@ -182,9 +182,8 @@ impl<'src> MonoEngine<'src> {
             self.program.structs.push(mono_struct);
         } else if let Some(&class_def) = self.generic_classes.get(name) {
             let subst = build_subst(&class_def.type_params, type_args, name)?;
-            let mangled_name = mangle(name, type_args);
-            let mut mono_class = self.lower_class(class_def, &subst, Some(&mangled_name))?;
-            mono_class.name = mangled_name;
+            let mut mono_class = self.lower_class(class_def, &subst)?;
+            mono_class.name = mangle(name, type_args);
             self.program.classes.push(mono_class);
         }
         // If nothing found, the item may have been non-generic to begin with.
@@ -285,13 +284,10 @@ impl<'src> MonoEngine<'src> {
 
     // ── Lowering: class ───────────────────────────────────────────────────
 
-    fn lower_class(&mut self, c: &TypedClassDef, subst: &Subst, mangled_name: Option<&str>) -> MonoResult<MonoClass> {
+    fn lower_class(&mut self, c: &TypedClassDef, subst: &Subst) -> MonoResult<MonoClass> {
         let fields = lower_fields(&c.fields, subst);
         let type_name = c.name.name.clone();
-        // Use the mangled name for self_ty AND method names so both use the concrete type.
-        // e.g. state__State__int__set instead of state__State__set
-        let effective_name = mangled_name.unwrap_or(&type_name);
-        let self_ty = SemTy::Named(effective_name.to_string());
+        let self_ty = SemTy::Named(type_name.clone());
 
         // Lower own methods.
         // Method names carry the module alias prefix from rename_item
@@ -313,8 +309,7 @@ impl<'src> MonoEngine<'src> {
                 } else {
                     &m.name.name
                 };
-                // Use effective_name (mangled) for the method name
-                mono.name = format!("{effective_name}__{bare_method}");
+                mono.name = format!("{type_name}__{bare_method}");
                 let self_param = MonoParam {
                     name: "self".into(),
                     ty: self_ty.clone(),
@@ -360,7 +355,7 @@ impl<'src> MonoEngine<'src> {
                             && m.name.name.starts_with(class_alias_prefix) {
                             &m.name.name[class_alias_prefix.len()..]
                         } else { &m.name.name };
-                        mono.name = format!("{effective_name}__{bare_m}");
+                        mono.name = format!("{type_name}__{bare_m}");
                         let self_param = MonoParam {
                             name: "self".into(),
                             ty: self_ty.clone(),
@@ -669,27 +664,6 @@ impl<'src> MonoEngine<'src> {
                     SemTy::Generic(base, targs) => {
                         self.enqueue(base, targs.clone());
                         mangle(base, targs)
-                    }
-                    // Named type that is actually a generic class — infer type args
-                    // from the substitution context. E.g. inside makeState<T=int>,
-                    // `State(value: initial)` has callee type Named("state__State").
-                    // Look up the class's type params and resolve them via subst.
-                    SemTy::Named(base) => {
-                        if let Some(&class_def) = self.generic_classes.get(base.as_str()) {
-                            let inferred: Vec<SemTy> = class_def.type_params.iter()
-                                .map(|tp| subst.0.get(&tp.name.name)
-                                    .cloned()
-                                    .unwrap_or(SemTy::Void))
-                                .collect();
-                            if !inferred.is_empty() && !inferred.iter().all(|t| *t == SemTy::Void) {
-                                self.enqueue(base, inferred.clone());
-                                mangle(base, &inferred)
-                            } else {
-                                callee_name
-                            }
-                        } else {
-                            callee_name
-                        }
                     }
                     _ => callee_name,
                 };
