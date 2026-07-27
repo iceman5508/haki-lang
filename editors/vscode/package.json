@@ -1,8 +1,8 @@
 {
   "name": "haki-language",
   "displayName": "Haki",
-  "description": "Language support for Haki — syntax highlighting, diagnostics, hover types, and go-to-definition.",
-  "version": "0.1.0",
+  "description": "Haki language support: diagnostics, hover, go-to-definition (cross-file), completions, signature help, find references, rename, document symbols",
+  "version": "0.2.0",
   "publisher": "haki-lang",
   "license": "MIT",
   "repository": {
@@ -55,7 +55,11 @@
         },
         "haki.trace.server": {
           "type": "string",
-          "enum": ["off", "messages", "verbose"],
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
           "default": "off",
           "description": "Trace LSP communication between the editor and hakic-lsp."
         }
