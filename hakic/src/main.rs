@@ -2242,45 +2242,15 @@ fn compile_and_run(args: RunArgs) {
     if args.emit_c {
         let c_result = if args.target_so {
             haki_cemit::emit_c_so(&mono)
+        } else if uses_http {
+            haki_cemit::emit_c_http(&mono, Some(args.source.to_str().unwrap_or("")))
         } else {
             haki_cemit::emit_c(&mono, Some(args.source.to_str().unwrap_or("")))
         };
         match c_result {
             Ok(c_src) => {
                 let c_path = work_dir.join(format!("{stem}.c"));
-                // Prepend full HTTP struct definitions when HTTP types are used
-                // Forward declarations alone don't work — structs must be fully defined
-                let c_src = if uses_http {
-                    let http_defs = r#"
-/* ── HTTP type definitions (inlined when HttpServer/HttpRequest used) ── */
-#include <string.h>
-struct MHD_Connection;
-typedef struct {
-    const char* method;
-    const char* path;
-    const char* body;
-    size_t      body_len;
-    struct MHD_Connection* connection;
-} HakiHttpRequest;
-typedef HakiHttpRequest HttpRequest;
-typedef struct {
-    int         status;
-    const char* body;
-    const char* contentType;
-} HakiHttpResponse;
-typedef HakiHttpResponse HttpResponse;
-typedef struct { void* handler; int port; } HakiHttpServer;
-typedef HakiHttpServer HttpServer;
-void* haki_http_server_new(int port, void* handler);
-void  haki_http_server_listen(void* server);
-const char* haki_request_param(void* req, const char* name);
-const char* haki_json_decode_get(const char* json, const char* key);
-"#;
-                    format!("{http_defs}
-{c_src}")
-                } else {
-                    c_src
-                };
+                // HTTP types injected by emit_c_http via SO_HTTP_TYPES
                 if let Err(e) = fs::write(&c_path, &c_src) {
                     eprintln!("hakic: cannot write C source: {e}"); process::exit(1);
                 }
@@ -2458,6 +2428,28 @@ const char* haki_json_decode_get(const char* json, const char* key);
                     let mut cmd = std::process::Command::new("gcc");
                     cmd.args(&base_flags)
                        .arg(c_path.to_str().unwrap());
+                    // Add runtime C for HTTP programs (microhttpd compat functions)
+                    if uses_http {
+                        // Ensure runtime_c exists (may not if this is a recursive C backend call)
+                        if !runtime_c.exists() {
+                            let _ = fs::write(&runtime_c, haki_stdlib::RUNTIME_C_SOURCE);
+                        }
+                        cmd.arg(runtime_c.to_str().unwrap());
+                        // Add microhttpd include + lib paths
+                        let mhd_prefix = std::process::Command::new("brew")
+                            .args(["--prefix", "libmicrohttpd"])
+                            .output()
+                            .ok()
+                            .and_then(|o| String::from_utf8(o.stdout).ok())
+                            .unwrap_or_default()
+                            .trim()
+                            .to_string();
+                        if !mhd_prefix.is_empty() {
+                            cmd.arg(format!("-I{mhd_prefix}/include"));
+                            cmd.arg(format!("-L{mhd_prefix}/lib"));
+                        }
+                        cmd.arg("-lmicrohttpd");
+                    }
                     if let Some(ref gtk_c) = gtk_runtime_path {
                         // Include GTK paths for the runtime compile
                         if !quiet {
@@ -2580,10 +2572,39 @@ const char* haki_json_decode_get(const char* json, const char* key);
 
     // ── Compile runtime ───────────────────────────────────────────────────
     let cc = find_tool(&["gcc", "cc", "clang", "clang-17"]);
-    run_step(Command::new(&cc).args([
-        "-c", runtime_c.to_str().unwrap(),
-        "-o", runtime_obj.to_str().unwrap(),
-    ]), "compile runtime");
+    let mut runtime_cmd = Command::new(&cc);
+    runtime_cmd.args(["-c", runtime_c.to_str().unwrap(), "-o", runtime_obj.to_str().unwrap()]);
+    // Add microhttpd include path if needed
+    if uses_http {
+        // Try pkg-config first, fall back to brew prefix
+        let mhd_include = std::process::Command::new("pkg-config")
+            .args(["--cflags-only-I", "libmicrohttpd"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if !mhd_include.is_empty() {
+            for flag in mhd_include.split_whitespace() {
+                runtime_cmd.arg(flag);
+            }
+        } else {
+            // Homebrew fallback
+            let brew_prefix = std::process::Command::new("brew")
+                .args(["--prefix", "libmicrohttpd"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if !brew_prefix.is_empty() {
+                runtime_cmd.arg(format!("-I{brew_prefix}/include"));
+            }
+        }
+    }
+    run_step(&mut runtime_cmd, "compile runtime");
 
     // ── Compile UI runtime (if needed) ───────────────────────────────────
     let ui_runtime_obj = work_dir.join("haki_ui_runtime.o");
@@ -2628,7 +2649,33 @@ const char* haki_json_decode_get(const char* json, const char* key);
     }
     link_cmd.arg("-lpthread");
     if uses_http {
-        link_cmd.arg("-lmicrohttpd");
+        // Add microhttpd lib path via pkg-config or brew
+        let mhd_libs = std::process::Command::new("pkg-config")
+            .args(["--libs", "libmicrohttpd"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if !mhd_libs.is_empty() {
+            for flag in mhd_libs.split_whitespace() {
+                link_cmd.arg(flag);
+            }
+        } else {
+            let brew_prefix = std::process::Command::new("brew")
+                .args(["--prefix", "libmicrohttpd"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if !brew_prefix.is_empty() {
+                link_cmd.arg(format!("-L{brew_prefix}/lib"));
+            }
+            link_cmd.arg("-lmicrohttpd");
+        }
     }
     link_cmd.args(["-o", binary_path.to_str().unwrap()]);
     run_step(&mut link_cmd, "link");

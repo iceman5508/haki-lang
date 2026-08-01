@@ -34,15 +34,33 @@ use haki_stdlib::RUNTIME_C_SOURCE;
 /// HTTP type definitions injected before function prototypes in --target so mode.
 /// Defines HttpRequest and HttpResponse so compiler-generated prototypes compile.
 const SO_HTTP_TYPES: &str = concat!(
-    "/* ── HTTP types for .so handlers (MHD-free) ── */\n",
+    "/* ── HTTP types (aliased to runtime HakiHttp* structs) ── */\n",
     "#include <stdint.h>\n#include <stdlib.h>\n#include <string.h>\n\n",
+    // Forward declare the runtime structs
+    "struct HakiHttpRequest_s;\n",
+    "struct HakiHttpResponse_s;\n\n",
+    // Define HttpRequest matching HakiHttpRequest layout
     "typedef struct {\n",
-    "    const char* method;\n    const char* path;\n",
-    "    const char* body;\n    size_t body_len;\n    void* connection;\n",
+    "    const char* path;\n",
+    "    const char* method;\n",
+    "    const char* body;\n",
+    "    size_t      body_len;\n",
+    "    void*       connection;\n",
     "} HttpRequest;\n\n",
+    // Define HttpResponse with contentType (Haki field name)
     "typedef struct {\n",
-    "    int64_t status;\n    const char* body;\n    const char* content_type;\n",
-    "} HttpResponse;\n\n"
+    "    int         status;\n",
+    "    const char* body;\n",
+    "    const char* contentType;\n",
+    "} HttpResponse;\n\n",
+    // HttpServer
+    "typedef HttpResponse* (*HakiHttpHandlerFn)(HttpRequest*);\n",
+    "typedef struct {\n",
+    "    int64_t           port;\n",
+    "    HakiHttpHandlerFn handler;\n",
+    "} HttpServer;\n\n",
+    "HttpServer* haki_http_server_new_compat(int64_t port, HakiHttpHandlerFn handler);\n",
+    "void        haki_http_server_listen_compat(HttpServer* s);\n\n"
 );
 
 /// ABI bridge footer appended at end of --target so output.
@@ -104,15 +122,20 @@ pub type CResult<T> = Result<T, CEmitError>;
 /// Emit a complete, self-contained C file from a monomorphized program.
 /// Pass `source_path` to enable `#line` directives for debugger source mapping.
 pub fn emit_c(prog: &MonoProgram, source_path: Option<&str>) -> CResult<String> {
-    emit_c_impl(prog, false, source_path.unwrap_or(""))
+    emit_c_impl(prog, false, false, source_path.unwrap_or(""))
+}
+
+/// Emit C source for a program that uses HttpServer/HttpRequest.
+pub fn emit_c_http(prog: &MonoProgram, source_path: Option<&str>) -> CResult<String> {
+    emit_c_impl(prog, false, true, source_path.unwrap_or(""))
 }
 
 /// Emit C source targeting a shared library (.so) for mod_haki.
 pub fn emit_c_so(prog: &MonoProgram) -> CResult<String> {
-    emit_c_impl(prog, true, "")
+    emit_c_impl(prog, true, true, "")
 }
 
-fn emit_c_impl(prog: &MonoProgram, target_so: bool, source_path: &str) -> CResult<String> {
+fn emit_c_impl(prog: &MonoProgram, target_so: bool, uses_http: bool, source_path: &str) -> CResult<String> {
     let mut out = String::with_capacity(64 * 1024);
     let cx = Cx { prog, self_fields: std::cell::RefCell::new(std::collections::HashSet::new()), fn_locals: std::cell::RefCell::new(std::collections::HashSet::new()), source_path: source_path.to_string() };
 
@@ -193,9 +216,9 @@ for s in &prog.structs {
         cx.emit_class_def(&mut out, c)?;
     }
 
-    // For --target so: inject the HTTP type definitions BEFORE function prototypes
-    // so that HttpRequest/HttpResponse are defined when the compiler sees them
-    if target_so {
+    // Inject HTTP type definitions BEFORE function prototypes
+    // Required for both --target so and regular HttpServer programs
+    if target_so || uses_http {
         out.push_str(SO_HTTP_TYPES);
     }
 
@@ -1484,6 +1507,18 @@ impl<'a> Cx<'a> {
         // std/env, std/time, std/process, std/regex — intercept before
         // the generic __get/__set/__append pattern matchers below, which
         // would otherwise match module-prefixed names like env__get.
+        // ── HttpServer method intercepts ─────────────────────────────────────
+        if name.contains("HttpServer__listen") || (name.ends_with("__listen") && args.len() == 1) {
+            let server = self.emit_expr(&args[0])?;
+            return Ok(format!("haki_http_server_listen_compat({server})"));
+        }
+        // HttpServer constructor → haki_http_server_new_compat
+        if name == "HttpServer" && args.len() == 2 {
+            let port = self.emit_expr(&args[0])?;
+            let handler = self.emit_expr(&args[1])?;
+            return Ok(format!("haki_http_server_new_compat({port}, (HakiHttpHandlerFn)({handler}))"));
+        }
+
         // Task<T>.await() → haki_task_await(task) returning void*
         // Cast result based on return type: int → (int64_t)(intptr_t), else direct
         if name.contains("__await") && args.len() == 1 {

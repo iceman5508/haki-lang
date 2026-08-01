@@ -4055,6 +4055,94 @@ void haki_http_server_listen(HakiHttpServer* s) {
 }
 
 /* Request field accessors */
+
+/* ── Haki-compatible HTTP server (uses Haki field name: contentType) ──────
+   These are called from Haki programs that use HttpServer directly.
+   The handler returns HttpResponse* (with contentType field).            */
+
+typedef struct {
+    int         status;
+    const char* body;
+    const char* contentType;
+} HakiCompatResponse;
+
+typedef struct {
+    const char* path;
+    const char* method;
+    const char* body;
+    size_t      body_len;
+    void*       connection;
+} HakiCompatRequest;
+
+typedef HakiCompatResponse* (*HakiCompatHandler)(HakiCompatRequest*);
+
+typedef struct {
+    int64_t           port;
+    HakiCompatHandler handler;
+    void*             daemon;
+} HakiCompatServer;
+
+static enum MHD_Result haki_compat_mhd_callback(
+    void* cls, struct MHD_Connection* conn,
+    const char* url, const char* method,
+    const char* version, const char* upload_data,
+    size_t* upload_data_size, void** con_cls)
+{
+    (void)version;
+    HakiCompatHandler handler = (HakiCompatHandler)cls;
+    /* Collect body */
+    static char body_buf[65536];
+    if (*upload_data_size > 0) {
+        size_t copy = *upload_data_size < sizeof(body_buf)-1 ? *upload_data_size : sizeof(body_buf)-1;
+        memcpy(body_buf, upload_data, copy);
+        body_buf[copy] = 0;
+        *upload_data_size = 0;
+        return MHD_YES;
+    }
+    HakiCompatRequest req;
+    req.path    = url    ? url    : "/";
+    req.method  = method ? method : "GET";
+    req.body    = body_buf;
+    req.body_len = strlen(body_buf);
+    req.connection = conn;
+    HakiCompatResponse* resp = handler(&req);
+    const char* body = resp && resp->body ? resp->body : "";
+    const char* ct   = resp && resp->contentType ? resp->contentType : "text/plain";
+    int status = resp ? (int)resp->status : 200;
+    struct MHD_Response* mhd_resp = MHD_create_response_from_buffer(
+        strlen(body), (void*)body, MHD_RESPMEM_MUST_COPY);
+    MHD_add_response_header(mhd_resp, "Content-Type", ct);
+    enum MHD_Result r = MHD_queue_response(conn, status, mhd_resp);
+    MHD_destroy_response(mhd_resp);
+    body_buf[0] = 0;
+    return r;
+}
+
+HakiCompatServer* haki_http_server_new_compat(int64_t port, HakiCompatHandler handler) {
+    HakiCompatServer* s = (HakiCompatServer*)malloc(sizeof(HakiCompatServer));
+    if (!s) abort();
+    s->port    = port;
+    s->handler = handler;
+    s->daemon  = MHD_start_daemon(
+        MHD_USE_THREAD_PER_CONNECTION,
+        (uint16_t)port,
+        NULL, NULL,
+        haki_compat_mhd_callback, (void*)handler,
+        MHD_OPTION_END);
+    if (!s->daemon) {
+        fprintf(stderr, "haki: failed to start HTTP server on port %lld\n", (long long)port);
+        free(s);
+        return NULL;
+    }
+    return s;
+}
+
+void haki_http_server_listen_compat(HakiCompatServer* s) {
+    if (!s) return;
+    fprintf(stderr, "haki: HTTP server listening on :%lld (Ctrl+C to stop)\n", s ? s->port : 0);
+    for (;;) { sleep(3600); }
+}
+
 const char* haki_http_request_path(HakiHttpRequest* r)   { return r ? r->path   : ""; }
 const char* haki_http_request_method(HakiHttpRequest* r) { return r ? r->method : ""; }
 const char* haki_http_request_body(HakiHttpRequest* r)   { return r ? r->body   : ""; }
