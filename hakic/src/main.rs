@@ -598,7 +598,7 @@ fn main() {
 
     // Handle --version and --help before anything else.
     if args[1] == "--version" || args[1] == "-V" {
-        println!("haki 2.2.0 — Haki compiler");
+        println!("haki 3.0.0 — Haki compiler");
         println!("  haki          run any .haki file");
         println!("  haki-gtk      compile + run as GTK desktop app");
         println!("  haki-dom      compile to WebAssembly for the browser");
