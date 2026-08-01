@@ -767,7 +767,7 @@ impl<'src> MonoEngine<'src> {
                 let mono_captures: Vec<(String, ConcrTy, bool)> = typed_captures.iter()
                     .map(|(id, ty, weak)| (id.name.clone(), subst.apply_ty(ty), *weak))
                     .collect();
-                mono_fn.captures = mono_captures;
+                mono_fn.captures = mono_captures.clone();
 
                 // Always prepend __env: ptr — uniform calling convention.
                 // Non-capturing fn_lits receive null and ignore it.
@@ -779,8 +779,33 @@ impl<'src> MonoEngine<'src> {
                 };
                 mono_fn.params.insert(0, env_param);
 
+                let has_captures = !mono_captures.is_empty();
                 self.program.fns.push(mono_fn);
-                MonoExprKind::Var(name)
+
+                if has_captures {
+                    // Build a fat pointer: haki_make_closure(fn_ptr, env_ptr)
+                    // For single-capture closures (the common case), env_ptr = the capture value.
+                    // The capture is always the first element of typed_captures.
+                    // We emit: haki_make_closure(&fn_name, capture_value)
+                    let cap_expr = typed_captures[0].0.name.clone();
+                    MonoExprKind::Call(
+                        "haki_make_closure".into(),
+                        vec![
+                            MonoExpr {
+                                kind: MonoExprKind::Var(name),
+                                ty: SemTy::Named("__env_ptr".into()),
+                                span: expr.span,
+                            },
+                            MonoExpr {
+                                kind: MonoExprKind::Var(cap_expr),
+                                ty: SemTy::Named("__env_ptr".into()),
+                                span: expr.span,
+                            },
+                        ],
+                    )
+                } else {
+                    MonoExprKind::Var(name)
+                }
             }
         };
 

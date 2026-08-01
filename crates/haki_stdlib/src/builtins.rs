@@ -326,6 +326,14 @@ pub fn register_builtins(sym: &mut SymbolTable) {
         ("haki_gtk_remove_child",           false),  // → void
         ("haki_platform_run",               false),  // → void
         ("haki_set_callback_dispatcher",    false),  // → void
+        ("haki_gtk_alloc_node_id",           true),   // → int
+        ("haki_register_callback",           false),  // → void
+        ("haki_fire_callback",               false),  // → void
+        ("haki_make_closure",                true),   // → void* fat pointer
+        ("haki_set_rerender_callback",        false),  // → void
+        ("haki_gtk_peek_next_id",            true),   // → int
+        ("haki_gtk_mark_label",              false),  // → void
+        ("haki_gtk_get_label_id",            true),   // → int
     ];
     for (name, returns_int) in gtk_fns {
         sym.functions.insert((*name).into(), FnInfo {

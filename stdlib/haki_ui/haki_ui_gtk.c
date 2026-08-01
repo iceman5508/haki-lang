@@ -23,6 +23,30 @@
 #include <string.h>
 #include <stdint.h>
 
+/* Forward declarations */
+static void do_rerender(void);  /* defined later, called by on_button_clicked */
+
+/* Haki closure = fat pointer: { fn_ptr(void* env), env_ptr }
+   Stored as void*[2]: [0]=fn_ptr, [1]=env_ptr */
+#define HAKI_MAX_CALLBACKS 4096
+static void* g_callbacks_fwd[HAKI_MAX_CALLBACKS];  /* void* closure fat pointer */
+
+static void haki_fire_callback(int64_t node_id) {
+    if (node_id <= 0 || node_id >= HAKI_MAX_CALLBACKS) return;
+    void* closure = g_callbacks_fwd[node_id];
+    if (!closure) return;
+    /* haki_make_closure builds void*[2] = { fn_ptr, env_ptr }
+       fn_ptr signature: void fn(void* __env) */
+    void** fat = (void**)closure;
+    void (*fn_ptr)(void*) = (void(*)(void*))fat[0];
+    void* env_ptr = fat[1];
+    fn_ptr(env_ptr);
+}
+
+/* Payload structs for multi-field enum variants */
+typedef struct { void* f0; void* f1; } __PayloadTuple2;
+typedef struct { void* f0; void* f1; void* f2; } __PayloadTuple3;
+
 // ── Node registry ─────────────────────────────────────────────────────────────
 // Maps integer node_id → GtkWidget*.
 // GTK only ever sees GtkWidget* internally; Haki only sees int64_t.
@@ -61,10 +85,12 @@ void haki_set_callback_dispatcher(HakiDispatchFn fn) {
     g_dispatcher = fn;
 }
 
-// GTK signal handler — called by GTK, dispatches into Haki's callback registry
+// GTK signal handler
 static void on_button_clicked(GtkWidget* widget, gpointer user_data) {
     int64_t node_id = (int64_t)(intptr_t)user_data;
+    haki_fire_callback(node_id);
     if (g_dispatcher) g_dispatcher(node_id);
+    do_rerender();
 }
 
 // ── Window ────────────────────────────────────────────────────────────────────
@@ -134,8 +160,14 @@ int64_t haki_gtk_create_box(int64_t parent_id, int64_t horizontal) {
 
 void haki_gtk_set_text(int64_t node_id, const char* text) {
     GtkWidget* w = node_get(node_id);
-    if (!w) return;
-    if (GTK_IS_LABEL(w))  gtk_label_set_text(GTK_LABEL(w), text);
+    fprintf(stderr, "[haki_ui] set_text: node_id=%lld widget=%p text=%s\n",
+            (long long)node_id, (void*)w, text ? text : "(null)");
+    if (!w) { fprintf(stderr, "[haki_ui] set_text: WIDGET NOT FOUND\n"); return; }
+    if (GTK_IS_LABEL(w)) {
+        fprintf(stderr, "[haki_ui] set_text: IS_LABEL, updating\n");
+        gtk_label_set_text(GTK_LABEL(w), text);
+        gtk_widget_queue_draw(w);
+    }
     if (GTK_IS_BUTTON(w)) gtk_button_set_label(GTK_BUTTON(w), text);
 }
 
@@ -164,6 +196,85 @@ void haki_gtk_remove_child(int64_t node_id) {
     GtkWidget* parent = gtk_widget_get_parent(w);
     if (parent) gtk_container_remove(GTK_CONTAINER(parent), w);
     node_free(node_id);
+}
+
+// ── Callback registry ────────────────────────────────────────────────────────
+// Maps node_id → Haki closure function pointer.
+// Haki calls haki_register_callback(id, fn_ptr) during mount.
+// GTK button-clicked signal calls haki_fire_callback(id).
+
+void haki_register_callback(int64_t node_id, void* closure) {
+    fprintf(stderr, "[haki_ui] register_callback: node_id=%lld closure=%p\n",
+            (long long)node_id, closure);
+    if (node_id > 0 && node_id < HAKI_MAX_CALLBACKS)
+        g_callbacks_fwd[node_id] = closure;
+}
+
+int64_t haki_gtk_alloc_node_id_debug(void) {
+    int64_t id = g_next_id++;
+    fprintf(stderr, "[haki_ui] alloc_node_id: %lld\n", (long long)id);
+    return id;
+}
+
+// Allocate a stable node_id (separate from widget node_ids)
+// Used for buttons so their id is known before widget creation
+int64_t haki_gtk_alloc_node_id(void) {
+    int64_t id = g_next_id++;
+    fprintf(stderr, "[haki_ui] alloc_node_id → %lld\n", (long long)id);
+    return id;
+}
+
+/* Peek at the next node_id without allocating it */
+int64_t haki_gtk_peek_next_id(void) {
+    return g_next_id;
+}
+
+/* Mark a node as the primary label for rerender */
+static int64_t g_marked_label_id = 0;
+void haki_gtk_mark_label(int64_t node_id) {
+    if (g_marked_label_id == 0) g_marked_label_id = node_id;
+    fprintf(stderr, "[haki_ui] mark_label: %lld\n", (long long)node_id);
+}
+int64_t haki_gtk_get_label_id(void) {
+    return g_marked_label_id;
+}
+
+// ── Re-render support ────────────────────────────────────────────────────────
+// After a button click, call the Haki fn()->string closure to get new label text
+// then update the label widget via haki_gtk_set_text.
+//
+// The closure is a fat pointer: void*[2] = { fn_ptr, env_ptr }
+// fn_ptr signature: const char* fn(void* env)
+
+typedef const char* (*HakiStrFn)(void*);
+static HakiStrFn g_rerender_fn  = NULL;
+static void*     g_rerender_env = NULL;
+static int64_t   g_label_node_id = 0;
+
+void haki_set_rerender_callback(int64_t label_id, void* closure) {
+    g_label_node_id = label_id;
+    fprintf(stderr, "[haki_ui] set_rerender: label_id=%lld closure=%p\n",
+            (long long)label_id, closure);
+    if (closure) {
+        void** fat = (void**)closure;
+        fprintf(stderr, "[haki_ui] rerender fat[0]=%p fat[1]=%p\n", fat[0], fat[1]);
+        g_rerender_fn  = (HakiStrFn)fat[0];
+        g_rerender_env = fat[1];
+    }
+}
+
+static void do_rerender_debug(void) {
+    fprintf(stderr, "[haki_ui] do_rerender: fn=%p env=%p label=%lld\n",
+            (void*)g_rerender_fn, g_rerender_env, (long long)g_label_node_id);
+}
+
+static void do_rerender(void) {
+    fprintf(stderr, "[haki_ui] do_rerender called: fn=%p label=%lld\n",
+            (void*)g_rerender_fn, (long long)g_label_node_id);
+    if (!g_rerender_fn || !g_label_node_id) return;
+    const char* new_text = g_rerender_fn(g_rerender_env);
+    fprintf(stderr, "[haki_ui] new_text=%s\n", new_text ? new_text : "(null)");
+    if (new_text) haki_gtk_set_text(g_label_node_id, new_text);
 }
 
 // ── Event loop ────────────────────────────────────────────────────────────────

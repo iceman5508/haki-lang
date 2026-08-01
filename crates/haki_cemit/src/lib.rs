@@ -778,11 +778,12 @@ impl<'a> Cx<'a> {
                                     c_name(&arm.bindings[0].name)
                                 ));
                             } else if arm.bindings.len() > 1 {
-                                let struct_name = format!("__PayloadTuple{}", arm.binding_tys.len());
+                                // Multi-field: __payload is void** array, each element is type*
+                                // So __payload[i] is a void* pointing to the actual value
                                 for (bi, (binding, bty)) in arm.bindings.iter().zip(arm.binding_tys.iter()).enumerate() {
                                     let bt = self.c_ty(bty);
                                     out.push_str(&format!(
-                                        "{indent}        {bt} {} = (({struct_name}*)__payload)->f{bi};
+                                        "{indent}        {bt} {} = *({bt}*)(((void**)__payload)[{bi}]);
 ",
                                         c_name(&binding.name)
                                     ));

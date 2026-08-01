@@ -598,7 +598,7 @@ fn main() {
 
     // Handle --version and --help before anything else.
     if args[1] == "--version" || args[1] == "-V" {
-        println!("haki 3.0.0 — Haki compiler");
+        println!("haki 2.2.0 — Haki compiler");
         println!("  haki          run any .haki file");
         println!("  haki-gtk      compile + run as GTK desktop app");
         println!("  haki-dom      compile to WebAssembly for the browser");
@@ -2295,6 +2295,20 @@ fn compile_and_run(args: RunArgs) {
                         "void haki_platform_run(void);
 ",
                         "void haki_set_callback_dispatcher(void* fn);
+",
+                        "long long haki_gtk_alloc_node_id(void);
+",
+                        "void haki_register_callback(long long node_id, void* fn);
+",
+                        "void haki_fire_callback(long long node_id);
+",
+                        "void haki_set_rerender_callback(long long label_id, void* closure);
+",
+                        "long long haki_gtk_peek_next_id(void);
+",
+                        "void haki_gtk_mark_label(long long node_id);
+",
+                        "long long haki_gtk_get_label_id(void);
 ",
                     );
                     let mut patched = decls.to_string();
