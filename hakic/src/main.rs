@@ -2067,14 +2067,12 @@ fn compile_and_run(args: RunArgs) {
 
     // For `hakic run`, compile into a temp directory so we don't litter
     // the source directory with .ll / .o files.
-    let work_dir: PathBuf = if args.run {
+    let work_dir: PathBuf = {
         let tmp = std::env::temp_dir().join(format!("hakic_{stem}_{}", std::process::id()));
         fs::create_dir_all(&tmp).unwrap_or_else(|e| {
             eprintln!("hakic: cannot create temp dir: {e}"); process::exit(1);
         });
         tmp
-    } else {
-        args.source.parent().unwrap_or(Path::new(".")).to_path_buf()
     };
 
     let ir_path      = work_dir.join(format!("{stem}.ll"));
@@ -2479,20 +2477,9 @@ fn compile_and_run(args: RunArgs) {
     // Detect HTTP usage from source and IR
     // Detect HTTP: check source file, IR, and use a broad scan
     let src_text = fs::read_to_string(&args.source).unwrap_or_default();
-    // Also scan all .haki files in the same directory (for imported modules)
-    let dir_has_http = args.source.parent()
-        .and_then(|d| fs::read_dir(d).ok())
-        .map(|rd| rd.flatten().any(|e| {
-            e.path().extension().and_then(|x| x.to_str()) == Some("haki") &&
-            fs::read_to_string(e.path()).unwrap_or_default()
-                .contains("HttpServer")
-        }))
-        .unwrap_or(false);
-    let uses_http = !ir.is_empty() // LLVM path - always include HTTP
-                  || ir.contains("haki_http_server_new") || ir.contains("MHD_start_daemon")
-                  || ir.contains("HttpServer") || ir.contains("microhttpd")
-                  || src_text.contains("HttpServer") || src_text.contains("HttpRequest")
-                  || dir_has_http;
+    // Only check source text — IR always contains Http type declarations as builtins
+    let uses_http = src_text.contains("HttpServer") || src_text.contains("HttpRequest")
+                  || src_text.contains("haki_http_server_new");
 
     // Use HTTP runtime only if program uses HTTP (avoids microhttpd dependency)
     let runtime_src = if uses_http {

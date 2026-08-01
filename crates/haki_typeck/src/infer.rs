@@ -1336,23 +1336,18 @@ impl Inferer {
             });
         }
 
-        // ── Map method return type overrides ────────────────────────────────────
-        if matches!(typed_recv.ty, SemTy::Generic(ref n, _) if n == "Map") {
-            if method.name == "has" {
-                let typed_args = args.iter()
-                    .map(|a| self.infer_expr(a, type_args))
-                    .collect::<TypeResult<Vec<_>>>()?;
-                return Ok(TypedExpr {
-                    kind: TypedExprKind::MethodCall(Box::new(typed_recv), method.clone(), typed_args),
-                    ty: SemTy::Bool,
-                    span,
-                });
-            }
-        }
-
-        // ── Array method return type overrides ───────────────────────────────────
-        if matches!(typed_recv.ty, SemTy::Generic(ref n, _) if n == "Array") {
-            if method.name == "contains" || method.name == "isEmpty" {
+        // ── Map/Array method return type overrides ──────────────────────────────
+        {
+            let recv_type_name = match &typed_recv.ty {
+                SemTy::Generic(n, _) => Some(n.as_str()),
+                SemTy::Named(n) => Some(n.as_str()),
+                _ => None,
+            };
+            let bool_methods_map   = ["has"];
+            let bool_methods_array = ["contains", "isEmpty"];
+            let is_map_has   = recv_type_name == Some("Map")   && bool_methods_map.contains(&method.name.as_str());
+            let is_array_bool = recv_type_name == Some("Array") && bool_methods_array.contains(&method.name.as_str());
+            if is_map_has || is_array_bool {
                 let typed_args = args.iter()
                     .map(|a| self.infer_expr(a, type_args))
                     .collect::<TypeResult<Vec<_>>>()?;

@@ -1510,14 +1510,24 @@ impl<'a> Cx<'a> {
         if name.ends_with("__length") && args.len() == 1 && matches!(args[0].ty, SemTy::String) {
             return Ok(format!("haki_string_length({})", self.emit_expr(&args[0])?));
         }
-        if name.ends_with("__contains")   { return Ok(format!("haki_string_contains({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
+        // __contains: only intercept for string receiver (Array has its own runtime fn)
+        if name.ends_with("__contains") && args.len() >= 2 {
+            if matches!(args[0].ty, SemTy::String) {
+                return Ok(format!("haki_string_contains({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?));
+            }
+            // Array contains — fall through to Array__T__contains runtime fn
+        }
         if name.ends_with("__split")      { return Ok(format!("haki_string_split({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
         if name.ends_with("__trim")       { return Ok(format!("haki_string_trim({})", self.emit_expr(&args[0])?)); }
         if name.ends_with("__trimStart")  { return Ok(format!("haki_string_trim_start({})", self.emit_expr(&args[0])?)); }
         if name.ends_with("__trimEnd")    { return Ok(format!("haki_string_trim_end({})", self.emit_expr(&args[0])?)); }
         if name.ends_with("__toUpper")    { return Ok(format!("haki_string_to_upper({})", self.emit_expr(&args[0])?)); }
         if name.ends_with("__toLower")    { return Ok(format!("haki_string_to_lower({})", self.emit_expr(&args[0])?)); }
-        if name.ends_with("__indexOf")    { return Ok(format!("haki_string_index_of({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
+        if name.ends_with("__indexOf") && args.len() >= 2 {
+            if matches!(args[0].ty, SemTy::String) {
+                return Ok(format!("haki_string_index_of({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?));
+            }
+        }
         if name.ends_with("__replace")    { return Ok(format!("haki_string_replace({}, {}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?, self.emit_expr(&args[2])?)); }
         if name.ends_with("__startsWith") { return Ok(format!("haki_string_starts_with({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
         if name.ends_with("__endsWith")   { return Ok(format!("haki_string_ends_with({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
