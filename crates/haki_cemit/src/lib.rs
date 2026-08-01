@@ -114,7 +114,7 @@ pub fn emit_c_so(prog: &MonoProgram) -> CResult<String> {
 
 fn emit_c_impl(prog: &MonoProgram, target_so: bool, source_path: &str) -> CResult<String> {
     let mut out = String::with_capacity(64 * 1024);
-    let cx = Cx { prog, self_fields: std::cell::RefCell::new(std::collections::HashSet::new()), source_path: source_path.to_string() };
+    let cx = Cx { prog, self_fields: std::cell::RefCell::new(std::collections::HashSet::new()), fn_locals: std::cell::RefCell::new(std::collections::HashSet::new()), source_path: source_path.to_string() };
 
     // Header
     if target_so {
@@ -292,8 +292,10 @@ for s in &prog.structs {
 struct Cx<'a> {
     prog: &'a MonoProgram,
     /// Field names of the class whose method we're currently emitting.
-    /// When non-empty, `emit_var` prefixes matching names with `self->`.
     self_fields: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Parameter names of fn-type in the current function (closure params).
+    /// Used to detect fat-pointer calls vs regular calls.
+    fn_locals: std::cell::RefCell<std::collections::HashSet<String>>,
     /// Original Haki source path — used for #line directives (empty = disabled).
     source_path: String,
 }
@@ -452,6 +454,17 @@ impl<'a> Cx<'a> {
     }
 
     fn emit_fn(&self, out: &mut String, f: &MonoFn) -> CResult<()> {
+        // Collect fn-type parameter names so emit_call can detect fat-pointer calls
+        {
+            let mut locals = self.fn_locals.borrow_mut();
+            locals.clear();
+            for p in &f.params {
+                if matches!(p.ty, SemTy::Fn(_, _) | SemTy::Closure(_, _)) {
+                    locals.insert(p.name.clone());
+                }
+            }
+        }
+
         // Emit #line directive before each function so debuggers map to .haki source
         if !self.source_path.is_empty() {
             let lo = f.span.lo as usize;
@@ -1691,19 +1704,16 @@ impl<'a> Cx<'a> {
         // We detect this by checking if the FIRST argument's type matches the closure var.
         // Simpler: check if name is in our self.fn_names set (built from emitted functions).
         // For now use the known-globals approach: if not in runtime globals list, treat as closure.
-        let is_runtime_global = name.starts_with("haki_")
-            || name.starts_with("__haki_")
-            || name.starts_with("__fn_lit_")  // generated function literals
-            || name.starts_with("__c_")       // generated constructors
-            || name.contains("__")            // mangled names (module__fn, Type__method)
-            || matches!(name, "print" | "int_to_string" | "float_to_string"
-                | "bool_to_string" | "string_length" | "string_concat"
-                | "malloc" | "free" | "NULL" | "fprintf" | "stderr"
-                | "int_to_float" | "float_to_int" | "string_to_int"
-                | "string_to_float" | "panic" | "jsonDecodeGet"
-                | "requestParam");
+        // Only emit fat-pointer call for local fn-type variables (closure params).
+        // These are identified by: short lowercase names with no underscores,
+        // that are NOT known top-level function names in the program.
+        // Top-level user functions are registered in self.fn_names.
+        let is_fn_local_var = !name.starts_with("haki_")
+            && !name.starts_with("__")
+            && !name.contains("__")
+            && self.fn_locals.borrow().contains(name);
 
-        if !is_runtime_global && !args.is_empty() {
+        if is_fn_local_var && !args.is_empty() {
             // Emit as fat pointer call: ((RetType(*)(void*, ArgTypes))((void**)(name))[0])(((void**)(name))[1], args)
             let ret_c_ty = self.c_ty(ret_ty);
             let ret_c_ty = if ret_c_ty.is_empty() || ret_c_ty == "void" { "void*".to_string() } else { ret_c_ty };

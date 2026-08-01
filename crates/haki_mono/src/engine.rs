@@ -810,7 +810,23 @@ impl<'src> MonoEngine<'src> {
                         ],
                     )
                 } else {
-                    MonoExprKind::Var(name)
+                    // Non-capturing closure: wrap in fat pointer with NULL env
+                    // so all fn-type values use a uniform fat-pointer ABI
+                    MonoExprKind::Call(
+                        "haki_make_closure".into(),
+                        vec![
+                            MonoExpr {
+                                kind: MonoExprKind::Var(name),
+                                ty: SemTy::Named("__env_ptr".into()),
+                                span: expr.span,
+                            },
+                            MonoExpr {
+                                kind: MonoExprKind::Var("NULL".into()),
+                                ty: SemTy::Named("__env_ptr".into()),
+                                span: expr.span,
+                            },
+                        ],
+                    )
                 }
             }
         };
