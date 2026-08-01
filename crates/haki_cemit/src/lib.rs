@@ -1355,6 +1355,37 @@ impl<'a> Cx<'a> {
     }
 
     fn emit_call(&self, name: &str, args: &[MonoExpr], ret_ty: &SemTy) -> CResult<String> {
+        // ── Closure / fn-param invocation ────────────────────────────────────
+        // __haki_invoke_closure_TYPE(closure, args...) → fat pointer call
+        if name.starts_with("__haki_invoke_closure_") {
+            if args.is_empty() { return Ok("NULL".into()); }
+            let closure = self.emit_expr(&args[0])?;
+            let call_args = args[1..].iter()
+                .map(|a| self.emit_expr(a))
+                .collect::<CResult<Vec<_>>>()?;
+            let args_str = call_args.join(", ");
+            // Fat pointer: void*[2] = { fn_ptr, env_ptr }
+            // Call: ((RetType(*)(void*, ArgTypes))((void**)(closure))[0])(((void**)(closure))[1], args)
+            let (ret_cast, ret_c_ty) = match name {
+                n if n.ends_with("_int")   => ("(int64_t)", "int64_t"),
+                n if n.ends_with("_float") => ("(double)",  "double"),
+                n if n.ends_with("_bool")  => ("(int8_t)",  "int8_t"),
+                n if n.ends_with("_str")   => ("(const char*)", "const char*"),
+                _                          => ("", "void*"),
+            };
+            let sep = if call_args.is_empty() { "" } else { ", " };
+            return Ok(format!(
+                "({ret_cast}(({ret_c_ty}(*)(void*{sep2}{arg_types}))                 ((void**)({closure}))[0])(((void**)({closure}))[1]{sep}{args_str}))",
+                ret_cast = ret_cast,
+                ret_c_ty = ret_c_ty,
+                sep2 = if call_args.is_empty() { "" } else { ", " },
+                arg_types = args[1..].iter().map(|a| self.c_ty(&a.ty)).collect::<Vec<_>>().join(", "),
+                closure = closure,
+                sep = sep,
+                args_str = args_str,
+            ));
+        }
+
         // ── Chan construction ─────────────────────────────────────────────────
         // Chan<T>(capacity: N) → haki_chan_new(N)
         // Chan<T>()            → haki_chan_new(0)  (unbounded)
@@ -1407,7 +1438,20 @@ impl<'a> Cx<'a> {
             let map = self.emit_expr(&args[0])?;
             let key = self.emit_expr(&args[1])?;
             let def = self.emit_expr(&args[2])?;
-            return Ok(format!("haki_map_get_or_default({map}, {key}, (void*)({def}))"));
+            // Determine return type from map's value type parameter
+            let val_cast = if let SemTy::Generic(_, targs) = &args[0].ty {
+                match targs.get(1) {
+                    Some(SemTy::Int)   => "(int64_t)(intptr_t)",
+                    Some(SemTy::Bool)  => "(int8_t)(intptr_t)",
+                    Some(SemTy::Float) => "(double)(intptr_t)",
+                    _ => "(const char*)",
+                }
+            } else { "(const char*)" };
+            let def_cast = match &args[2].ty {
+                SemTy::Int | SemTy::Bool => format!("(void*)(intptr_t)({def})"),
+                _ => def,
+            };
+            return Ok(format!("({val_cast}haki_map_get_or_default({map}, {key}, {def_cast}))"));
         }
         if name == "writeFile"  {
             let p = self.emit_expr(&args[0])?;
@@ -1482,6 +1526,61 @@ impl<'a> Cx<'a> {
             return Ok(format!("haki_array_append_val({}, &({}))", arr, val));
         }
         if name.contains("__length")  { return Ok(format!("haki_array_length({})", self.emit_expr(&args[0])?)); }
+
+        // Array typed method intercepts
+        if name.contains("__removeLast") && args.len() == 1 {
+            let arr = self.emit_expr(&args[0])?;
+            // haki_array_remove_last returns void* pointing INTO the array's inline storage
+            // The array stores values by memcpy (elem_size bytes), so dereference the pointer
+            // Determine element type — may be SemTy::Int or SemTy::Named("int")
+            let elem_ty = match &args[0].ty {
+                SemTy::Generic(_, type_args) if !type_args.is_empty() => Some(&type_args[0]),
+                _ => None,
+            };
+            let cast = match elem_ty {
+                Some(SemTy::Int) => "*(int64_t*)",
+                Some(SemTy::Float) => "*(double*)",
+                Some(SemTy::Bool) => "*(int8_t*)",
+                Some(SemTy::Named(n)) if n == "int" => "*(int64_t*)",
+                Some(SemTy::Named(n)) if n == "float" => "*(double*)",
+                Some(SemTy::Named(n)) if n == "bool" => "*(int8_t*)",
+                _ => "*(const char**)",
+            };
+            return Ok(format!("({cast}haki_array_remove_last({arr}))"));
+        }
+        if name.contains("__removeAt") && args.len() == 2 {
+            let arr = self.emit_expr(&args[0])?;
+            let idx = self.emit_expr(&args[1])?;
+            return Ok(format!("haki_array_remove_at({arr}, {idx})"));
+        }
+        if name.contains("__indexOf") && args.len() == 2 && !matches!(args[0].ty, SemTy::String) {
+            let arr = self.emit_expr(&args[0])?;
+            let val = self.emit_expr(&args[1])?;
+            let fn_name = match args[0].ty {
+                SemTy::Generic(_, ref targs) if targs.first() == Some(&SemTy::String) =>
+                    "haki_array_index_of_str",
+                _ => "haki_array_index_of_int",
+            };
+            return Ok(format!("{fn_name}({arr}, {val})"));
+        }
+        if name.contains("__contains") && args.len() == 2 && !matches!(args[0].ty, SemTy::String) {
+            let arr = self.emit_expr(&args[0])?;
+            let val = self.emit_expr(&args[1])?;
+            let fn_name = match args[0].ty {
+                SemTy::Generic(_, ref targs) if targs.first() == Some(&SemTy::String) =>
+                    "haki_array_contains_str",
+                _ => "haki_array_contains_int",
+            };
+            return Ok(format!("{fn_name}({arr}, {val})"));
+        }
+        if name.contains("__first") && args.len() == 1 {
+            let arr = self.emit_expr(&args[0])?;
+            return Ok(format!("haki_array_first({arr})"));
+        }
+        if name.contains("__last") && args.len() == 1 {
+            let arr = self.emit_expr(&args[0])?;
+            return Ok(format!("haki_array_last({arr})"));
+        }
         // Array __get: requires exactly 2 args and receiver is array type
         if name.contains("__get") && args.len() == 2 && matches!(args[0].ty, SemTy::Generic(ref n, _) if n == "Array") {
             return Ok(format!("haki_array_get({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?));
@@ -1490,12 +1589,24 @@ impl<'a> Cx<'a> {
         // Map methods — check receiver is Map type to avoid matching module functions
         if name.contains("__set") && args.len() == 3
             && matches!(args[0].ty, SemTy::Generic(ref n, _) if n == "Map") {
-            return Ok(format!("haki_map_set({}, {}, {})",
-                self.emit_expr(&args[0])?, self.emit_expr(&args[1])?, self.emit_expr(&args[2])?));
+            let map = self.emit_expr(&args[0])?;
+            let key = self.emit_expr(&args[1])?;
+            let val = self.emit_expr(&args[2])?;
+            // Map stores values as void* — cast int/bool to void* via intptr_t
+            let val_cast = match &args[2].ty {
+                SemTy::Int | SemTy::Bool => format!("(void*)(intptr_t)({val})"),
+                SemTy::Float => format!("(void*)(intptr_t)(*(int64_t*)&({val}))"),
+                _ => val,
+            };
+            return Ok(format!("haki_map_set({map}, {key}, {val_cast})"));
         }
         if name.contains("__has") && args.len() == 2
             && matches!(args[0].ty, SemTy::Generic(ref n, _) if n == "Map") {
             return Ok(format!("haki_map_has({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?));
+        }
+        if name.contains("__delete") && args.len() == 2
+            && matches!(args[0].ty, SemTy::Generic(ref n, _) if n == "Map") {
+            return Ok(format!("haki_map_delete({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?));
         }
         if name.contains("__get") && args.len() == 2
             && matches!(args[0].ty, SemTy::Generic(ref n, _) if n == "Map") {
@@ -1533,6 +1644,24 @@ impl<'a> Cx<'a> {
         if name.ends_with("__endsWith")   { return Ok(format!("haki_string_ends_with({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
         if name.ends_with("__join") && args.len() == 2 { return Ok(format!("haki_array_join({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
 
+        // haki_make_closure: env_ptr must be void* — cast int/bool captures
+        if name == "haki_make_closure" && args.len() == 2 {
+            let fn_ptr = self.emit_expr(&args[0])?;
+            let env_raw = self.emit_expr(&args[1])?;
+            // Cast any primitive to void* via intptr_t
+            let needs_cast = matches!(args[1].ty,
+                SemTy::Int | SemTy::Bool | SemTy::Named(_)
+            ) && !matches!(args[1].ty, SemTy::String);
+            let env_cast = if needs_cast {
+                format!("(void*)(intptr_t)({env_raw})")
+            } else if matches!(args[1].ty, SemTy::Float) {
+                format!("(void*)(intptr_t)(*(int64_t*)&({env_raw}))")
+            } else {
+                env_raw
+            };
+            return Ok(format!("haki_make_closure((void*){fn_ptr}, {env_cast})"));
+        }
+
         // Enum variant construction: VariantName(payload)
         if let Some((_, disc, variant)) = self.find_variant(name) {
             return self.emit_variant_construct(name, disc, &variant.fields, args);
@@ -1553,6 +1682,44 @@ impl<'a> Cx<'a> {
         let arg_strs: Vec<String> = args.iter()
             .map(|a| self.emit_expr(a))
             .collect::<CResult<_>>()?;
+
+        // Check if this looks like a local fn-type variable (closure param).
+        // Heuristic: name is a simple identifier that doesn't match any C runtime
+        // pattern and appears to be a closure (no __ prefix, short name).
+        // The actual check: if the name is not a mangled function (no __ except leading)
+        // and the return type suggests it came from a fn-type local, emit fat-ptr call.
+        // We detect this by checking if the FIRST argument's type matches the closure var.
+        // Simpler: check if name is in our self.fn_names set (built from emitted functions).
+        // For now use the known-globals approach: if not in runtime globals list, treat as closure.
+        let is_runtime_global = name.starts_with("haki_")
+            || name.starts_with("__haki_")
+            || name.starts_with("__fn_lit_")  // generated function literals
+            || name.starts_with("__c_")       // generated constructors
+            || name.contains("__")            // mangled names (module__fn, Type__method)
+            || matches!(name, "print" | "int_to_string" | "float_to_string"
+                | "bool_to_string" | "string_length" | "string_concat"
+                | "malloc" | "free" | "NULL" | "fprintf" | "stderr"
+                | "int_to_float" | "float_to_int" | "string_to_int"
+                | "string_to_float" | "panic" | "jsonDecodeGet"
+                | "requestParam");
+
+        if !is_runtime_global && !args.is_empty() {
+            // Emit as fat pointer call: ((RetType(*)(void*, ArgTypes))((void**)(name))[0])(((void**)(name))[1], args)
+            let ret_c_ty = self.c_ty(ret_ty);
+            let ret_c_ty = if ret_c_ty.is_empty() || ret_c_ty == "void" { "void*".to_string() } else { ret_c_ty };
+            let sep = if arg_strs.is_empty() { "" } else { ", " };
+            let arg_types: Vec<String> = args.iter().map(|a| self.c_ty(&a.ty)).collect();
+            return Ok(format!(
+                "(({ret_c_ty}(*)( void*{sep2}{arg_types}))((void**)({name}))[0])(((void**)({name}))[1]{sep}{arg_strs})",
+                ret_c_ty = ret_c_ty,
+                sep2 = if arg_strs.is_empty() { "" } else { ", " },
+                arg_types = arg_types.join(", "),
+                name = c_name(name),
+                sep = sep,
+                arg_strs = arg_strs.join(", "),
+            ));
+        }
+
         Ok(format!("{}({})", c_name(name), arg_strs.join(", ")))
     }
 

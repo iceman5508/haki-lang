@@ -2067,27 +2067,9 @@ impl<'ctx> CodeGen<'ctx> {
                 .map_err(|e| CodeGenError::BuildError(e.to_string()))?
         };
 
-        // Null error pointer
-        let tuple = self.builder.build_alloca(tuple_ty, "rm_tuple")
-            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
-        let sz = i64.const_int(0, false); let _ = sz;
-        let f0 = self.builder.build_struct_gep(tuple_ty, tuple, 0, "t0")
-            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
-        // Store elem as ptr (int2ptr if needed)
-        let as_ptr = match elem_val {
-            BasicValueEnum::IntValue(i) => self.builder
-                .build_int_to_ptr(i, ptr, "e2p")
-                .map_err(|e| CodeGenError::BuildError(e.to_string()))?.into(),
-            BasicValueEnum::PointerValue(_) => elem_val,
-            _ => ptr.const_null().into(),
-        };
-        self.builder.build_store(f0, as_ptr)
-            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
-        let f1 = self.builder.build_struct_gep(tuple_ty, tuple, 1, "t1")
-            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
-        self.builder.build_store(f1, ptr.const_null())
-            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
-        Ok(Some(tuple.into()))
+        // removeLast returns T directly (not a tuple) — return elem_val
+        let _ = (tuple_ty, i64);
+        Ok(Some(elem_val))
     }
 
     fn emit_array_remove_at(&mut self, args: &[MonoExpr]) -> CodeGenResult<Option<BasicValueEnum<'ctx>>> {

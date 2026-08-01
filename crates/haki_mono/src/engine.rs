@@ -656,9 +656,15 @@ impl<'src> MonoEngine<'src> {
                     _ => "?".into(),
                 };
 
+
+
                 // Discover if this call instantiates a generic function.
-                // We look at the type args embedded in the expr type.
-                let type_args = collect_type_args_from_call(callee, subst);
+                // Only mangle if the callee is actually a generic function.
+                let type_args = if self.generic_fns.contains_key(&callee_name) {
+                    collect_type_args_from_call(callee, subst)
+                } else {
+                    vec![]
+                };
                 let mangled = if type_args.is_empty() {
                     callee_name.clone()
                 } else {

@@ -2108,6 +2108,16 @@ fn compile_and_run(args: RunArgs) {
         }
     }
 
+    // ── Detect HTTP/UI usage from source text ────────────────────────────
+    // Must happen before C emission — IR always contains these as registered builtins
+    let src_text = fs::read_to_string(&args.source).unwrap_or_default();
+    let uses_http = src_text.contains("HttpServer") || src_text.contains("HttpRequest")
+                  || src_text.contains("haki_http_server_new");
+    let uses_ui   = src_text.contains("haki_app_run") || src_text.contains("haki_gtk_create_window")
+                  || src_text.contains("ui.button") || src_text.contains("ui.text")
+                  || src_text.contains("ui.column") || src_text.contains("ui.row")
+                  || src_text.contains("app.App") || src_text.contains("haki_ui");
+
     // ── Read source ───────────────────────────────────────────────────────
     let src = match fs::read_to_string(&args.source) {
         Ok(s) => s,
@@ -2238,6 +2248,39 @@ fn compile_and_run(args: RunArgs) {
         match c_result {
             Ok(c_src) => {
                 let c_path = work_dir.join(format!("{stem}.c"));
+                // Prepend full HTTP struct definitions when HTTP types are used
+                // Forward declarations alone don't work — structs must be fully defined
+                let c_src = if uses_http {
+                    let http_defs = r#"
+/* ── HTTP type definitions (inlined when HttpServer/HttpRequest used) ── */
+#include <string.h>
+struct MHD_Connection;
+typedef struct {
+    const char* method;
+    const char* path;
+    const char* body;
+    size_t      body_len;
+    struct MHD_Connection* connection;
+} HakiHttpRequest;
+typedef HakiHttpRequest HttpRequest;
+typedef struct {
+    int         status;
+    const char* body;
+    const char* contentType;
+} HakiHttpResponse;
+typedef HakiHttpResponse HttpResponse;
+typedef struct { void* handler; int port; } HakiHttpServer;
+typedef HakiHttpServer HttpServer;
+void* haki_http_server_new(int port, void* handler);
+void  haki_http_server_listen(void* server);
+const char* haki_request_param(void* req, const char* name);
+const char* haki_json_decode_get(const char* json, const char* key);
+"#;
+                    format!("{http_defs}
+{c_src}")
+                } else {
+                    c_src
+                };
                 if let Err(e) = fs::write(&c_path, &c_src) {
                     eprintln!("hakic: cannot write C source: {e}"); process::exit(1);
                 }
@@ -2476,11 +2519,6 @@ fn compile_and_run(args: RunArgs) {
     // ── Write runtime ─────────────────────────────────────────────────────
     // Detect HTTP usage from source and IR
     // Detect HTTP: check source file, IR, and use a broad scan
-    let src_text = fs::read_to_string(&args.source).unwrap_or_default();
-    // Only check source text — IR always contains Http type declarations as builtins
-    let uses_http = src_text.contains("HttpServer") || src_text.contains("HttpRequest")
-                  || src_text.contains("haki_http_server_new");
-
     // Use HTTP runtime only if program uses HTTP (avoids microhttpd dependency)
     let runtime_src = if uses_http {
         haki_stdlib::RUNTIME_C_SOURCE
@@ -2538,11 +2576,7 @@ fn compile_and_run(args: RunArgs) {
     log!("[llc]     {}", obj_path.display());
 
     // ── Detect UI usage ───────────────────────────────────────────────────
-    // If the IR references haki_app_run, the program uses haki_ui widgets.
-    // We detect this from the emitted IR so we don't need a separate flag.
-    let uses_ui   = ir.contains("haki_app_run") || ir.contains("haki_text_new")
-                  || ir.contains("haki_gtk_create_window");
-    // uses_http defined earlier
+    // uses_ui + uses_http defined earlier
 
     // ── Compile runtime ───────────────────────────────────────────────────
     let cc = find_tool(&["gcc", "cc", "clang", "clang-17"]);
