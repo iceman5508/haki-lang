@@ -1428,9 +1428,16 @@ impl<'a> Cx<'a> {
         // the generic __get/__set/__append pattern matchers below, which
         // would otherwise match module-prefixed names like env__get.
         // Task<T>.await() → haki_task_await(task) returning void*
+        // Cast result based on return type: int → (int64_t)(intptr_t), else direct
         if name.contains("__await") && args.len() == 1 {
             let task = self.emit_expr(&args[0])?;
-            return Ok(format!("haki_task_await({task})"));
+            let cast = match ret_ty {
+                SemTy::Int   => "(int64_t)(intptr_t)",
+                SemTy::Float => "(double)(intptr_t)",
+                SemTy::Bool  => "(int8_t)(intptr_t)",
+                _            => "",
+            };
+            return Ok(format!("({cast}haki_task_await({task}))"));
         }
         // Mutex<T>.lock() → haki_mutex_lock
         if name.contains("Mutex__") && name.contains("__lock") {
@@ -1503,11 +1510,18 @@ impl<'a> Cx<'a> {
         if name.ends_with("__length") && args.len() == 1 && matches!(args[0].ty, SemTy::String) {
             return Ok(format!("haki_string_length({})", self.emit_expr(&args[0])?));
         }
-        if name.ends_with("__contains") { return Ok(format!("haki_string_contains({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
-        if name.ends_with("__split")    { return Ok(format!("haki_string_split({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
-        if name.ends_with("__trim")     { return Ok(format!("haki_string_trim({})", self.emit_expr(&args[0])?)); }
-        if name.ends_with("__toUpper")  { return Ok(format!("haki_string_to_upper({})", self.emit_expr(&args[0])?)); }
-        if name.ends_with("__toLower")  { return Ok(format!("haki_string_to_lower({})", self.emit_expr(&args[0])?)); }
+        if name.ends_with("__contains")   { return Ok(format!("haki_string_contains({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
+        if name.ends_with("__split")      { return Ok(format!("haki_string_split({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
+        if name.ends_with("__trim")       { return Ok(format!("haki_string_trim({})", self.emit_expr(&args[0])?)); }
+        if name.ends_with("__trimStart")  { return Ok(format!("haki_string_trim_start({})", self.emit_expr(&args[0])?)); }
+        if name.ends_with("__trimEnd")    { return Ok(format!("haki_string_trim_end({})", self.emit_expr(&args[0])?)); }
+        if name.ends_with("__toUpper")    { return Ok(format!("haki_string_to_upper({})", self.emit_expr(&args[0])?)); }
+        if name.ends_with("__toLower")    { return Ok(format!("haki_string_to_lower({})", self.emit_expr(&args[0])?)); }
+        if name.ends_with("__indexOf")    { return Ok(format!("haki_string_index_of({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
+        if name.ends_with("__replace")    { return Ok(format!("haki_string_replace({}, {}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?, self.emit_expr(&args[2])?)); }
+        if name.ends_with("__startsWith") { return Ok(format!("haki_string_starts_with({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
+        if name.ends_with("__endsWith")   { return Ok(format!("haki_string_ends_with({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
+        if name.ends_with("__join") && args.len() == 2 { return Ok(format!("haki_array_join({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
 
         // Enum variant construction: VariantName(payload)
         if let Some((_, disc, variant)) = self.find_variant(name) {

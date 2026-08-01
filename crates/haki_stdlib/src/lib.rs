@@ -19,4 +19,5 @@ pub mod runtime;
 
 pub use builtins::register_builtins;
 pub use runtime::RUNTIME_C_SOURCE;
+pub use runtime::CORE_RUNTIME_C_SOURCE;
 pub use runtime::UI_RUNTIME_C_SOURCE;

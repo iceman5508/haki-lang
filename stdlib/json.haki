@@ -8,17 +8,17 @@
 /// v1.3 scope: flat JSON objects. Nested objects and arrays are v1.4.
 
 /// Encode a string value as a JSON string (with quotes and escaping).
-fn string(value: string) -> string {
+fn str(value: string) -> string {
     return jsonString(value)
 }
 
 /// Encode an integer as a JSON number.
-fn int(value: int) -> string {
+fn num(value: int) -> string {
     return jsonInt(value)
 }
 
 /// Encode a boolean as JSON true/false.
-fn bool(value: bool) -> string {
+fn flag(value: bool) -> string {
     return jsonBool(value)
 }
 

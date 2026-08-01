@@ -1336,6 +1336,34 @@ impl Inferer {
             });
         }
 
+        // ── Map method return type overrides ────────────────────────────────────
+        if matches!(typed_recv.ty, SemTy::Generic(ref n, _) if n == "Map") {
+            if method.name == "has" {
+                let typed_args = args.iter()
+                    .map(|a| self.infer_expr(a, type_args))
+                    .collect::<TypeResult<Vec<_>>>()?;
+                return Ok(TypedExpr {
+                    kind: TypedExprKind::MethodCall(Box::new(typed_recv), method.clone(), typed_args),
+                    ty: SemTy::Bool,
+                    span,
+                });
+            }
+        }
+
+        // ── Array method return type overrides ───────────────────────────────────
+        if matches!(typed_recv.ty, SemTy::Generic(ref n, _) if n == "Array") {
+            if method.name == "contains" || method.name == "isEmpty" {
+                let typed_args = args.iter()
+                    .map(|a| self.infer_expr(a, type_args))
+                    .collect::<TypeResult<Vec<_>>>()?;
+                return Ok(TypedExpr {
+                    kind: TypedExprKind::MethodCall(Box::new(typed_recv), method.clone(), typed_args),
+                    ty: SemTy::Bool,
+                    span,
+                });
+            }
+        }
+
         // ── String method return type overrides ──────────────────────────────────
         // Explicitly return correct types for string methods that return bool/int
         // to prevent resolve_ty from returning SemTy::String when type resolution

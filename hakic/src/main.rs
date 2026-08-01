@@ -603,11 +603,12 @@ fn main() {
 
     // Handle --version and --help before anything else.
     if args[1] == "--version" || args[1] == "-V" {
-        println!("haki 2.2.0 — Haki compiler");
+        println!("haki 3.2.0 — Haki compiler");
         println!("  haki          run any .haki file");
-        println!("  haki-gtk      compile + run as GTK desktop app");
-        println!("  haki-dom      compile to WebAssembly for the browser");
-        println!("  haki-web      compile to .so for Apache/nginx (mod_haki)");
+        println!("  haki-desktop  compile + run as native desktop app");
+        println!("  haki-server   compile to .so for Apache/nginx (mod_haki)");
+        println!("  haki-browser  compile to WebAssembly for the browser");
+        println!("  haki-gtk      (deprecated alias for haki-desktop)");
         println!("  hakic         compiler driver (tooling/CI alias)");
         println!("https://github.com/iceman5508/haki-lang");
         return;
@@ -746,7 +747,7 @@ fn main() {
             emit_runtime:false,
             emit_wasm:   false,
             emit_c:      false,
-            quiet:       args.iter().any(|a| a == "--quiet"),
+            quiet:       !args.iter().any(|a| a == "--verbose"),
             run:         true,
             run_args:    args[3..].iter()
                             .filter(|a| !a.starts_with("--"))
@@ -765,7 +766,11 @@ fn main() {
             process::exit(1);
         }
         let source    = PathBuf::from(&args[2]);
-        let run_args: Vec<String> = args[4..].to_vec();
+        let run_args: Vec<String> = if args.len() > 3 && args[3] == "--" {
+            args[4..].to_vec()
+        } else {
+            vec![]
+        };
         watch_mode(&source, run_args);
         return;
     }
@@ -868,7 +873,7 @@ fn main() {
 }
 
 fn print_usage() {
-    println!("Haki compiler v1.7.0");
+    println!("Haki compiler v3.2.0");
     println!();
     println!("Usage:");
     println!("  hakic <source.haki>              compile to native binary");
@@ -1850,13 +1855,20 @@ fn watch_mode(source: &Path, run_args: Vec<String>) {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("hakic"));
 
     let spawn = |exe: &Path, src: &Path, args: &[String]| -> Option<std::process::Child> {
+        // Compile to a temp dir so we know the binary path
+        let tmp = std::env::temp_dir().join(
+            format!("hakic_watch_{}", src.file_stem().unwrap_or_default().to_string_lossy())
+        );
+        let _ = fs::create_dir_all(&tmp);
+        let bin = tmp.join(src.file_stem().unwrap_or_default());
         let ok = std::process::Command::new(exe)
-            .arg(src).arg("--quiet")
+            .arg(src)
+            .arg("-o").arg(&bin)
+            .arg("--quiet")
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
         if !ok { eprintln!("[watch] compile failed — fix and save"); return None; }
-        let bin = src.with_extension("");
         match std::process::Command::new(&bin).args(args).spawn() {
             Ok(c) => { eprintln!("[watch] running pid {}", c.id()); Some(c) }
             Err(e) => { eprintln!("[watch] run error: {e}"); None }
@@ -2464,7 +2476,31 @@ fn compile_and_run(args: RunArgs) {
     }
 
     // ── Write runtime ─────────────────────────────────────────────────────
-    if let Err(e) = fs::write(&runtime_c, haki_stdlib::RUNTIME_C_SOURCE) {
+    // Detect HTTP usage from source and IR
+    // Detect HTTP: check source file, IR, and use a broad scan
+    let src_text = fs::read_to_string(&args.source).unwrap_or_default();
+    // Also scan all .haki files in the same directory (for imported modules)
+    let dir_has_http = args.source.parent()
+        .and_then(|d| fs::read_dir(d).ok())
+        .map(|rd| rd.flatten().any(|e| {
+            e.path().extension().and_then(|x| x.to_str()) == Some("haki") &&
+            fs::read_to_string(e.path()).unwrap_or_default()
+                .contains("HttpServer")
+        }))
+        .unwrap_or(false);
+    let uses_http = !ir.is_empty() // LLVM path - always include HTTP
+                  || ir.contains("haki_http_server_new") || ir.contains("MHD_start_daemon")
+                  || ir.contains("HttpServer") || ir.contains("microhttpd")
+                  || src_text.contains("HttpServer") || src_text.contains("HttpRequest")
+                  || dir_has_http;
+
+    // Use HTTP runtime only if program uses HTTP (avoids microhttpd dependency)
+    let runtime_src = if uses_http {
+        haki_stdlib::RUNTIME_C_SOURCE
+    } else {
+        haki_stdlib::CORE_RUNTIME_C_SOURCE
+    };
+    if let Err(e) = fs::write(&runtime_c, runtime_src) {
         eprintln!("hakic: cannot write runtime: {e}"); process::exit(1);
     }
 
@@ -2519,8 +2555,7 @@ fn compile_and_run(args: RunArgs) {
     // We detect this from the emitted IR so we don't need a separate flag.
     let uses_ui   = ir.contains("haki_app_run") || ir.contains("haki_text_new")
                   || ir.contains("haki_gtk_create_window");
-    let uses_http = ir.contains("haki_http_server_new") || ir.contains("MHD_start_daemon")
-                  || ir.contains("HttpServer") || ir.contains("microhttpd");
+    // uses_http defined earlier
 
     // ── Compile runtime ───────────────────────────────────────────────────
     let cc = find_tool(&["gcc", "cc", "clang", "clang-17"]);
@@ -2570,7 +2605,10 @@ fn compile_and_run(args: RunArgs) {
             link_cmd.arg(lib);
         }
     }
-    link_cmd.args(["-lpthread", "-lmicrohttpd"]);
+    link_cmd.arg("-lpthread");
+    if uses_http {
+        link_cmd.arg("-lmicrohttpd");
+    }
     link_cmd.args(["-o", binary_path.to_str().unwrap()]);
     run_step(&mut link_cmd, "link");
 
