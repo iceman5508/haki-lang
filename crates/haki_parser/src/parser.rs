@@ -1461,6 +1461,26 @@ impl Parser {
                     };
                     continue;
                 }
+                // Postfix call: `Stack<int>(items: arr)` or `expr(args)`
+                // This handles generic type construction like Stack<int>() or Stack<int>(items: x)
+                TokenKind::LParen => {
+                    self.advance(); // consume `(`
+                    let (named, positional) = self.parse_call_args_mixed()?;
+                    self.expect(&TokenKind::RParen)?;
+                    let hi = self.current_span().lo;
+                    if named.is_empty() {
+                        lhs = Expr {
+                            kind: ExprKind::Call(Box::new(lhs), positional),
+                            span: Span::new(lo, hi),
+                        };
+                    } else {
+                        lhs = Expr {
+                            kind: ExprKind::NamedCall(Box::new(lhs), named),
+                            span: Span::new(lo, hi),
+                        };
+                    }
+                    continue;
+                }
                 _ => break,
             }
         }

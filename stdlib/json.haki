@@ -22,8 +22,8 @@ fn bool(value: bool) -> string {
     return jsonBool(value)
 }
 
-/// Encode null.
-fn null() -> string {
+/// Encode null as JSON string.
+fn jsonNull() -> string {
     return "null"
 }
 

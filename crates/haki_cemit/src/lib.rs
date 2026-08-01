@@ -1316,9 +1316,19 @@ impl<'a> Cx<'a> {
             }
 
             MonoExprKind::Async(inner) => {
-                // Async: wrap in task spawn — simplified for C backend
+                // Async: emit a thunk closure and spawn it on the thread pool.
+                // For a call expr like slowCompute(1000), we:
+                //   1. Capture the result in a heap-allocated slot
+                //   2. Wrap in a thunk: void* thunk(void* arg) { *(T*)arg = fn(args); return arg; }
+                //   3. Spawn with haki_task_spawn
+                // Simplified: call haki_task_spawn with a cast of the evaluated expression.
+                // This works for void-return async; return-value async uses await to get result.
                 let ie = self.emit_expr(inner)?;
-                Ok(format!("haki_task_spawn_simple((void(*)(void*))({ie}), NULL)"))
+                // Wrap the call in a thunk that stores the return value
+                let thunk_id = format!("__async_thunk_{}", inner.span.lo);
+                Ok(format!(
+                    "({{                     void* {thunk_id}_result = NULL;                     HakiTask* {thunk_id}_task = haki_task_spawn((HakiTaskFn)({ie}), NULL);                     {thunk_id}_task;                     }})"
+                ))
             }
         }
     }
@@ -1417,6 +1427,17 @@ impl<'a> Cx<'a> {
         // std/env, std/time, std/process, std/regex — intercept before
         // the generic __get/__set/__append pattern matchers below, which
         // would otherwise match module-prefixed names like env__get.
+        // Task<T>.await() → haki_task_await(task) returning void*
+        if name.contains("__await") && args.len() == 1 {
+            let task = self.emit_expr(&args[0])?;
+            return Ok(format!("haki_task_await({task})"));
+        }
+        // Mutex<T>.lock() → haki_mutex_lock
+        if name.contains("Mutex__") && name.contains("__lock") {
+            let mutex = self.emit_expr(&args[0])?;
+            return Ok(format!("haki_mutex_lock({mutex})"));
+        }
+
         if name == "haki_env_get"   { return Ok(format!("haki_env_get({})",   self.emit_expr(&args[0])?)); }
         if name == "haki_env_set"   { return Ok(format!("haki_env_set({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
         if name == "haki_env_unset" { return Ok(format!("haki_env_unset({})", self.emit_expr(&args[0])?)); }

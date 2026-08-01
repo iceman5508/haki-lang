@@ -1187,6 +1187,25 @@ impl Inferer {
             }
         }
 
+        // ── Enum variant dot-construction: Direction.North ──────────────────────
+        // If the receiver is an enum type and the field name is a variant,
+        // treat it as variant construction: Direction.North → North (no payload)
+        if let Some(edef) = self.sym.enum_defs.get(&ty_name).cloned() {
+            if let Some(variant) = edef.variants.iter().find(|v| v.name.name == field.name) {
+                let variant_name = variant.name.name.clone();
+                let callee = TypedExpr {
+                    kind: TypedExprKind::Ident(Ident::new(&variant_name, field.span)),
+                    ty:   SemTy::Named(ty_name.clone()),
+                    span: field.span,
+                };
+                return Ok(TypedExpr {
+                    kind: TypedExprKind::Call(Box::new(callee), vec![]),
+                    ty:   SemTy::Named(ty_name),
+                    span,
+                });
+            }
+        }
+
         let field_info = self.sym.lookup_field(&ty_name, &field.name)
             .ok_or_else(|| TypeError::NoSuchField {
                 ty: ty_name.clone(),
@@ -1313,6 +1332,34 @@ impl Inferer {
             return Ok(TypedExpr {
                 kind: TypedExprKind::Call(Box::new(callee), all_args),
                 ty:   ret_ty,
+                span,
+            });
+        }
+
+        // ── String method return type overrides ──────────────────────────────────
+        // Explicitly return correct types for string methods that return bool/int
+        // to prevent resolve_ty from returning SemTy::String when type resolution
+        // falls through on primitive types.
+        if typed_recv.ty == SemTy::String {
+            let typed_args = self.infer_call_args(
+                &self.sym.lookup_method("string", &method.name)
+                    .cloned()
+                    .ok_or_else(|| TypeError::NoSuchMethod {
+                        ty: "string".into(),
+                        method: method.name.clone(),
+                        span,
+                    })?
+                    .params.clone(),
+                args, &method.name, type_args, span)?;
+            let ret_ty = match method.name.as_str() {
+                "contains" | "startsWith" | "endsWith" => SemTy::Bool,
+                "indexOf"  | "length"                  => SemTy::Int,
+                "split"                                => SemTy::Generic("Array".into(), vec![SemTy::String]),
+                _                                      => SemTy::String,
+            };
+            return Ok(TypedExpr {
+                kind: TypedExprKind::MethodCall(Box::new(typed_recv), method.clone(), typed_args),
+                ty: ret_ty,
                 span,
             });
         }
@@ -1671,6 +1718,45 @@ impl Inferer {
             _ => return Err(TypeError::UnknownFn { name: "complex_callee".into(), span }),
         };
 
+        // ── F-string coercion: __fstr(val: expr) ───────────────────────────────
+        if callee_name == "__fstr" {
+            let inner_expr = args.first().map(|a| &a.value);
+            let inner = if let Some(e) = inner_expr {
+                self.infer_expr(e, type_args)?
+            } else {
+                TypedExpr { kind: TypedExprKind::String(String::new()), ty: SemTy::String, span }
+            };
+            let coerced = match &inner.ty {
+                SemTy::String => inner,
+                SemTy::Int => {
+                    let to_str = TypedExpr {
+                        kind: TypedExprKind::Ident(Ident::new("int_to_string", span)),
+                        ty: SemTy::Fn(vec![SemTy::Int], Box::new(SemTy::String)),
+                        span,
+                    };
+                    TypedExpr { kind: TypedExprKind::Call(Box::new(to_str), vec![inner]), ty: SemTy::String, span }
+                }
+                SemTy::Float => {
+                    let to_str = TypedExpr {
+                        kind: TypedExprKind::Ident(Ident::new("float_to_string", span)),
+                        ty: SemTy::Fn(vec![SemTy::Float], Box::new(SemTy::String)),
+                        span,
+                    };
+                    TypedExpr { kind: TypedExprKind::Call(Box::new(to_str), vec![inner]), ty: SemTy::String, span }
+                }
+                SemTy::Bool => {
+                    let to_str = TypedExpr {
+                        kind: TypedExprKind::Ident(Ident::new("bool_to_string", span)),
+                        ty: SemTy::Fn(vec![SemTy::Bool], Box::new(SemTy::String)),
+                        span,
+                    };
+                    TypedExpr { kind: TypedExprKind::Call(Box::new(to_str), vec![inner]), ty: SemTy::String, span }
+                }
+                _ => inner,
+            };
+            return Ok(coerced);
+        }
+
         // Named calls are used for struct/class construction.
         let ret_ty = if self.sym.lookup_type(&callee_name).is_some() {
             SemTy::Named(callee_name.clone())
@@ -1872,6 +1958,18 @@ impl Inferer {
                 }
             }
         }
+        // Array covariance: Array<Dog> assignable to Array<Animal>
+        // if Dog is a subclass of Animal.
+        if let (SemTy::Generic(en, eargs), SemTy::Generic(fn_, fargs)) = (expected, found) {
+            if en == "Array" && fn_ == "Array" && eargs.len() == 1 && fargs.len() == 1 {
+                if let (SemTy::Named(ename), SemTy::Named(fname)) = (&eargs[0], &fargs[0]) {
+                    if self.is_subclass_of(fname, ename) {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
         // Special case: null → T?
         if found.is_optional() && matches!(found, SemTy::Optional(inner) if **inner == SemTy::Void) {
             if expected.is_optional() {

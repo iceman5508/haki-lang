@@ -235,15 +235,12 @@ impl SymbolTable {
             is_extern: false,
             extern_abi: None,
         },
-                // fn removeLast() -> (T?, Error?)
+                // fn removeLast() -> T
                 FnInfo {
                     name: "removeLast".into(),
                     type_params: vec![],
                     params: vec![],
-                    return_ty: Some(ReturnTy::Tuple(vec![
-                        Ty { kind: TyKind::Optional(Box::new(Ty { kind: TyKind::Named(Ident::new("T", Span::dummy())), span: Span::dummy() })), span: Span::dummy() },
-                        Ty { kind: TyKind::Optional(Box::new(Ty { kind: TyKind::Named(Ident::new("Error", Span::dummy())), span: Span::dummy() })), span: Span::dummy() },
-                    ])),
+                    return_ty: Some(ReturnTy::Single(Ty { kind: TyKind::Named(Ident::new("T", Span::dummy())), span: Span::dummy() })),
                     span: Span::dummy(),
                 
             is_extern: false,

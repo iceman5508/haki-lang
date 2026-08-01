@@ -269,6 +269,9 @@ fn module_top_level_names(ast: &haki_ast::SourceFile) -> HashSet<String> {
                     names.insert(variant.name.name.clone());
                 }
             }
+            // ExternFn names are C function names — exclude from rename set
+            // so calls to them inside the module body are NOT prefixed.
+            haki_ast::ItemKind::ExternFn(_) => {}
             _ => {}
         }
     }
@@ -332,8 +335,9 @@ fn rename_item(mut item: haki_ast::Item, alias: &str, module_names: &HashSet<Str
         }
         haki_ast::ItemKind::Import { .. } => {}
         haki_ast::ItemKind::ExternFn(f) => {
-            // Rename the extern fn itself and its type annotations
-            f.name.name = format!("{alias}__{}", f.name.name);
+            // ExternFn names are C function names — do NOT prefix with alias.
+            // They must remain as-is so the linker can find them.
+            // Only rename type annotations that reference module-local types.
             for p in &mut f.params { rename_ty(&mut p.ty, alias, module_names); }
             if let Some(ret) = &mut f.return_ty { rename_return_ty(ret, alias, module_names); }
         }
@@ -570,21 +574,22 @@ fn main() {
     let binary_stem = binary_name.trim_end_matches(".exe");
 
     let args: Vec<String> = match binary_stem {
-        "haki-gtk" => {
-            // Compile + run the GTK app: inject --target gtk
-            let mut v = vec![raw_args[0].clone(), "--target".into(), "gtk".into()];
+        // v3.2 names (canonical)
+        "haki-desktop" | "haki-gtk" => {
+            // Compile + auto-run the GTK desktop app
+            let mut v = vec![raw_args[0].clone(), "--target".into(), "gtk".into(), "--run-after".into()];
             v.extend_from_slice(&raw_args[1..]);
             v
         }
-        "haki-dom" => {
-            // Compile to Wasm for browser: inject --emit-wasm
-            let mut v = vec![raw_args[0].clone(), "--emit-wasm".into()];
-            v.extend_from_slice(&raw_args[1..]);
-            v
-        }
-        "haki-web" => {
-            // Compile to .so for mod_haki/FastCGI: inject --target so
+        "haki-server" | "haki-web" => {
+            // Compile to .so for Apache/nginx — no auto-run
             let mut v = vec![raw_args[0].clone(), "--target".into(), "so".into()];
+            v.extend_from_slice(&raw_args[1..]);
+            v
+        }
+        "haki-browser" | "haki-dom" => {
+            // Compile to Wasm for browser — no auto-run
+            let mut v = vec![raw_args[0].clone(), "--emit-wasm".into()];
             v.extend_from_slice(&raw_args[1..]);
             v
         }
@@ -642,7 +647,7 @@ fn main() {
             process::exit(1);
         }
         let source = PathBuf::from(&args[2]);
-        let quiet  = args.iter().any(|a| a == "--quiet");
+        let quiet  = !args.iter().any(|a| a == "--verbose");
         run_tests(&source, quiet);
         return;
     }
@@ -654,7 +659,7 @@ fn main() {
             process::exit(1);
         }
         let source = PathBuf::from(&args[2]);
-        let quiet  = args.iter().any(|a| a == "--quiet");
+        let quiet  = !args.iter().any(|a| a == "--verbose");
         check_only(&source, quiet);
         return;
     }
@@ -782,9 +787,11 @@ fn main() {
     let mut emit_runtime  = false;
     let mut emit_wasm     = false;
     let mut emit_c_flag   = false;
-    let mut quiet         = false;
+    let mut quiet         = true;   // default: hide pipeline output
+    let mut verbose       = false;
     let mut target_so     = false;
     let mut target_gtk    = false;
+    let mut run_after     = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -798,6 +805,8 @@ fn main() {
             "--emit-wasm"    => emit_wasm    = true,
             "--emit-c"       => emit_c_flag  = true,
             "--quiet"        => quiet        = true,
+            "--verbose"      => { quiet = false; verbose = true; }
+            "--run-after"    => run_after    = true,
             "--target" => {
                 i += 1;
                 if i < args.len() {
@@ -855,7 +864,7 @@ fn main() {
         return;
     }
 
-    compile_and_run(RunArgs { source, output, emit_ir, emit_runtime, emit_wasm, emit_c: emit_c_flag, quiet, run: false, run_args: vec![], target_so, target_gtk });
+    compile_and_run(RunArgs { source, output, emit_ir, emit_runtime, emit_wasm, emit_c: emit_c_flag, quiet, run: run_after, run_args: vec![], target_so, target_gtk });
 }
 
 fn print_usage() {
@@ -2508,7 +2517,10 @@ fn compile_and_run(args: RunArgs) {
     // ── Detect UI usage ───────────────────────────────────────────────────
     // If the IR references haki_app_run, the program uses haki_ui widgets.
     // We detect this from the emitted IR so we don't need a separate flag.
-    let uses_ui = ir.contains("haki_app_run") || ir.contains("haki_text_new");
+    let uses_ui   = ir.contains("haki_app_run") || ir.contains("haki_text_new")
+                  || ir.contains("haki_gtk_create_window");
+    let uses_http = ir.contains("haki_http_server_new") || ir.contains("MHD_start_daemon")
+                  || ir.contains("HttpServer") || ir.contains("microhttpd");
 
     // ── Compile runtime ───────────────────────────────────────────────────
     let cc = find_tool(&["gcc", "cc", "clang", "clang-17"]);
