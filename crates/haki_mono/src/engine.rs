@@ -486,6 +486,21 @@ impl<'src> MonoEngine<'src> {
             TypedStmtKind::Match(m) => {
                 MonoStmtKind::Match(self.lower_match(m, subst)?)
             }
+            TypedStmtKind::Select(s) => {
+                // Lower select into a while + haki_select C call.
+                // Each arm becomes: receive from channel, execute body if ready.
+                // We emit as a Expr stmt (the actual codegen handles it in cemit).
+                let mut mono_arms = Vec::new();
+                for arm in &s.arms {
+                    let ch_expr = self.lower_expr(&arm.channel, subst)?;
+                    let body = self.lower_block(&arm.body, subst)?;
+                    mono_arms.push((arm.binding.clone(), subst.apply_ty(&arm.binding_ty), ch_expr, body));
+                }
+                let timeout = if let Some((ms, body)) = &s.timeout {
+                    Some((Box::new(self.lower_expr(ms, subst)?), self.lower_block(body, subst)?))
+                } else { None };
+                MonoStmtKind::Select(MonoSelect { arms: mono_arms, timeout, span: s.span })
+            }
             TypedStmtKind::Panic(e) => {
                 MonoStmtKind::Panic(Box::new(self.lower_expr(e, subst)?))
             }

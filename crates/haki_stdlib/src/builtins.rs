@@ -291,6 +291,54 @@ pub fn register_builtins(sym: &mut SymbolTable) {
         return_ty: None,
         span: Span::dummy(), is_extern: true,
         extern_abi: Some("c".into()) });
+
+    // ── Chan<T> runtime ──────────────────────────────────────────────────────
+    // Chan<T> is a builtin generic class handled specially in the typechecker.
+    // Method signatures are registered here for type inference.
+    sym.functions.insert("haki_chan_new".into(), FnInfo {
+        name: "haki_chan_new".into(), type_params: vec![],
+        params: vec![int_param("capacity"), int_param("elem_size")],
+        return_ty: Some(ReturnTy::Single(named_ty("Chan"))),
+        span: Span::dummy(), is_extern: true, extern_abi: Some("c".into()) });
+
+    sym.functions.insert("haki_chan_close".into(), FnInfo {
+        name: "haki_chan_close".into(), type_params: vec![],
+        params: vec![param("ch", named_ty("Chan"))],
+        return_ty: None,
+        span: Span::dummy(), is_extern: true, extern_abi: Some("c".into()) });
+
+    // ── TaskGroup<T> runtime ─────────────────────────────────────────────────
+    sym.functions.insert("haki_taskgroup_new".into(), FnInfo {
+        name: "haki_taskgroup_new".into(), type_params: vec![],
+        params: vec![],
+        return_ty: Some(ReturnTy::Single(named_ty("TaskGroup"))),
+        span: Span::dummy(), is_extern: true, extern_abi: Some("c".into()) });
+
+    // haki_ui GTK platform functions — provided by haki_ui_gtk.c at link time
+    let gtk_fns: &[(&str, bool)] = &[
+        ("haki_gtk_create_window",          true),   // → int
+        ("haki_gtk_create_label",           true),   // → int
+        ("haki_gtk_create_button",          true),   // → int
+        ("haki_gtk_create_box",             true),   // → int
+        ("haki_gtk_set_text",               false),  // → void
+        ("haki_gtk_set_visible",            false),  // → void
+        ("haki_gtk_insert_child",           false),  // → void
+        ("haki_gtk_remove_child",           false),  // → void
+        ("haki_platform_run",               false),  // → void
+        ("haki_set_callback_dispatcher",    false),  // → void
+    ];
+    for (name, returns_int) in gtk_fns {
+        sym.functions.insert((*name).into(), FnInfo {
+            name: (*name).into(), type_params: vec![],
+            params: vec![],
+            return_ty: if *returns_int {
+                Some(ReturnTy::Single(int_ty()))
+            } else {
+                None
+            },
+            span: Span::dummy(), is_extern: true,
+            extern_abi: Some("c".into()) });
+    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

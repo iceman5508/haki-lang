@@ -65,6 +65,16 @@ impl SemTy {
         matches!(self, SemTy::Optional(_))
     }
 
+    /// Is this a Chan<T> type?
+    pub fn is_chan(&self) -> bool {
+        matches!(self, SemTy::Generic(n, _) if n == "Chan")
+    }
+
+    /// Is this a TaskGroup<T> type?
+    pub fn is_taskgroup(&self) -> bool {
+        matches!(self, SemTy::Generic(n, _) if n == "TaskGroup")
+    }
+
     /// Can a value of `other` be assigned to a slot expecting `self`?
     /// Handles: exact match, null→optional, Never (satisfies anything),
     /// and tuple element-wise coercion.
@@ -229,6 +239,7 @@ pub struct TypedStmt {
 pub enum TypedStmtKind {
     Let(TypedLetStmt),
     Return(TypedReturnStmt),
+    Select(TypedSelectStmt),
     Yield(Box<TypedExpr>),
     Defer(Box<TypedExpr>),
     Continue,
@@ -239,6 +250,23 @@ pub enum TypedStmtKind {
     Match(TypedMatchExpr),
     Panic(Box<TypedExpr>),
     Expr(Box<TypedExpr>),
+}
+
+/// Typed select statement — multiplex over channels.
+#[derive(Debug, Clone)]
+pub struct TypedSelectStmt {
+    pub arms:    Vec<TypedSelectArm>,
+    pub timeout: Option<(Box<TypedExpr>, TypedBlock)>,
+    pub span:    Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypedSelectArm {
+    pub binding:  haki_ast::Ident,
+    pub binding_ty: SemTy,
+    pub channel:  Box<TypedExpr>,
+    pub body:     TypedBlock,
+    pub span:     Span,
 }
 
 #[derive(Debug, Clone)]

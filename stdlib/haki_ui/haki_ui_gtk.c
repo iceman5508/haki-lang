@@ -1,18 +1,20 @@
 /**
- * haki_ui_gtk.c — GTK 3 platform backend for haki_ui.
+ * haki_ui_gtk.c — GTK 3 platform backend for haki_ui v2.x
  *
- * Implements the three platform functions called by haki_ui/app.haki:
- *   haki_ui_init(title, width, height)  — create the GTK window
- *   haki_ui_render(element_json)        — build GTK widget tree from Element JSON
- *   haki_ui_run_loop()                  — enter gtk_main()
+ * Virtual Tree + diff architecture. The C layer only ever sees integers (node_id).
+ * Haki owns the VNode graph and the callback closures. GTK sees no Haki memory.
+ *
+ * Haki → C:  haki_gtk_create_*(parent_id, ...) → new node_id
+ *            haki_gtk_set_text(node_id, text)
+ *            haki_gtk_insert_child(parent_id, index, child_id)
+ *            haki_gtk_remove_child(node_id)
+ *
+ * C → Haki:  trigger_haki_callback(node_id)
+ *            (Haki registered haki_set_callback_dispatcher before gtk_main)
  *
  * Build (linked by hakic --target gtk automatically):
  *   gcc -O2 $(pkg-config --cflags gtk+-3.0) haki_ui_gtk.c \
  *       $(pkg-config --libs gtk+-3.0) -o myapp
- *
- * The JSON element tree is parsed with a minimal recursive descent parser —
- * no external JSON library needed. The format is produced by element_to_json()
- * in haki_ui/app.haki and is well-constrained.
  */
 
 #include <gtk/gtk.h>
@@ -21,367 +23,166 @@
 #include <string.h>
 #include <stdint.h>
 
-// ── Platform state ─────────────────────────────────────────────────────────────
+// ── Node registry ─────────────────────────────────────────────────────────────
+// Maps integer node_id → GtkWidget*.
+// GTK only ever sees GtkWidget* internally; Haki only sees int64_t.
+// Max 65536 nodes per window — sufficient for any practical UI.
 
-static GtkWidget* g_window    = NULL;
-static GtkWidget* g_root_box  = NULL;
-static int        g_width     = 800;
-static int        g_height    = 600;
+#define HAKI_MAX_NODES 65536
 
-// ── JSON parser (minimal, no alloc) ───────────────────────────────────────────
+static GtkWidget* g_nodes[HAKI_MAX_NODES];
+static int64_t    g_next_id = 1;   // 0 = root window
 
-typedef struct {
-    const char* src;
-    int         pos;
-} JsonParser;
-
-static void jp_skip_ws(JsonParser* p) {
-    while (p->src[p->pos] == ' ' || p->src[p->pos] == '\n' ||
-           p->src[p->pos] == '\r' || p->src[p->pos] == '\t') p->pos++;
+static GtkWidget* node_get(int64_t id) {
+    if (id <= 0 || id >= HAKI_MAX_NODES) return NULL;
+    return g_nodes[id];
 }
 
-static char* jp_string(JsonParser* p) {
-    jp_skip_ws(p);
-    if (p->src[p->pos] != '"') return NULL;
-    p->pos++; // skip opening quote
-    int start = p->pos;
-    while (p->src[p->pos] && p->src[p->pos] != '"') p->pos++;
-    int len = p->pos - start;
-    char* s = (char*)malloc(len + 1);
-    memcpy(s, p->src + start, len);
-    s[len] = 0;
-    p->pos++; // skip closing quote
-    return s;
+static int64_t node_alloc(GtkWidget* w) {
+    int64_t id = g_next_id++;
+    if (id >= HAKI_MAX_NODES) { fprintf(stderr, "haki_ui: node limit reached\n"); abort(); }
+    g_nodes[id] = w;
+    return id;
 }
 
-static int jp_int(JsonParser* p) {
-    jp_skip_ws(p);
-    int neg = (p->src[p->pos] == '-');
-    if (neg) p->pos++;
-    int v = 0;
-    while (p->src[p->pos] >= '0' && p->src[p->pos] <= '9') {
-        v = v * 10 + (p->src[p->pos++] - '0');
-    }
-    return neg ? -v : v;
+static void node_free(int64_t id) {
+    if (id > 0 && id < HAKI_MAX_NODES) g_nodes[id] = NULL;
 }
 
-static int jp_bool(JsonParser* p) {
-    jp_skip_ws(p);
-    if (strncmp(p->src + p->pos, "true", 4) == 0) { p->pos += 4; return 1; }
-    if (strncmp(p->src + p->pos, "false", 5) == 0) { p->pos += 5; return 0; }
-    return 0;
+// ── Callback dispatcher ───────────────────────────────────────────────────────
+// Haki calls haki_set_callback_dispatcher() before gtk_main() to register
+// the Haki-side closure lookup function.
+// When a GTK button is clicked, g_dispatcher(node_id) calls back into Haki.
+
+typedef void (*HakiDispatchFn)(int64_t node_id);
+static HakiDispatchFn g_dispatcher = NULL;
+
+void haki_set_callback_dispatcher(HakiDispatchFn fn) {
+    g_dispatcher = fn;
 }
 
-// Skip to matching }, tracking depth
-static void jp_skip_object(JsonParser* p) {
-    jp_skip_ws(p);
-    if (p->src[p->pos] != '{') return;
-    int depth = 0;
-    while (p->src[p->pos]) {
-        if (p->src[p->pos] == '{') depth++;
-        else if (p->src[p->pos] == '}') { depth--; p->pos++; if (!depth) return; continue; }
-        else if (p->src[p->pos] == '"') { jp_string(p); continue; }
-        p->pos++;
-    }
+// GTK signal handler — called by GTK, dispatches into Haki's callback registry
+static void on_button_clicked(GtkWidget* widget, gpointer user_data) {
+    int64_t node_id = (int64_t)(intptr_t)user_data;
+    if (g_dispatcher) g_dispatcher(node_id);
 }
 
-static char* jp_get_string_field(JsonParser* p, const char* field) {
-    const char* s = p->src + p->pos;
-    char needle[128];
-    snprintf(needle, sizeof(needle), "\"%s\":", field);
-    const char* found = strstr(s, needle);
-    if (!found) return NULL;
-    JsonParser tmp;
-    tmp.src = found + strlen(needle);
-    tmp.pos = 0;
-    return jp_string(&tmp);
-}
+// ── Window ────────────────────────────────────────────────────────────────────
 
-static int jp_get_int_field(JsonParser* p, const char* field) {
-    const char* s = p->src + p->pos;
-    char needle[128];
-    snprintf(needle, sizeof(needle), "\"%s\":", field);
-    const char* found = strstr(s, needle);
-    if (!found) return 0;
-    JsonParser tmp;
-    tmp.src = found + strlen(needle);
-    tmp.pos = 0;
-    return jp_int(&tmp);
-}
+static GtkWidget* g_window = NULL;
 
-// ── Style application ─────────────────────────────────────────────────────────
-
-static void apply_style(GtkWidget* widget, JsonParser* p) {
-    char* color = jp_get_string_field(p, "color");
-    int font_size = jp_get_int_field(p, "fontSize");
-
-    if ((color && color[0]) || font_size > 0) {
-        GtkCssProvider* css = gtk_css_provider_new();
-        char css_buf[512] = "";
-        if (color && color[0])
-            snprintf(css_buf + strlen(css_buf), sizeof(css_buf) - strlen(css_buf),
-                     "* { color: %s; }", color);
-        if (font_size > 0)
-            snprintf(css_buf + strlen(css_buf), sizeof(css_buf) - strlen(css_buf),
-                     "* { font-size: %dpt; }", font_size);
-        gtk_css_provider_load_from_data(css, css_buf, -1, NULL);
-        gtk_style_context_add_provider(
-            gtk_widget_get_style_context(widget),
-            GTK_STYLE_PROVIDER(css),
-            GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-        g_object_unref(css);
-    }
-    free(color);
-}
-
-// ── Element → GTK widget ──────────────────────────────────────────────────────
-
-static GtkWidget* element_to_widget(const char* json);
-
-// Handler data passed to GTK signal callbacks
-typedef struct {
-    void* haki_closure;   /* Haki closure fat pointer (fn_ptr, env) */
-} HandlerData;
-
-static void on_button_click(GtkWidget* w, gpointer data) {
-    (void)w;
-    HandlerData* hd = (HandlerData*)data;
-    if (!hd || !hd->haki_closure) return;
-    // Call the Haki fn() -> void closure
-    // The closure is a fat pointer: [fn_ptr | env_ptr]
-    // fn_ptr signature: void(*)(void* env)
-    void** fat = (void**)hd->haki_closure;
-    void (*fn_ptr)(void*) = (void(*)(void*))fat[0];
-    void*  env_ptr        = fat[1];
-    fn_ptr(env_ptr);
-}
-
-static GtkWidget* build_column(const char* json) {
-    GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-
-    // Extract spacing
-    JsonParser p = { json, 0 };
-    int spacing = jp_get_int_field(&p, "spacing");
-    gtk_box_set_spacing(GTK_BOX(box), spacing > 0 ? spacing : 8);
-
-    // Find children array
-    const char* children_start = strstr(json, "\"children\":[");
-    if (children_start) {
-        children_start += strlen("\"children\":[");
-        // Walk children
-        const char* cur = children_start;
-        while (*cur && *cur != ']') {
-            if (*cur == '{') {
-                // Find end of this child object
-                int depth = 0;
-                const char* start = cur;
-                while (*cur) {
-                    if (*cur == '{') depth++;
-                    else if (*cur == '}') { depth--; if (!depth) { cur++; break; } }
-                    cur++;
-                }
-                // Build sub-widget for this child
-                int child_len = (int)(cur - start);
-                char* child_json = (char*)malloc(child_len + 1);
-                memcpy(child_json, start, child_len);
-                child_json[child_len] = 0;
-                GtkWidget* child_widget = element_to_widget(child_json);
-                free(child_json);
-                if (child_widget) {
-                    gtk_box_pack_start(GTK_BOX(box), child_widget, FALSE, FALSE, 0);
-                }
-                if (*cur == ',') cur++; // skip comma
-            } else {
-                cur++;
-            }
-        }
-    }
-    return box;
-}
-
-static GtkWidget* build_row(const char* json) {
-    GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    JsonParser p = { json, 0 };
-    int spacing = jp_get_int_field(&p, "spacing");
-    gtk_box_set_spacing(GTK_BOX(box), spacing > 0 ? spacing : 8);
-
-    const char* children_start = strstr(json, "\"children\":[");
-    if (children_start) {
-        children_start += strlen("\"children\":[");
-        const char* cur = children_start;
-        while (*cur && *cur != ']') {
-            if (*cur == '{') {
-                int depth = 0;
-                const char* start = cur;
-                while (*cur) {
-                    if (*cur == '{') depth++;
-                    else if (*cur == '}') { depth--; if (!depth) { cur++; break; } }
-                    cur++;
-                }
-                int child_len = (int)(cur - start);
-                char* child_json = (char*)malloc(child_len + 1);
-                memcpy(child_json, start, child_len);
-                child_json[child_len] = 0;
-                GtkWidget* child_widget = element_to_widget(child_json);
-                free(child_json);
-                if (child_widget)
-                    gtk_box_pack_start(GTK_BOX(box), child_widget, FALSE, FALSE, 0);
-                if (*cur == ',') cur++;
-            } else {
-                cur++;
-            }
-        }
-    }
-    return box;
-}
-
-static GtkWidget* element_to_widget(const char* json) {
-    JsonParser p = { json, 0 };
-    char* type = jp_get_string_field(&p, "type");
-    if (!type) return gtk_label_new("?");
-
-    GtkWidget* w = NULL;
-
-    if (strcmp(type, "Empty") == 0) {
-        w = gtk_label_new(""); // invisible placeholder
-
-    } else if (strcmp(type, "Text") == 0 ||
-               strcmp(type, "Paragraph") == 0) {
-        char* value = jp_get_string_field(&p, "value");
-        w = gtk_label_new(value ? value : "");
-        gtk_label_set_line_wrap(GTK_LABEL(w), TRUE);
-        gtk_widget_set_halign(w, GTK_ALIGN_START);
-        free(value);
-
-    } else if (strcmp(type, "Heading") == 0) {
-        char* value = jp_get_string_field(&p, "value");
-        int level = jp_get_int_field(&p, "level");
-        char markup[1024];
-        const char* sizes[] = {"xx-large","x-large","large","medium","small","x-small"};
-        const char* sz = sizes[(level >= 1 && level <= 6) ? (level - 1) : 0];
-        snprintf(markup, sizeof(markup), "<span size=\"%s\" weight=\"bold\">%s</span>",
-                 sz, value ? value : "");
-        w = gtk_label_new(NULL);
-        gtk_label_set_markup(GTK_LABEL(w), markup);
-        gtk_widget_set_halign(w, GTK_ALIGN_START);
-        free(value);
-
-    } else if (strcmp(type, "Button") == 0) {
-        char* label = jp_get_string_field(&p, "label");
-        w = gtk_button_new_with_label(label ? label : "");
-        // onClick will be wired by the event handler registration system
-        free(label);
-
-    } else if (strcmp(type, "TextInput") == 0) {
-        char* placeholder = jp_get_string_field(&p, "placeholder");
-        char* value       = jp_get_string_field(&p, "value");
-        w = gtk_entry_new();
-        if (placeholder && placeholder[0])
-            gtk_entry_set_placeholder_text(GTK_ENTRY(w), placeholder);
-        if (value && value[0])
-            gtk_entry_set_text(GTK_ENTRY(w), value);
-        free(placeholder);
-        free(value);
-
-    } else if (strcmp(type, "Checkbox") == 0) {
-        char* label   = jp_get_string_field(&p, "label");
-        int   checked = jp_get_int_field(&p, "checked");
-        w = gtk_check_button_new_with_label(label ? label : "");
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w), checked);
-        free(label);
-
-    } else if (strcmp(type, "Column") == 0) {
-        w = build_column(json);
-
-    } else if (strcmp(type, "Row") == 0) {
-        w = build_row(json);
-
-    } else if (strcmp(type, "Spacer") == 0) {
-        w = gtk_label_new("");
-        gtk_widget_set_hexpand(w, TRUE);
-        gtk_widget_set_vexpand(w, TRUE);
-
-    } else if (strcmp(type, "Image") == 0) {
-        char* src = jp_get_string_field(&p, "src");
-        w = gtk_image_new_from_file(src ? src : "");
-        free(src);
-
-    } else if (strcmp(type, "ScrollView") == 0) {
-        w = gtk_scrolled_window_new(NULL, NULL);
-        const char* child_start = strstr(json, "\"child\":{");
-        if (child_start) {
-            child_start += strlen("\"child\":");
-            int depth = 0;
-            const char* cur = child_start;
-            while (*cur) {
-                if (*cur == '{') depth++;
-                else if (*cur == '}') { depth--; if (!depth) { cur++; break; } }
-                cur++;
-            }
-            int len = (int)(cur - child_start);
-            char* child_json = (char*)malloc(len + 1);
-            memcpy(child_json, child_start, len);
-            child_json[len] = 0;
-            GtkWidget* child = element_to_widget(child_json);
-            free(child_json);
-            if (child) gtk_container_add(GTK_CONTAINER(w), child);
-        }
-
-    } else {
-        w = gtk_label_new(type); // unknown — show type name for debugging
-    }
-
-    free(type);
-    if (w) gtk_widget_show(w);
-    return w;
-}
-
-// ── Platform API ───────────────────────────────────────────────────────────────
-
-int64_t haki_ui_init(const char* title, int64_t width, int64_t height) {
-    g_width  = (int)width;
-    g_height = (int)height;
-
-    int argc = 0;
-    gtk_init(&argc, NULL);
-
+int64_t haki_gtk_create_window(const char* title, int64_t width, int64_t height) {
+    gtk_init(NULL, NULL);
     g_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_title(GTK_WINDOW(g_window), title ? title : "Haki App");
-    gtk_window_set_default_size(GTK_WINDOW(g_window),
-                                g_width  > 0 ? g_width  : 800,
-                                g_height > 0 ? g_height : 600);
+    gtk_window_set_title(GTK_WINDOW(g_window), title);
+    gtk_window_set_default_size(GTK_WINDOW(g_window), (int)width, (int)height);
     g_signal_connect(g_window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
-
-    // Root container
-    g_root_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_container_add(GTK_CONTAINER(g_window), g_root_box);
-    gtk_widget_show(g_root_box);
-    gtk_widget_show(g_window);
-
+    // Window itself is node 0 — not in the registry, referenced directly
     return 0;
 }
 
-int64_t haki_ui_render(const char* element_json) {
-    if (!g_root_box || !element_json) return -1;
+// ── Widget creation ───────────────────────────────────────────────────────────
 
-    // Remove existing children
-    GList* children = gtk_container_get_children(GTK_CONTAINER(g_root_box));
-    for (GList* l = children; l != NULL; l = l->next) {
-        gtk_widget_destroy(GTK_WIDGET(l->data));
+int64_t haki_gtk_create_label(int64_t parent_id, const char* text) {
+    GtkWidget* label = gtk_label_new(text);
+    int64_t id = node_alloc(label);
+    // Attach to parent if parent is a container
+    GtkWidget* parent = node_get(parent_id);
+    if (parent && GTK_IS_BOX(parent)) {
+        gtk_box_pack_start(GTK_BOX(parent), label, FALSE, FALSE, 4);
+    } else if (g_window && parent_id == 0) {
+        // Root container
     }
-    g_list_free(children);
-
-    // Build new widget tree from JSON
-    GtkWidget* new_tree = element_to_widget(element_json);
-    if (new_tree) {
-        gtk_box_pack_start(GTK_BOX(g_root_box), new_tree, TRUE, TRUE, 0);
-    }
-
-    gtk_widget_show_all(g_window);
-    return 0;
+    gtk_widget_show(label);
+    return id;
 }
 
-int64_t haki_ui_run_loop(void) {
-    gtk_main();  /* blocks until gtk_main_quit() is called */
-    return 0;
+int64_t haki_gtk_create_button(int64_t parent_id, const char* label_text, int64_t node_id_hint) {
+    GtkWidget* btn = gtk_button_new_with_label(label_text);
+    // Use the hint as the node_id for the callback — it must match the
+    // node_id Haki stored in its callback registry.
+    int64_t id = (node_id_hint > 0) ? node_id_hint : node_alloc(btn);
+    if (node_id_hint > 0) g_nodes[node_id_hint] = btn;
+    g_signal_connect(btn, "clicked", G_CALLBACK(on_button_clicked),
+                     (gpointer)(intptr_t)id);
+    GtkWidget* parent = node_get(parent_id);
+    if (parent && GTK_IS_BOX(parent)) {
+        gtk_box_pack_start(GTK_BOX(parent), btn, FALSE, FALSE, 4);
+    }
+    gtk_widget_show(btn);
+    return id;
+}
+
+// horizontal=1 → GtkHBox, horizontal=0 → GtkVBox
+int64_t haki_gtk_create_box(int64_t parent_id, int64_t horizontal) {
+    GtkWidget* box = gtk_box_new(
+        horizontal ? GTK_ORIENTATION_HORIZONTAL : GTK_ORIENTATION_VERTICAL, 8);
+    int64_t id = node_alloc(box);
+    GtkWidget* parent = node_get(parent_id);
+    if (parent && GTK_IS_BOX(parent)) {
+        gtk_box_pack_start(GTK_BOX(parent), box, TRUE, TRUE, 4);
+    } else if (parent_id == 0 && g_window) {
+        gtk_container_add(GTK_CONTAINER(g_window), box);
+    }
+    gtk_widget_show(box);
+    return id;
+}
+
+// ── Surgical mutations ────────────────────────────────────────────────────────
+// These are the ONLY functions GTK calls. Haki drives all mutations;
+// GTK just executes them on its widget tree.
+
+void haki_gtk_set_text(int64_t node_id, const char* text) {
+    GtkWidget* w = node_get(node_id);
+    if (!w) return;
+    if (GTK_IS_LABEL(w))  gtk_label_set_text(GTK_LABEL(w), text);
+    if (GTK_IS_BUTTON(w)) gtk_button_set_label(GTK_BUTTON(w), text);
+}
+
+void haki_gtk_set_visible(int64_t node_id, int64_t visible) {
+    GtkWidget* w = node_get(node_id);
+    if (!w) return;
+    if (visible) gtk_widget_show(w);
+    else         gtk_widget_hide(w);
+}
+
+void haki_gtk_insert_child(int64_t parent_id, int64_t index, int64_t child_id) {
+    GtkWidget* parent = node_get(parent_id);
+    GtkWidget* child  = node_get(child_id);
+    if (!parent || !child) return;
+    if (GTK_IS_BOX(parent)) {
+        gtk_box_pack_start(GTK_BOX(parent), child, FALSE, FALSE, 4);
+        // Reorder to the requested index
+        gtk_box_reorder_child(GTK_BOX(parent), child, (int)index);
+    }
+    gtk_widget_show(child);
+}
+
+void haki_gtk_remove_child(int64_t node_id) {
+    GtkWidget* w = node_get(node_id);
+    if (!w) return;
+    GtkWidget* parent = gtk_widget_get_parent(w);
+    if (parent) gtk_container_remove(GTK_CONTAINER(parent), w);
+    node_free(node_id);
+}
+
+// ── Event loop ────────────────────────────────────────────────────────────────
+
+void haki_platform_run(void) {
+    if (g_window) gtk_widget_show_all(g_window);
+    gtk_main();
+}
+
+// ── haki_app_run — called by App.run() in app.haki ───────────────────────────
+// This is the legacy entry point that the old JSON bridge used.
+// In the new architecture it's still called by App.run() but immediately
+// delegates to the VNode mount sequence which Haki drives.
+// The `json` param is ignored — App.run() will call mount/diff directly.
+
+void haki_app_run(const char* json, const char* title, int64_t width, int64_t height) {
+    (void)json; // VNode architecture: Haki calls haki_gtk_create_* directly
+    haki_gtk_create_window(title, width, height);
+    // Haki will call haki_platform_run() after mounting the VNode tree
+    // For backwards compat: if no VNode tree is mounted, just run the loop
+    haki_platform_run();
 }

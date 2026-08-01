@@ -43,6 +43,8 @@ pub enum TokenKind {
     Return,
     Yield,
     Match,
+    Select,
+    Timeout,
     Panic,
     Async,
     Await,
@@ -81,6 +83,17 @@ pub enum TokenKind {
     Star,     // *
     Slash,    // /
     Percent,  // %
+    PlusEq,   // +=
+    MinusEq,  // -=
+    StarEq,   // *=
+    SlashEq,  // /=
+    PercentEq,// %=
+    // F-string tokens — emitted by the f-string lexer mode
+    FStringStart,               // f"
+    FStringLit(String),         // literal segment between {} 
+    FStringInterpStart,         // {  (switches to code mode)
+    FStringInterpEnd,           // }  (switches back to string mode)
+    FStringEnd,                 // closing "
     Bang,     // !
     Eq,       // =
     EqEq,     // ==
@@ -118,6 +131,8 @@ impl TokenKind {
             "return"   => Some(TokenKind::Return),
             "yield"    => Some(TokenKind::Yield),
             "match"    => Some(TokenKind::Match),
+            "select"   => Some(TokenKind::Select),
+            "timeout"  => Some(TokenKind::Timeout),
             "panic"    => Some(TokenKind::Panic),
             "async"    => Some(TokenKind::Async),
             "await"    => Some(TokenKind::Await),
@@ -168,13 +183,15 @@ pub enum LexError {
 // ── Lexer ─────────────────────────────────────────────────────────────────────
 
 pub struct Lexer<'src> {
-    src: &'src [u8],
-    pos: usize,
+    src:     &'src [u8],
+    pos:     usize,
+    /// Pending tokens from f-string segmentation — drained before lexing more.
+    pending: std::collections::VecDeque<Token>,
 }
 
 impl<'src> Lexer<'src> {
     pub fn new(src: &'src str) -> Self {
-        Self { src: src.as_bytes(), pos: 0 }
+        Self { src: src.as_bytes(), pos: 0, pending: std::collections::VecDeque::new() }
     }
 
     // ── Internal helpers ───────────────────────────────────────────────────
@@ -250,6 +267,145 @@ impl<'src> Lexer<'src> {
         }
     }
 
+    // ── F-string ──────────────────────────────────────────────────────────
+    // f"Hello {name}, you have {count + 1} items"
+    // Segments: FStringStart, FStringLit("Hello "), FStringInterpStart,
+    //           [tokens for name], FStringInterpEnd, FStringLit(", you have "),
+    //           FStringInterpStart, [tokens for count+1], FStringInterpEnd,
+    //           FStringLit(" items"), FStringEnd
+    //
+    // Called when we see f" — opening quote already consumed by caller.
+    // Returns all segment tokens into self.pending (a VecDeque-like buffer).
+    fn lex_fstring_segments(&mut self, lo: usize) -> Result<Vec<Token>, LexError> {
+        let mut tokens: Vec<Token> = Vec::new();
+        let span_lo = lo as u32;
+        tokens.push(Token::new(TokenKind::FStringStart, span_lo, span_lo + 2));
+
+        let mut lit_buf = String::new();
+
+        loop {
+            match self.peek() {
+                None | Some(b'\n') => {
+                    return Err(LexError::UnterminatedString(lo as u32, self.pos as u32));
+                }
+                Some(b'"') => {
+                    // Closing quote — emit remaining literal and FStringEnd
+                    self.pos += 1;
+                    if !lit_buf.is_empty() {
+                        tokens.push(Token::new(
+                            TokenKind::FStringLit(lit_buf.clone()),
+                            lo as u32, self.pos as u32,
+                        ));
+                        lit_buf.clear();
+                    }
+                    tokens.push(Token::new(TokenKind::FStringEnd, lo as u32, self.pos as u32));
+                    return Ok(tokens);
+                }
+                Some(b'{') => {
+                    // Start of interpolation
+                    self.pos += 1;
+                    // Emit pending literal
+                    if !lit_buf.is_empty() {
+                        tokens.push(Token::new(
+                            TokenKind::FStringLit(lit_buf.clone()),
+                            lo as u32, self.pos as u32,
+                        ));
+                        lit_buf.clear();
+                    }
+                    tokens.push(Token::new(TokenKind::FStringInterpStart, lo as u32, self.pos as u32));
+
+                    // Lex code tokens until matching `}` (tracking brace depth)
+                    let mut depth = 1usize;
+                    loop {
+                        // Skip whitespace
+                        while self.peek().map_or(false, |b| matches!(b, b' ' | b'\t' | b'\r' | b'\n')) {
+                            self.pos += 1;
+                        }
+                        match self.peek() {
+                            None => return Err(LexError::UnterminatedString(lo as u32, self.pos as u32)),
+                            Some(b'}') => {
+                                self.pos += 1;
+                                depth -= 1;
+                                if depth == 0 { break; }
+                                // Inner brace — emit as token
+                                tokens.push(Token::new(TokenKind::RBrace, lo as u32, self.pos as u32));
+                            }
+                            Some(b'{') => {
+                                self.pos += 1;
+                                depth += 1;
+                                tokens.push(Token::new(TokenKind::LBrace, lo as u32, self.pos as u32));
+                            }
+                            Some(b'"') => {
+                                // Nested string literal inside interpolation
+                                let inner_lo = self.pos;
+                                self.pos += 1;
+                                let tok = self.lex_string(inner_lo)?;
+                                tokens.push(tok);
+                            }
+                            _ => {
+                                // Regular code token inside {} — lex one token
+                                let inner_lo = self.pos;
+                                let b2 = self.peek().unwrap();
+                                self.pos += 1;
+                                let tok = match b2 {
+                                    b'(' => Token::new(TokenKind::LParen, inner_lo as u32, self.pos as u32),
+                                    b')' => Token::new(TokenKind::RParen, inner_lo as u32, self.pos as u32),
+                                    b'[' => Token::new(TokenKind::LBracket, inner_lo as u32, self.pos as u32),
+                                    b']' => Token::new(TokenKind::RBracket, inner_lo as u32, self.pos as u32),
+                                    b',' => Token::new(TokenKind::Comma, inner_lo as u32, self.pos as u32),
+                                    b'.' => Token::new(TokenKind::Dot, inner_lo as u32, self.pos as u32),
+                                    b'+' => Token::new(TokenKind::Plus, inner_lo as u32, self.pos as u32),
+                                    b'-' => Token::new(TokenKind::Minus, inner_lo as u32, self.pos as u32),
+                                    b'*' => Token::new(TokenKind::Star, inner_lo as u32, self.pos as u32),
+                                    b'/' => Token::new(TokenKind::Slash, inner_lo as u32, self.pos as u32),
+                                    b'%' => Token::new(TokenKind::Percent, inner_lo as u32, self.pos as u32),
+                                    b'=' => Token::new(TokenKind::Eq, inner_lo as u32, self.pos as u32),
+                                    b'!' => Token::new(TokenKind::Bang, inner_lo as u32, self.pos as u32),
+                                    b'<' => Token::new(TokenKind::Lt, inner_lo as u32, self.pos as u32),
+                                    b'>' => Token::new(TokenKind::Gt, inner_lo as u32, self.pos as u32),
+                                    b'&' => Token::new(TokenKind::AndAnd, inner_lo as u32, self.pos as u32),
+                                    b'|' => Token::new(TokenKind::OrOr, inner_lo as u32, self.pos as u32),
+                                    b if b.is_ascii_digit() => {
+                                        self.pos -= 1;
+                                        self.lex_number(inner_lo)?
+                                    }
+                                    b if b.is_ascii_alphabetic() || b == b'_' => {
+                                        self.pos -= 1;
+                                        self.lex_ident(inner_lo)
+                                    }
+                                    _ => Token::new(TokenKind::Eof, inner_lo as u32, self.pos as u32),
+                                };
+                                tokens.push(tok);
+                            }
+                        }
+                    }
+                    tokens.push(Token::new(TokenKind::FStringInterpEnd, lo as u32, self.pos as u32));
+                }
+                Some(b'\\') => {
+                    // Escape sequence in f-string literal part
+                    self.pos += 1;
+                    match self.peek() {
+                        Some(b'"')  => { self.pos += 1; lit_buf.push('"');  }
+                        Some(b'{')  => { self.pos += 1; lit_buf.push('{');  }
+                        Some(b'}')  => { self.pos += 1; lit_buf.push('}');  }
+                        Some(b'\\') => { self.pos += 1; lit_buf.push('\\'); }
+                        Some(b'n')  => { self.pos += 1; lit_buf.push('\n'); }
+                        Some(b't')  => { self.pos += 1; lit_buf.push('\t'); }
+                        _ => {
+                            if let Some(b) = self.peek() {
+                                self.pos += 1; lit_buf.push(b as char);
+                            }
+                        }
+                    }
+                }
+                Some(b) => {
+                    self.pos += 1;
+                    lit_buf.push(b as char);
+                }
+            }
+        }
+    }
+
     // ── String literal ────────────────────────────────────────────────────
 
     fn lex_string(&mut self, lo: usize) -> Result<Token, LexError> {
@@ -293,12 +449,28 @@ impl<'src> Lexer<'src> {
 
     fn lex_ident(&mut self, lo: usize) -> Token {
         self.skip_while(|b| b.is_ascii_alphanumeric() || b == b'_');
-        let text = self.slice(lo, self.pos);
+        // Copy text to owned String before any further mutation of self.pos
+        let text: String = self.slice(lo, self.pos).to_owned();
         let hi = self.pos as u32;
         let lo32 = lo as u32;
 
-        let kind = TokenKind::from_keyword(text)
-            .unwrap_or_else(|| TokenKind::Ident(text.to_owned()));
+        // F-string: bare `f` immediately followed by opening quote → f"..."
+        if text == "f" && self.peek() == Some(b'"') {
+            self.pos += 1; // consume the opening quote
+            match self.lex_fstring_segments(lo) {
+                Ok(segs) => {
+                    let mut iter = segs.into_iter();
+                    let first = iter.next().unwrap_or_else(||
+                        Token::new(TokenKind::FStringEnd, lo32, self.pos as u32));
+                    for t in iter { self.pending.push_back(t); }
+                    return first;
+                }
+                Err(_) => { /* fall through to emit as ident */ }
+            }
+        }
+
+        let kind = TokenKind::from_keyword(&text)
+            .unwrap_or_else(|| TokenKind::Ident(text.clone()));
         Token::new(kind, lo32, hi)
     }
 
@@ -308,6 +480,11 @@ impl<'src> Lexer<'src> {
     pub fn tokenise(&mut self) -> Result<Vec<Token>, LexError> {
         let mut tokens = Vec::new();
         loop {
+            // Drain any pending f-string segment tokens before lexing more
+            if let Some(tok) = self.pending.pop_front() {
+                tokens.push(tok);
+                continue;
+            }
             self.skip_trivia();
             if self.at_end() {
                 tokens.push(Token::new(TokenKind::Eof, self.pos as u32, self.pos as u32));
@@ -329,9 +506,33 @@ impl<'src> Lexer<'src> {
                 b':' => { self.pos += 1; Token::new(TokenKind::Colon,    lo as u32, self.pos as u32) }
                 b'.' => { self.pos += 1; Token::new(TokenKind::Dot,      lo as u32, self.pos as u32) }
                 b'?' => { self.pos += 1; Token::new(TokenKind::Question, lo as u32, self.pos as u32) }
-                b'%' => { self.pos += 1; Token::new(TokenKind::Percent,  lo as u32, self.pos as u32) }
-                b'*' => { self.pos += 1; Token::new(TokenKind::Star,     lo as u32, self.pos as u32) }
-                b'+' => { self.pos += 1; Token::new(TokenKind::Plus,     lo as u32, self.pos as u32) }
+                b'%' => {
+                    self.pos += 1;
+                    if self.peek() == Some(b'=') {
+                        self.pos += 1;
+                        Token::new(TokenKind::PercentEq, lo as u32, self.pos as u32)
+                    } else {
+                        Token::new(TokenKind::Percent, lo as u32, self.pos as u32)
+                    }
+                }
+                b'*' => {
+                    self.pos += 1;
+                    if self.peek() == Some(b'=') {
+                        self.pos += 1;
+                        Token::new(TokenKind::StarEq, lo as u32, self.pos as u32)
+                    } else {
+                        Token::new(TokenKind::Star, lo as u32, self.pos as u32)
+                    }
+                }
+                b'+' => {
+                    self.pos += 1;
+                    if self.peek() == Some(b'=') {
+                        self.pos += 1;
+                        Token::new(TokenKind::PlusEq, lo as u32, self.pos as u32)
+                    } else {
+                        Token::new(TokenKind::Plus, lo as u32, self.pos as u32)
+                    }
+                }
                 b'@' => { self.pos += 1; Token::new(TokenKind::At,       lo as u32, self.pos as u32) }
 
                 // `_` — wildcard / discard
@@ -345,12 +546,15 @@ impl<'src> Lexer<'src> {
                     }
                 }
 
-                // `-` or `->`
+                // `-`, `->`, or `-=`
                 b'-' => {
                     self.pos += 1;
                     if self.peek() == Some(b'>') {
                         self.pos += 1;
                         Token::new(TokenKind::Arrow, lo as u32, self.pos as u32)
+                    } else if self.peek() == Some(b'=') {
+                        self.pos += 1;
+                        Token::new(TokenKind::MinusEq, lo as u32, self.pos as u32)
                     } else {
                         Token::new(TokenKind::Minus, lo as u32, self.pos as u32)
                     }
@@ -425,7 +629,12 @@ impl<'src> Lexer<'src> {
                 // `/` (not `//` — that's already handled in skip_trivia)
                 b'/' => {
                     self.pos += 1;
-                    Token::new(TokenKind::Slash, lo as u32, self.pos as u32)
+                    if self.peek() == Some(b'=') {
+                        self.pos += 1;
+                        Token::new(TokenKind::SlashEq, lo as u32, self.pos as u32)
+                    } else {
+                        Token::new(TokenKind::Slash, lo as u32, self.pos as u32)
+                    }
                 }
 
                 // String literal

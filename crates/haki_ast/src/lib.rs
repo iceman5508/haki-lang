@@ -377,6 +377,9 @@ pub enum StmtKind {
     /// `defer expr` — defers a call until the enclosing scope exits.
     /// The expression is evaluated at the defer site but executed on scope exit.
     Defer(Box<Expr>),
+    /// `select { ch.receive() = msg { ... } timeout(ms) { ... } }`
+    Select(SelectStmt),
+
     /// `continue` — skip to next loop iteration.
     Continue,
     /// `break` — exit the current loop.
@@ -427,6 +430,23 @@ pub struct ReturnStmt {
     /// Empty = bare `return` (void function).
     pub values: Vec<Expr>,
     pub span: Span,
+}
+
+/// `select { ... }` statement — multiplex over channels.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectStmt {
+    pub arms:    Vec<SelectArm>,
+    pub timeout: Option<(Box<Expr>, Block)>,  // timeout(ms) { body }
+    pub span:    Span,
+}
+
+/// One arm of a `select` block.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectArm {
+    pub binding: Ident,       // the variable bound to the received value
+    pub channel: Box<Expr>,   // the channel expression
+    pub body:    Block,
+    pub span:    Span,
 }
 
 /// `for x in collection { body }` or `for i, x in collection { body }`

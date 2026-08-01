@@ -139,6 +139,21 @@ pub(crate) fn token_description(kind: &TokenKind) -> String {
         TokenKind::Arrow     => "`->`".into(),
         TokenKind::Amp       => "`&`".into(),
         TokenKind::Eof       => "end of file".into(),
+        // v2.3 — concurrency
+        TokenKind::Select    => "`select`".into(),
+        TokenKind::Timeout   => "`timeout`".into(),
+        // v2.4 — compound assignment
+        TokenKind::PlusEq    => "`+=`".into(),
+        TokenKind::MinusEq   => "`-=`".into(),
+        TokenKind::StarEq    => "`*=`".into(),
+        TokenKind::SlashEq   => "`/=`".into(),
+        TokenKind::PercentEq => "`%=`".into(),
+        // v2.4 — f-string tokens
+        TokenKind::FStringStart      => "f-string start".into(),
+        TokenKind::FStringLit(_)     => "f-string literal".into(),
+        TokenKind::FStringInterpStart => "f-string `{`".into(),
+        TokenKind::FStringInterpEnd   => "f-string `}`".into(),
+        TokenKind::FStringEnd         => "f-string end".into(),
     }
 }
 

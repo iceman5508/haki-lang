@@ -35,11 +35,25 @@ fn stdlib_source(name: &str) -> Option<&'static str> {
         "std/time"    | "std/time.haki"    => Some(include_str!("../../stdlib/time.haki")),
         "std/process" | "std/process.haki" => Some(include_str!("../../stdlib/process.haki")),
         "std/regex"   | "std/regex.haki"   => Some(include_str!("../../stdlib/regex.haki")),
+        // std/sync — channels, task groups, select
+        "std/sync" | "std/sync.haki" => Some(include_str!("../../stdlib/sync.haki")),
+        // std/test — assertion framework
+        "std/test" | "std/test.haki" => Some(include_str!("../../stdlib/test.haki")),
+        // std/fmt — number/string formatting
+        "std/fmt" | "std/fmt.haki"   => Some(include_str!("../../stdlib/fmt.haki")),
+        // std/net — TCP/UDP sockets
+        "std/net" | "std/net.haki"   => Some(include_str!("../../stdlib/net.haki")),
+        // std/crypto — SHA-256, HMAC, Base64
+        "std/crypto" | "std/crypto.haki" => Some(include_str!("../../stdlib/crypto.haki")),
+        // std/db — connection pool, query builder, migrations
+        "std/db" | "std/db.haki"         => Some(include_str!("../../stdlib/db.haki")),
+
         // haki_ui submodules
         "std/haki_ui/element" | "std/haki_ui/element.haki" => Some(include_str!("../../stdlib/haki_ui/element.haki")),
         "std/haki_ui/state"   | "std/haki_ui/state.haki"   => Some(include_str!("../../stdlib/haki_ui/state.haki")),
-        "std/haki_ui/app"     | "std/haki_ui/app.haki"     => Some(include_str!("../../stdlib/haki_ui/app.haki")),
         "std/haki_ui/view"    | "std/haki_ui/view.haki"    => Some(include_str!("../../stdlib/haki_ui/view.haki")),
+        "std/haki_ui/vnode"   | "std/haki_ui/vnode.haki"   => Some(include_str!("../../stdlib/haki_ui/vnode.haki")),
+        "std/haki_ui/app"     | "std/haki_ui/app.haki"     => Some(include_str!("../../stdlib/haki_ui/app.haki")),
         _ => None,
     }
 }
@@ -372,6 +386,7 @@ fn rename_stmt(stmt: &mut haki_ast::Stmt, alias: &str, names: &HashSet<String>) 
         haki_ast::StmtKind::Yield(e)  => rename_expr(e, alias, names),
         haki_ast::StmtKind::Defer(e)  => rename_expr(e, alias, names),
         haki_ast::StmtKind::Continue | haki_ast::StmtKind::Break => {}
+        haki_ast::StmtKind::Select(_) => {}
         haki_ast::StmtKind::Expr(e)   => rename_expr(e, alias, names),
         haki_ast::StmtKind::Panic(e)  => rename_expr(e, alias, names),
         haki_ast::StmtKind::If(i) => {
@@ -454,32 +469,83 @@ fn byte_to_linecol(source: &str, offset: u32) -> (usize, usize) {
 
 /// Format an error with line:col context instead of raw byte offsets.
 /// Looks for `Span { lo: N, hi: M }` patterns and replaces them.
+/// Format a compiler error with Rust/Elm-style rich diagnostics:
+///
+///   error: expected `for`, found `.`
+///    --> counter.haki:10:10
+///     |
+///  10 |     for.each(items)
+///     |        ^ unexpected `.`
+///
 fn format_error(e: &dyn std::fmt::Display, src: &str) -> String {
     let raw = format!("{e}");
-    // Replace `Span { lo: N, hi: M }` with `line:col`
+
+    // Extract the first Span { lo: N, hi: M } from the error message
+    // and replace the whole message with a rich diagnostic block.
     let mut result = String::new();
-    let mut rest = raw.as_str();
+    let mut rest   = raw.as_str();
+    let mut first_span: Option<(u32, u32)> = None;
+
+    // Collect all span replacements
+    let mut flat = String::new();
     while let Some(idx) = rest.find("Span { lo: ") {
-        result.push_str(&rest[..idx]);
+        flat.push_str(&rest[..idx]);
         rest = &rest[idx + "Span { lo: ".len()..];
-        // Parse lo
         if let Some(comma) = rest.find(", hi: ") {
             if let Ok(lo) = rest[..comma].trim().parse::<u32>() {
                 let after_hi = &rest[comma + ", hi: ".len()..];
                 if let Some(close) = after_hi.find('}') {
-                    if let Ok(_hi) = after_hi[..close].trim().parse::<u32>() {
+                    if let Ok(hi) = after_hi[..close].trim().parse::<u32>() {
                         let (line, col) = byte_to_linecol(src, lo);
-                        result.push_str(&format!("{line}:{col}"));
+                        if first_span.is_none() { first_span = Some((lo, hi)); }
+                        flat.push_str(&format!("{line}:{col}"));
                         rest = &after_hi[close + 1..];
                         continue;
                     }
                 }
             }
         }
-        // Couldn't parse — emit original
-        result.push_str("Span { lo: ");
+        flat.push_str("Span { lo: ");
     }
-    result.push_str(rest);
+    flat.push_str(rest);
+
+    // If we found a span, emit rich diagnostic
+    if let Some((lo, hi)) = first_span {
+        let (line_num, col_num) = byte_to_linecol(src, lo);
+        let span_len = ((hi - lo) as usize).max(1);
+
+        // Extract the source line
+        let source_line = src.lines().nth(line_num - 1).unwrap_or("");
+
+        // Gutter width based on line number digits
+        let gutter = line_num.to_string().len();
+
+        // Strip the raw "hakic: " prefix from the message for cleaner output
+        let msg = flat.trim_start_matches("hakic: ").trim_start_matches("hakic:");
+
+        result.push_str(&format!("error: {msg}
+"));
+        result.push_str(&format!(" {:gutter$}--> {}:{line_num}:{col_num}
+",
+                                  "", "source"));
+        result.push_str(&format!(" {:gutter$} |
+", ""));
+        result.push_str(&format!(" {line_num} | {source_line}
+"));
+        // Caret line: col_num - 1 spaces, then ^ repeated for span length
+        // Clamp caret to line length
+        let caret_start = (col_num - 1).min(source_line.len());
+        let caret_len   = span_len.min(source_line.len().saturating_sub(caret_start)).max(1);
+        result.push_str(&format!(" {:gutter$} | {}{}
+",
+                                  "",
+                                  " ".repeat(caret_start),
+                                  "^".repeat(caret_len)));
+    } else {
+        // No span found — emit plain message
+        result.push_str(&flat);
+    }
+
     result
 }
 
@@ -687,6 +753,24 @@ fn main() {
         return;
     }
 
+    // `hakic watch <file>` — recompile and restart on file change.
+    if args[1] == "watch" {
+        if args.len() < 3 {
+            eprintln!("usage: hakic watch <source.haki> [-- args...]");
+            process::exit(1);
+        }
+        let source    = PathBuf::from(&args[2]);
+        let run_args: Vec<String> = args[4..].to_vec();
+        watch_mode(&source, run_args);
+        return;
+    }
+
+    // `hakic repl` — interactive read-eval-print loop.
+    if args[1] == "repl" {
+        run_repl();
+        return;
+    }
+
     // Normal compile mode.
     // Scan all arguments: find the source file (first non-flag arg after index 1),
     // then parse all flags regardless of order.
@@ -785,6 +869,8 @@ fn print_usage() {
     println!("  hakic test <source.haki>          run test_* functions");
     println!("  hakic fmt <source.haki>           format source in place");
     println!("  hakic fmt <source.haki> --check   check formatting without writing");
+    println!("  hakic watch <source.haki>         recompile + restart on save (100ms polling)");
+    println!("  hakic repl                        interactive REPL");
     println!("  hakic doc <source.haki>           generate documentation markdown");
     println!();
     println!("Flags:");
@@ -1286,6 +1372,7 @@ fn fmt_stmt(out: &mut String, stmt: &haki_ast::Stmt, src: &str, depth: usize) {
             indent(out, depth);
             out.push_str("}\n");
         }
+        StmtKind::Select(_) => { out.push_str("select { /* ... */ }\n"); }
     }
 }
 
@@ -1726,6 +1813,234 @@ fn check_only(source: &Path, quiet: bool) {
 
 // ── Main compile + optional run ───────────────────────────────────────────────
 
+// ── Watch mode ──────────────────────────────────────────────────────────────
+
+fn watch_mode(source: &Path, run_args: Vec<String>) {
+    use std::time::{Duration, SystemTime};
+    use std::collections::HashMap;
+
+    let source = source.canonicalize().unwrap_or_else(|_| source.to_path_buf());
+    let watch_dir = source.parent().unwrap_or(Path::new(".")).to_path_buf();
+    eprintln!("[watch] {} (100ms polling — Ctrl+C to stop)", source.display());
+
+    let collect_mtimes = |dir: &Path| -> HashMap<PathBuf, SystemTime> {
+        let mut map = HashMap::new();
+        if let Ok(rd) = fs::read_dir(dir) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.extension().and_then(|x| x.to_str()) == Some("haki") {
+                    if let Ok(m) = fs::metadata(&p) {
+                        if let Ok(t) = m.modified() { map.insert(p, t); }
+                    }
+                }
+            }
+        }
+        map
+    };
+
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("hakic"));
+
+    let spawn = |exe: &Path, src: &Path, args: &[String]| -> Option<std::process::Child> {
+        let ok = std::process::Command::new(exe)
+            .arg(src).arg("--quiet")
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok { eprintln!("[watch] compile failed — fix and save"); return None; }
+        let bin = src.with_extension("");
+        match std::process::Command::new(&bin).args(args).spawn() {
+            Ok(c) => { eprintln!("[watch] running pid {}", c.id()); Some(c) }
+            Err(e) => { eprintln!("[watch] run error: {e}"); None }
+        }
+    };
+
+    let mut mtimes = collect_mtimes(&watch_dir);
+    let mut child: Option<std::process::Child> = spawn(&exe, &source, &run_args);
+
+    loop {
+        std::thread::sleep(Duration::from_millis(100));
+        let cur = collect_mtimes(&watch_dir);
+        let changed = cur.iter().any(|(p,t)| mtimes.get(p) != Some(t))
+            || mtimes.keys().any(|p| !cur.contains_key(p));
+
+        if changed {
+            mtimes = cur;
+            eprintln!("[watch] change detected — rebuilding...");
+            if let Some(mut c) = child.take() { let _ = c.kill(); let _ = c.wait(); }
+            child = spawn(&exe, &source, &run_args);
+        }
+
+        if let Some(ref mut c) = child {
+            if let Ok(Some(s)) = c.try_wait() {
+                eprintln!("[watch] process exited ({s}) — waiting for changes");
+                child = None;
+            }
+        }
+    }
+}
+
+// ── REPL ────────────────────────────────────────────────────────────────────
+
+const REPL_SENTINEL: &str = "__HAKI_REPL_7f3a9b__";
+
+fn run_repl() {
+    use std::io::{self, BufRead, Write};
+
+    eprintln!("Haki REPL  —  :help for commands, :quit to exit");
+    let exe  = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("hakic"));
+    let tmp  = std::env::temp_dir().join("hakic_repl");
+    let _    = fs::create_dir_all(&tmp);
+    let src_path = tmp.join("session.haki");
+    let bin_path = tmp.join("session_bin");
+
+    let mut decls: Vec<String> = vec![];
+    let mut stmts: Vec<String> = vec![];
+    let mut n = 0usize;
+
+    loop {
+        {
+            let mut out = io::stdout();
+            if n == 0 { let _ = write!(out, "haki> "); }
+            else       { let _ = write!(out, "  {}> ", n + 1); }
+            let _ = out.flush();
+        }
+
+        let mut line = String::new();
+        if io::stdin().lock().read_line(&mut line).unwrap_or(0) == 0 { break; }
+        let line = line.trim_end().to_string();
+        if line.is_empty() { continue; }
+
+        match line.trim() {
+            ":quit"|":q" => { eprintln!("bye."); break; }
+            ":clear"|":c" => { decls.clear(); stmts.clear(); n = 0; eprintln!("[repl] cleared"); continue; }
+            ":show"|":s" => {
+                for d in &decls { eprintln!("{d}"); }
+                if !stmts.is_empty() {
+                    eprintln!("fn main() {{");
+                    for s in &stmts { eprintln!("    {s}"); }
+                    eprintln!("}}");
+                }
+                continue;
+            }
+            ":help"|":h" => {
+                eprintln!(":quit  :clear  :show  :help");
+                eprintln!("fn/class/import/struct/enum — top-level (persist)");
+                eprintln!("everything else — statement (runs in main)");
+                continue;
+            }
+            _ => {}
+        }
+
+        // Classify: top-level declaration or executable statement?
+        let t = line.trim();
+        let is_decl = t.starts_with("fn ")
+            || t.starts_with("class ")  || t.starts_with("struct ")
+            || t.starts_with("enum ")   || t.starts_with("import ")
+            || t.starts_with("protocol ");
+
+        // Build session source
+        let mut src = String::new();
+        let mut nd = decls.clone();
+        let mut ns = stmts.clone();
+        if is_decl { nd.push(line.clone()); } else { ns.push(line.clone()); }
+
+        for d in &nd { src.push_str(d); src.push('\n'); }
+        src.push_str("\nfn main() {\n");
+        // Replay prior stmts to rebuild state
+        for s in &stmts { src.push_str("    "); src.push_str(s); src.push('\n'); }
+        // Sentinel marks start of new output
+        src.push_str(&format!("    print(\"{}\")\n", REPL_SENTINEL));
+        if !is_decl { src.push_str("    "); src.push_str(&line); src.push('\n'); }
+        src.push_str("}\n");
+
+        if fs::write(&src_path, &src).is_err() { continue; }
+
+        // Compile
+        let cc = std::process::Command::new(&exe)
+            .arg(&src_path).arg("-o").arg(&bin_path).arg("--quiet")
+            .output();
+        match cc {
+            Ok(o) if !o.status.success() => {
+                let e = String::from_utf8_lossy(&o.stderr);
+                let clean = e.lines()
+                    .map(|l| l.replace(src_path.to_str().unwrap_or(""), "<input>"))
+                    .collect::<Vec<_>>().join("\n");
+                eprintln!("{clean}");
+                continue;
+            }
+            Err(e) => { eprintln!("[repl] {e}"); continue; }
+            Ok(_)  => {}
+        }
+
+        // Run, capture output, print delta after sentinel
+        match std::process::Command::new(&bin_path).output() {
+            Err(e) => { eprintln!("[repl] {e}"); continue; }
+            Ok(o)  => {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                if let Some(delta) = stdout.split(REPL_SENTINEL).nth(1) {
+                    let out = delta.trim_start_matches('\n');
+                    if !out.is_empty() {
+                        print!("{out}");
+                        if !out.ends_with('\n') { println!(); }
+                    }
+                }
+                if !o.status.success() {
+                    let e = String::from_utf8_lossy(&o.stderr);
+                    if !e.is_empty() { eprintln!("{e}"); }
+                    continue;
+                }
+            }
+        }
+
+        // Commit to state
+        if is_decl { decls = nd; } else { stmts = ns; }
+        n += 1;
+    }
+}
+
+
+/// Post-process emitted C to replace `/* haki span:N */` comments with
+/// real `#line L "file"` directives. This gives debuggers (lldb/gdb)
+/// source-level mapping back to the original .haki file.
+///
+/// The mapping: we have the raw source string, so we convert byte offsets
+/// back to line numbers here in the driver where both are available.
+fn inject_line_directives(c_src: &str, haki_src: &str, haki_path: &str) -> String {
+    // Build a byte-offset → line-number lookup for the Haki source
+    let mut line_map: Vec<usize> = vec![1]; // byte 0 is line 1
+    let mut line = 1usize;
+    for (i, b) in haki_src.bytes().enumerate() {
+        if b == b'\n' { line += 1; }
+        line_map.push(line);
+    }
+    let offset_to_line = |off: usize| -> usize {
+        *line_map.get(off.min(line_map.len() - 1)).unwrap_or(&1)
+    };
+
+    // Escape path for C string literal
+    let escaped_path = haki_path.replace('\\', "\\\\");
+
+    let mut out = String::with_capacity(c_src.len() + 1024);
+    for raw_line in c_src.lines() {
+        // Match: `/* haki span:N */`
+        if let Some(rest) = raw_line.trim().strip_prefix("/* haki span:") {
+            if let Some(end) = rest.find(" */") {
+                if let Ok(offset) = rest[..end].parse::<u32>() {
+                    let haki_line = offset_to_line(offset as usize);
+                    out.push_str(&format!(
+                        "#line {haki_line} \"{escaped_path}\"\n"
+                    ));
+                    continue;
+                }
+            }
+        }
+        out.push_str(raw_line);
+        out.push('\n');
+    }
+    out
+}
+
+
 fn compile_and_run(args: RunArgs) {
     let stem   = args.source.file_stem().unwrap_or_default().to_string_lossy().to_string();
 
@@ -1899,7 +2214,7 @@ fn compile_and_run(args: RunArgs) {
         let c_result = if args.target_so {
             haki_cemit::emit_c_so(&mono)
         } else {
-            haki_cemit::emit_c(&mono)
+            haki_cemit::emit_c(&mono, Some(args.source.to_str().unwrap_or("")))
         };
         match c_result {
             Ok(c_src) => {
@@ -1917,6 +2232,11 @@ fn compile_and_run(args: RunArgs) {
                         else { args.source.parent().unwrap_or(Path::new(".")).join(&stem) }
                     })
                 };
+                // Inject `#line` directives so gcc embeds DWARF pointing to .haki source.
+                // Replaces `/* haki span:N */` comments the cemit left as markers.
+                let c_src = inject_line_directives(
+                    &c_src, &src, args.source.to_str().unwrap_or("")
+                );
                 if !quiet { eprintln!("[c-emit]  {} ({} bytes)", c_path.display(), c_src.len()); }
                 let is_so = args.target_so;
 
@@ -1936,19 +2256,48 @@ fn compile_and_run(args: RunArgs) {
                     eprintln!("[link]    libs: {}", link_libs.join(" "));
                 }
 
+                // Pass -g (DWARF debug info) when --debug flag is set.
+                // Combined with #line directives, gives source-level debugging in lldb/gdb.
+                let debug_flag = args.emit_c; // reuse emit_c; in v2.8 add proper --debug flag
                 let base_flags: Vec<&str> = if is_so {
                     vec!["-std=gnu11", "-O2", "-shared", "-fPIC", "-lpthread", "-lm"]
+                } else if debug_flag {
+                    vec!["-std=gnu11", "-g", "-O0", "-lpthread", "-lm"]
                 } else {
                     vec!["-std=gnu11", "-O2", "-lpthread", "-lm"]
                 };
 
                 // Write the GTK UI runtime C file alongside the user C if targeting GTK
-                // When targeting GTK, prepend a forward declaration for haki_app_run
-                // so the user C compiles before the GTK runtime C is linked.
+                // When targeting GTK, prepend forward declarations for all GTK platform
+                // functions so the user C compiles before the GTK runtime C is linked.
                 if args.target_gtk {
-                    let decl = "void haki_app_run(const char* json, const char* title, long long width, long long height);
-";
-                    let mut patched = decl.to_string();
+                    let decls = concat!(
+                        "#include <stdint.h>
+",
+                        "void haki_app_run(const char* json, const char* title, long long width, long long height);
+",
+                        "long long haki_gtk_create_window(const char* title, long long width, long long height);
+",
+                        "long long haki_gtk_create_label(long long parent_id, const char* text);
+",
+                        "long long haki_gtk_create_button(long long parent_id, const char* label, long long node_id);
+",
+                        "long long haki_gtk_create_box(long long parent_id, long long horizontal);
+",
+                        "void haki_gtk_set_text(long long node_id, const char* text);
+",
+                        "void haki_gtk_set_visible(long long node_id, long long visible);
+",
+                        "void haki_gtk_insert_child(long long parent_id, long long index, long long child_id);
+",
+                        "void haki_gtk_remove_child(long long node_id);
+",
+                        "void haki_platform_run(void);
+",
+                        "void haki_set_callback_dispatcher(void* fn);
+",
+                    );
+                    let mut patched = decls.to_string();
                     patched.push_str(&c_src);
                     let _ = fs::write(&c_path, &patched);
                 }
@@ -1960,22 +2309,43 @@ fn compile_and_run(args: RunArgs) {
 
                 // macOS GTK include paths (from Homebrew)
                 // Use pkg-config to find GTK includes on macOS (handles Homebrew arm64/x86_64)
-                let gtk_includes_macos: Vec<String> = std::process::Command::new("pkg-config")
-                    .args(["--cflags", "gtk+-3.0"])
-                    .output()
-                    .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace()
-                        .map(|s| s.to_string()).collect())
-                    .unwrap_or_else(|_| vec![
-                        "-I/opt/homebrew/include/gtk-3.0".into(),
-                        "-I/opt/homebrew/include/glib-2.0".into(),
-                        "-I/opt/homebrew/lib/glib-2.0/include".into(),
-                        "-I/opt/homebrew/include/pango-1.0".into(),
-                        "-I/opt/homebrew/include/harfbuzz".into(),
-                        "-I/opt/homebrew/include/cairo".into(),
-                        "-I/opt/homebrew/include/gdk-pixbuf-2.0".into(),
-                        "-I/opt/homebrew/include/atk-1.0".into(),
-                    ]);
-                let gtk_includes_macos: Vec<&str> = gtk_includes_macos.iter().map(|s| s.as_str()).collect();
+                // Resolve GTK include paths using brew --prefix for each package
+                // pkg-config is not always installed; brew --prefix is always available
+                let brew_gtk    = std::process::Command::new("brew").args(["--prefix","gtk+3"]).output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_else(|_| "/opt/homebrew/opt/gtk+3".to_string());
+                let brew_glib   = std::process::Command::new("brew").args(["--prefix","glib"]).output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_else(|_| "/opt/homebrew/opt/glib".to_string());
+                let brew_pango  = std::process::Command::new("brew").args(["--prefix","pango"]).output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_else(|_| "/opt/homebrew/opt/pango".to_string());
+                let brew_cairo  = std::process::Command::new("brew").args(["--prefix","cairo"]).output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_else(|_| "/opt/homebrew/opt/cairo".to_string());
+                let brew_gdk_pb = std::process::Command::new("brew").args(["--prefix","gdk-pixbuf"]).output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_else(|_| "/opt/homebrew/opt/gdk-pixbuf".to_string());
+                let brew_atk    = std::process::Command::new("brew").args(["--prefix","atk"]).output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_else(|_| "/opt/homebrew/opt/atk".to_string());
+                let brew_hb     = std::process::Command::new("brew").args(["--prefix","harfbuzz"]).output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_else(|_| "/opt/homebrew/opt/harfbuzz".to_string());
+
+                let gtk_includes_macos_owned: Vec<String> = vec![
+                    format!("-I{brew_gtk}/include/gtk-3.0"),
+                    format!("-I{brew_glib}/include/glib-2.0"),
+                    format!("-I{brew_glib}/lib/glib-2.0/include"),
+                    format!("-I{brew_pango}/include/pango-1.0"),
+                    format!("-I{brew_hb}/include/harfbuzz"),
+                    format!("-I{brew_cairo}/include/cairo"),
+                    format!("-I{brew_gdk_pb}/include/gdk-pixbuf-2.0"),
+                    format!("-I{brew_atk}/include/atk-1.0"),
+                    // gdk headers live inside gtk+3
+                    format!("-I{brew_gtk}/include/gdk-3.0"),
+                ];
+                let gtk_includes_macos: Vec<&str> = gtk_includes_macos_owned.iter().map(|s| s.as_str()).collect();
                 // Linux GTK include paths
                 let gtk_includes_linux = vec![
                     "-I/usr/include/gtk-3.0",
@@ -1987,17 +2357,25 @@ fn compile_and_run(args: RunArgs) {
                     "-I/usr/include/gdk-pixbuf-2.0",
                     "-I/usr/include/atk-1.0",
                 ];
-                let gtk_libs_owned: Vec<String> = std::process::Command::new("pkg-config")
-                    .args(["--libs", "gtk+-3.0"])
-                    .output()
-                    .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace()
-                        .map(|s| s.to_string()).collect())
-                    .unwrap_or_else(|_| vec![
-                        "-lgtk-3".into(), "-lgdk-3".into(),
-                        "-lpangocairo-1.0".into(), "-lpango-1.0".into(),
-                        "-lglib-2.0".into(), "-lgobject-2.0".into(),
-                        "-lcairo".into(), "-lgdk_pixbuf-2.0".into(), "-latk-1.0".into(),
-                    ]);
+                let brew_gdk_pb2 = std::process::Command::new("brew").args(["--prefix","gdk-pixbuf"]).output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_else(|_| "/opt/homebrew/opt/gdk-pixbuf".to_string());
+                let brew_atk2 = std::process::Command::new("brew").args(["--prefix","at-spi2-core"]).output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_else(|_| "/opt/homebrew/opt/at-spi2-core".to_string());
+                let gtk_libs_owned: Vec<String> = vec![
+                    format!("-L{brew_gtk}/lib"),
+                    format!("-L{brew_glib}/lib"),
+                    format!("-L{brew_cairo}/lib"),
+                    format!("-L{brew_pango}/lib"),
+                    format!("-L{brew_gdk_pb2}/lib"),
+                    format!("-L{brew_atk2}/lib"),
+                    "-lgtk-3".into(), "-lgdk-3".into(),
+                    "-lpangocairo-1.0".into(), "-lpango-1.0".into(),
+                    "-lglib-2.0".into(), "-lgobject-2.0".into(),
+                    "-lcairo".into(), "-lgdk_pixbuf-2.0".into(),
+                    "-latk-1.0".into(), "-lgio-2.0".into(),
+                ];
                 let gtk_libs: Vec<&str> = gtk_libs_owned.iter().map(|s| s.as_str()).collect();
 
                 let gcc_result = {
@@ -2006,12 +2384,12 @@ fn compile_and_run(args: RunArgs) {
                        .arg(c_path.to_str().unwrap());
                     if let Some(ref gtk_c) = gtk_runtime_path {
                         // Include GTK paths for the runtime compile
-                        #[cfg(target_os = "macos")]
-                        cmd.args(&gtk_includes_macos);
-                        #[cfg(not(target_os = "macos"))]
-                        cmd.args(&gtk_includes_linux);
+                        if !quiet {
+                            eprintln!("[gtk]     includes: {:?}", &gtk_includes_macos_owned);
+                        }
+                        cmd.args(gtk_includes_macos_owned.iter().map(|s| s.as_str()));
                         cmd.arg(gtk_c.to_str().unwrap());
-                        cmd.args(&gtk_libs);
+                        cmd.args(gtk_libs_owned.iter().map(|s| s.as_str()));
                     }
                     cmd.arg("-o").arg(out_path.to_str().unwrap())
                        .args(&link_libs);

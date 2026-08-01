@@ -149,6 +149,7 @@ pub enum MonoStmtKind {
     Break,
     If(MonoIf),
     For(MonoFor),
+    Select(MonoSelect),
     While(MonoWhile),
     Match(MonoMatch),
     Panic(Box<MonoExpr>),
@@ -168,6 +169,14 @@ pub struct MonoLetStmt {
 pub struct MonoReturnStmt {
     pub values: Vec<MonoExpr>,
     pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct MonoSelect {
+    /// (binding_ident, binding_ty, channel_expr, body)
+    pub arms:    Vec<(haki_ast::Ident, ConcrTy, MonoExpr, MonoBlock)>,
+    pub timeout: Option<(Box<MonoExpr>, MonoBlock)>,
+    pub span:    Span,
 }
 
 #[derive(Debug, Clone)]

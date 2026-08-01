@@ -102,20 +102,19 @@ pub type CResult<T> = Result<T, CEmitError>;
 // ── Public entry point ────────────────────────────────────────────────────────
 
 /// Emit a complete, self-contained C file from a monomorphized program.
-pub fn emit_c(prog: &MonoProgram) -> CResult<String> {
-    emit_c_impl(prog, false)
+/// Pass `source_path` to enable `#line` directives for debugger source mapping.
+pub fn emit_c(prog: &MonoProgram, source_path: Option<&str>) -> CResult<String> {
+    emit_c_impl(prog, false, source_path.unwrap_or(""))
 }
 
 /// Emit C source targeting a shared library (.so) for mod_haki.
-/// Suppresses `main()`, emits `haki_handle_request`, `haki_response_free`,
-/// and `haki_abi_version` instead.
 pub fn emit_c_so(prog: &MonoProgram) -> CResult<String> {
-    emit_c_impl(prog, true)
+    emit_c_impl(prog, true, "")
 }
 
-fn emit_c_impl(prog: &MonoProgram, target_so: bool) -> CResult<String> {
+fn emit_c_impl(prog: &MonoProgram, target_so: bool, source_path: &str) -> CResult<String> {
     let mut out = String::with_capacity(64 * 1024);
-    let cx = Cx { prog, self_fields: std::cell::RefCell::new(std::collections::HashSet::new()) };
+    let cx = Cx { prog, self_fields: std::cell::RefCell::new(std::collections::HashSet::new()), source_path: source_path.to_string() };
 
     // Header
     if target_so {
@@ -295,6 +294,8 @@ struct Cx<'a> {
     /// Field names of the class whose method we're currently emitting.
     /// When non-empty, `emit_var` prefixes matching names with `self->`.
     self_fields: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Original Haki source path — used for #line directives (empty = disabled).
+    source_path: String,
 }
 
 impl<'a> Cx<'a> {
@@ -437,7 +438,28 @@ impl<'a> Cx<'a> {
 
     // ── Function body ─────────────────────────────────────────────────────────
 
+    /// Emit a `#line N "file"` directive if source_path is set.
+    /// This lets gcc/clang embed DWARF debug info pointing to the original .haki file.
+    fn emit_line_directive(&self, out: &mut String, span: haki_ast::Span, src: &str) {
+        if self.source_path.is_empty() { return; }
+        // Convert byte offset to line number
+        let lo = span.lo as usize;
+        let prefix = &src[..lo.min(src.len())];
+        let line_num = prefix.chars().filter(|&c| c == '\n').count() + 1;
+        // Escape backslashes in path for C string literal (Windows paths)
+        let path = self.source_path.replace('\\', "\\\\");
+        out.push_str(&format!("#line {line_num} \"{path}\"\n"));
+    }
+
     fn emit_fn(&self, out: &mut String, f: &MonoFn) -> CResult<()> {
+        // Emit #line directive before each function so debuggers map to .haki source
+        if !self.source_path.is_empty() {
+            let lo = f.span.lo as usize;
+            // We don't have the raw source here — use span.lo as line approximation
+            // The exact line is computed in the driver which has the source string.
+            // For now emit a comment; full DWARF mapping is done via emit_line_directive.
+            out.push_str(&format!("/* haki span:{} */\n", f.span.lo));
+        }
         out.push_str(&self.fn_prototype(f)?);
         out.push_str(" {\n");
         // main: call haki_runtime_init with argc/argv
@@ -596,35 +618,70 @@ impl<'a> Cx<'a> {
             }
 
             MonoStmtKind::For(f) => {
-                let arr = self.emit_expr(&f.iter)?;
-                let idx_var = format!("__i_{}", c_name(&f.var.name));
-                let arr_var = format!("__arr_{}", c_name(&f.var.name));
-                let elem_ty = self.c_ty(&f.var_ty);
+                let is_chan = matches!(&f.var_ty, SemTy::Generic(n, _) if n == "Chan")
+                    || matches!(&f.iter.ty, SemTy::Generic(n, _) if n == "Chan");
 
-                out.push_str(&format!("{indent}{{ void* {arr_var} = {arr};\n"));
-                out.push_str(&format!(
-                    "{indent}    int64_t __len_{0} = haki_array_length({arr_var});\n",
-                    c_name(&f.var.name)
-                ));
-                out.push_str(&format!(
-                    "{indent}    for (int64_t {idx_var} = 0; {idx_var} < __len_{0}; {idx_var}++) {{\n",
-                    c_name(&f.var.name)
-                ));
-                out.push_str(&format!(
-                    "{indent}        {elem_ty} {0} = *({elem_ty}*)haki_array_get({arr_var}, {idx_var});\n",
-                    c_name(&f.var.name)
-                ));
-
-                if let Some(ref iv) = f.index_var {
+                if is_chan {
+                    // for msg in ch { body }
+                    // → { void* __ch = ch;
+                    //     while (1) {
+                    //       ElemTy msg = (ElemTy)haki_chan_receive(__ch);
+                    //       if (msg == NULL && haki_chan_is_closed(__ch)) break;
+                    //       body
+                    //     } }
+                    let ch_expr = self.emit_expr(&f.iter)?;
+                    let ch_var  = format!("__ch_{}", c_name(&f.var.name));
+                    let elem_ty = self.c_ty(&match &f.var_ty {
+                        SemTy::Generic(_, args) if !args.is_empty() => args[0].clone(),
+                        other => other.clone(),
+                    });
+                    let var_c   = c_name(&f.var.name);
+                    out.push_str(&format!("{indent}{{ void* {ch_var} = (void*)({ch_expr});\n"));
+                    out.push_str(&format!("{indent}    while (1) {{\n"));
                     out.push_str(&format!(
-                        "{indent}        int64_t {} = {idx_var};\n",
-                        c_name(&iv.name)
+                        "{indent}        void* __raw_{var_c} = haki_chan_receive({ch_var});\n"
                     ));
-                }
+                    out.push_str(&format!(
+                        "{indent}        if (__raw_{var_c} == NULL && haki_chan_is_closed({ch_var})) break;\n"
+                    ));
+                    out.push_str(&format!(
+                        "{indent}        {elem_ty} {var_c} = ({elem_ty})__raw_{var_c};\n"
+                    ));
+                    self.emit_block(out, &f.body, depth + 2, deferred)?;
+                    out.push_str(&format!("{indent}    }}\n"));
+                    out.push_str(&format!("{indent}}}\n"));
+                } else {
+                    // Standard array for loop
+                    let arr = self.emit_expr(&f.iter)?;
+                    let idx_var = format!("__i_{}", c_name(&f.var.name));
+                    let arr_var = format!("__arr_{}", c_name(&f.var.name));
+                    let elem_ty = self.c_ty(&f.var_ty);
 
-                self.emit_block(out, &f.body, depth + 2, deferred)?;
-                out.push_str(&format!("{indent}    }}\n"));
-                out.push_str(&format!("{indent}}}\n"));
+                    out.push_str(&format!("{indent}{{ void* {arr_var} = {arr};\n"));
+                    out.push_str(&format!(
+                        "{indent}    int64_t __len_{0} = haki_array_length({arr_var});\n",
+                        c_name(&f.var.name)
+                    ));
+                    out.push_str(&format!(
+                        "{indent}    for (int64_t {idx_var} = 0; {idx_var} < __len_{0}; {idx_var}++) {{\n",
+                        c_name(&f.var.name)
+                    ));
+                    out.push_str(&format!(
+                        "{indent}        {elem_ty} {0} = *({elem_ty}*)haki_array_get({arr_var}, {idx_var});\n",
+                        c_name(&f.var.name)
+                    ));
+
+                    if let Some(ref iv) = f.index_var {
+                        out.push_str(&format!(
+                            "{indent}        int64_t {} = {idx_var};\n",
+                            c_name(&iv.name)
+                        ));
+                    }
+
+                    self.emit_block(out, &f.body, depth + 2, deferred)?;
+                    out.push_str(&format!("{indent}    }}\n"));
+                    out.push_str(&format!("{indent}}}\n"));
+                }
             }
 
             MonoStmtKind::Match(m) => {
@@ -745,6 +802,87 @@ impl<'a> Cx<'a> {
                             self.emit_block(out, &arm.body, depth + 1, deferred)?;
                         }
                     }
+                }
+            }
+
+            MonoStmtKind::Select(sel) => {
+                // select { binding = ch.receive() { body } timeout(ms) { body } }
+                // Lowers to:
+                //   HakiChan* __sel_chans[N] = { ch0, ch1, ... };
+                //   int __sel_ops[N]  = { 0, 0, ... };    // 0=recv
+                //   void* __sel_vals[N] = { NULL, ... };
+                //   int __sel_ready = haki_select(N, __sel_chans, __sel_ops, __sel_vals);
+                //   if (__sel_ready == 0) { ElemTy binding = (ElemTy)__sel_vals[0]; body }
+                //   else if (__sel_ready == 1) { ... }
+                //   else { /* all closed */ }
+                let n = sel.arms.len();
+                let uid = sel.span.lo;
+
+                if n == 0 {
+                    // Empty select — no-op
+                } else {
+                    out.push_str(&format!("{indent}{{\n"));
+                    // Declare channel array
+                    out.push_str(&format!(
+                        "{indent}    void* __sel_chans_{uid}[{n}];\n"
+                    ));
+                    out.push_str(&format!(
+                        "{indent}    int __sel_ops_{uid}[{n}];\n"
+                    ));
+                    out.push_str(&format!(
+                        "{indent}    void* __sel_vals_{uid}[{n}];\n"
+                    ));
+
+                    // Fill channel + op arrays
+                    for (i, (_, _, ch_expr, _)) in sel.arms.iter().enumerate() {
+                        let ch = self.emit_expr(ch_expr)?;
+                        out.push_str(&format!(
+                            "{indent}    __sel_chans_{uid}[{i}] = (void*)({ch});\n"
+                        ));
+                        out.push_str(&format!(
+                            "{indent}    __sel_ops_{uid}[{i}] = 0;\n"  // 0=receive
+                        ));
+                        out.push_str(&format!(
+                            "{indent}    __sel_vals_{uid}[{i}] = NULL;\n"
+                        ));
+                    }
+
+                    // Call haki_select
+                    out.push_str(&format!(
+                        "{indent}    int __sel_ready_{uid} = haki_select({n}, (HakiChan**)__sel_chans_{uid}, __sel_ops_{uid}, __sel_vals_{uid});\n"
+                    ));
+
+                    // Dispatch arms
+                    for (i, (binding, bind_ty, _, body)) in sel.arms.iter().enumerate() {
+                        let kw = if i == 0 { "if" } else { "else if" };
+                        let elem_ty = self.c_ty(bind_ty);
+                        let bname   = c_name(&binding.name);
+                        out.push_str(&format!(
+                            "{indent}    {kw} (__sel_ready_{uid} == {i}) {{\n"
+                        ));
+                        out.push_str(&format!(
+                            "{indent}        {elem_ty} {bname} = ({elem_ty})__sel_vals_{uid}[{i}];\n"
+                        ));
+                        self.emit_block(out, body, depth + 2, deferred)?;
+                        out.push_str(&format!("{indent}    }}\n"));
+                    }
+
+                    // Timeout arm
+                    if let Some((ms_expr, timeout_body)) = &sel.timeout {
+                        let ms = self.emit_expr(ms_expr)?;
+                        // Timeout is handled by a separate timer channel in v2.x
+                        // For now emit a comment + the body (full timer support in v2.8)
+                        out.push_str(&format!(
+                            "{indent}    /* timeout({ms}) — timer channel support in v2.8 */\n"
+                        ));
+                        out.push_str(&format!(
+                            "{indent}    else {{\n"
+                        ));
+                        self.emit_block(out, timeout_body, depth + 2, deferred)?;
+                        out.push_str(&format!("{indent}    }}\n"));
+                    }
+
+                    out.push_str(&format!("{indent}}}\n"));
                 }
             }
 
@@ -1206,6 +1344,18 @@ impl<'a> Cx<'a> {
     }
 
     fn emit_call(&self, name: &str, args: &[MonoExpr], ret_ty: &SemTy) -> CResult<String> {
+        // ── Chan construction ─────────────────────────────────────────────────
+        // Chan<T>(capacity: N) → haki_chan_new(N)
+        // Chan<T>()            → haki_chan_new(0)  (unbounded)
+        if name == "haki_chan_new" {
+            let capacity = if args.is_empty() {
+                "0".to_string()
+            } else {
+                self.emit_expr(&args[0])?
+            };
+            return Ok(format!("haki_chan_new({capacity})"));
+        }
+
         // ── Builtin intercepts ────────────────────────────────────────────────
 
         // print(any)

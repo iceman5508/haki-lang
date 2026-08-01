@@ -49,14 +49,16 @@ use crate::{ParseError, token_description};
 /// binary infix operator at this token.
 fn infix_bp(kind: &TokenKind) -> Option<(u8, u8)> {
     match kind {
-        TokenKind::OrOr              => Some((1, 2)),
-        TokenKind::AndAnd            => Some((3, 4)),
-        TokenKind::EqEq | TokenKind::BangEq => Some((5, 6)),
+        // Ternary gets the lowest bp (1,2) — parsed inline in parse_expr
+        TokenKind::Question                  => Some((1, 2)),
+        TokenKind::OrOr                      => Some((3, 4)),
+        TokenKind::AndAnd                    => Some((5, 6)),
+        TokenKind::EqEq | TokenKind::BangEq => Some((7, 8)),
         TokenKind::Lt | TokenKind::Gt |
-        TokenKind::LtEq | TokenKind::GtEq   => Some((7, 8)),
-        TokenKind::Plus | TokenKind::Minus   => Some((9, 10)),
+        TokenKind::LtEq | TokenKind::GtEq   => Some((9, 10)),
+        TokenKind::Plus | TokenKind::Minus   => Some((11, 12)),
         TokenKind::Star | TokenKind::Slash |
-        TokenKind::Percent                   => Some((11, 12)),
+        TokenKind::Percent                   => Some((13, 14)),
         _ => None,
     }
 }
@@ -933,6 +935,7 @@ impl Parser {
             TokenKind::While   => self.parse_while_stmt()?,
             TokenKind::For     => self.parse_for_stmt()?,
             TokenKind::Match   => StmtKind::Match(self.parse_match_expr()?),
+            TokenKind::Select  => self.parse_select_stmt()?,
             TokenKind::Panic   => {
                 self.advance();
                 self.expect(&TokenKind::LParen)?;
@@ -1019,6 +1022,83 @@ impl Parser {
         Ok(StmtKind::Return(ReturnStmt { values, span: Span::new(lo, hi) }))
     }
 
+    /// Parse an f-string into a chain of string concatenations.
+    ///
+    /// After `FStringStart` is consumed, we process:
+    ///   FStringLit(s)         → ExprKind::String(s)
+    ///   FStringInterpStart    → parse_expr(0) until FStringInterpEnd
+    ///                           (typechecker coerces each to string)
+    ///   FStringEnd            → done
+    ///
+    /// Result: Binary(Add, Binary(Add, ...), ...) chain.
+    /// An empty f-string f"" emits ExprKind::String("".to_string()).
+    fn parse_fstring(&mut self, lo: u32) -> Result<Expr, ParseError> {
+        let mut parts: Vec<Expr> = Vec::new();
+
+        loop {
+            match self.peek_kind() {
+                TokenKind::FStringEnd => {
+                    self.advance();
+                    break;
+                }
+                TokenKind::FStringLit(s) => {
+                    let s = s.clone();
+                    let span = self.current_span();
+                    self.advance();
+                    parts.push(Expr { kind: ExprKind::String(s), span });
+                }
+                TokenKind::FStringInterpStart => {
+                    self.advance(); // consume {
+                    let interp_lo = self.current_span().lo;
+                    let inner = self.parse_expr(0)?;
+                    let interp_hi = self.current_span().hi;
+                    let inner_span = inner.span;
+                    // Wrap in __fstr_coerce marker — typechecker converts to string
+                    // by inserting int_to_string / float_to_string as needed.
+                    // We use a NamedCall with the special name __fstr so the
+                    // typechecker knows to coerce, not just typecheck.
+                    let coerced = Expr {
+                        kind: ExprKind::NamedCall(
+                            Box::new(Expr {
+                                kind: ExprKind::Ident(Ident::new("__fstr", inner_span)),
+                                span: inner_span,
+                            }),
+                            vec![NamedArg { name: Ident::new("val", inner_span), value: inner, span: inner_span }],
+                        ),
+                        span: Span::new(interp_lo, interp_hi),
+                    };
+                    parts.push(coerced);
+                    self.expect(&TokenKind::FStringInterpEnd)?;
+                }
+                TokenKind::Eof => {
+                    return Err(ParseError::expected("end of f-string", &TokenKind::Eof, self.current_span()));
+                }
+                _ => {
+                    return Err(ParseError::expected("end of f-string", self.peek_kind(), self.current_span()));
+                }
+            }
+        }
+
+        let hi = self.current_span().lo;
+        let full_span = Span::new(lo, hi);
+
+        if parts.is_empty() {
+            return Ok(Expr { kind: ExprKind::String(String::new()), span: full_span });
+        }
+
+        // Fold parts into left-associative string concatenation:
+        // ["Hello ", name, "!"] → Binary(Add, Binary(Add, "Hello ", name), "!")
+        let mut result = parts.remove(0);
+        for part in parts {
+            let span = Span::new(result.span.lo, part.span.hi);
+            result = Expr {
+                kind: ExprKind::Binary(BinaryOp::Add, Box::new(result), Box::new(part)),
+                span,
+            };
+        }
+        Ok(result)
+    }
+
     fn parse_while_stmt(&mut self) -> Result<StmtKind, ParseError> {
         self.expect(&TokenKind::While)?;
         let cond = self.parse_expr(0)?;
@@ -1041,6 +1121,48 @@ impl Parser {
         let iter = self.parse_expr(0)?;
         let body = self.parse_block()?;
         Ok(StmtKind::For(ForStmt { index_var, var, iter: Box::new(iter), body, span: Span::dummy() }))
+    }
+
+    /// `select { binding = chan.receive() { body } timeout(ms) { body } }`
+    fn parse_select_stmt(&mut self) -> Result<StmtKind, ParseError> {
+        let lo = self.current_span().lo;
+        self.expect(&TokenKind::Select)?;
+        self.expect(&TokenKind::LBrace)?;
+
+        let mut arms: Vec<haki_ast::SelectArm> = Vec::new();
+        let mut timeout: Option<(Box<haki_ast::Expr>, haki_ast::Block)> = None;
+
+        while !matches!(self.peek_kind(), TokenKind::RBrace | TokenKind::Eof) {
+            let arm_lo = self.current_span().lo;
+
+            // timeout(expr) { body }
+            if matches!(self.peek_kind(), TokenKind::Timeout) {
+                self.advance();
+                self.expect(&TokenKind::LParen)?;
+                let ms_expr = self.parse_expr(0)?;
+                self.expect(&TokenKind::RParen)?;
+                let body = self.parse_block()?;
+                timeout = Some((Box::new(ms_expr), body));
+                continue;
+            }
+
+            // binding = chan.receive() { body }
+            let binding = self.expect_ident()?;
+            self.expect(&TokenKind::Eq)?;
+            let channel = self.parse_expr(0)?;
+            let body = self.parse_block()?;
+            let arm_hi = self.current_span().lo;
+            arms.push(haki_ast::SelectArm {
+                binding,
+                channel: Box::new(channel),
+                body,
+                span: Span::new(arm_lo, arm_hi),
+            });
+        }
+
+        let hi = self.current_span().hi;
+        self.expect(&TokenKind::RBrace)?;
+        Ok(StmtKind::Select(haki_ast::SelectStmt { arms, timeout, span: Span::new(lo, hi) }))
     }
 
     /// `_ = expr` — the discard-all form from the spec.
@@ -1189,23 +1311,76 @@ impl Parser {
         let mut lhs = self.parse_expr_prefix()?;
 
         loop {
-            let kind = self.peek_kind();
-
-            // Assignment: `x = expr` — right-associative, lowest precedence.
-            // Only allow if lhs is an Ident or field access.
-            if matches!(kind, TokenKind::Eq) && min_bp == 0 {
+                        let kind = self.peek_kind().clone();  // Assignment: `x = expr` — right-associative, lowest precedence.
+            // Compound assignment desugars at parse time:
+            //   x += rhs  →  x = x + rhs
+            // Note: LHS is duplicated in the AST — see V2X_PROGRESS.md for
+            // the known double-evaluation caveat (acceptable for v2.4).
+            if matches!(kind, TokenKind::Eq
+                | TokenKind::PlusEq | TokenKind::MinusEq
+                | TokenKind::StarEq | TokenKind::SlashEq | TokenKind::PercentEq)
+                && min_bp == 0
+            {
                 self.advance();
                 let rhs = self.parse_expr(0)?;
-                let hi = rhs.span.hi;
+                let hi  = rhs.span.hi;
+
+                // Desugar compound assignment to plain assignment
+                let rhs_desugared = match kind {
+                    TokenKind::PlusEq    => Expr { span: Span::new(lo, hi), kind: ExprKind::Binary(BinaryOp::Add, Box::new(lhs.clone()), Box::new(rhs)) },
+                    TokenKind::MinusEq   => Expr { span: Span::new(lo, hi), kind: ExprKind::Binary(BinaryOp::Sub, Box::new(lhs.clone()), Box::new(rhs)) },
+                    TokenKind::StarEq    => Expr { span: Span::new(lo, hi), kind: ExprKind::Binary(BinaryOp::Mul, Box::new(lhs.clone()), Box::new(rhs)) },
+                    TokenKind::SlashEq   => Expr { span: Span::new(lo, hi), kind: ExprKind::Binary(BinaryOp::Div, Box::new(lhs.clone()), Box::new(rhs)) },
+                    TokenKind::PercentEq => Expr { span: Span::new(lo, hi), kind: ExprKind::Binary(BinaryOp::Mod, Box::new(lhs.clone()), Box::new(rhs)) },
+                    _                    => rhs,  // plain Eq
+                };
+
                 lhs = Expr {
-                    kind: ExprKind::Assign(Box::new(lhs), Box::new(rhs)),
+                    kind: ExprKind::Assign(Box::new(lhs), Box::new(rhs_desugared)),
                     span: Span::new(lo, hi),
                 };
-                break; // assignment is not chained further
+                break; // assignment is not chained
+            }
+
+            // Ternary operator: cond ? then : else
+            // Lowers to ExprKind::If with a mandatory else branch.
+            if matches!(kind, TokenKind::Question) {
+                let (l_bp, _r_bp) = infix_bp(&kind).unwrap();
+                if l_bp < min_bp { break; }
+                self.advance(); // consume `?`
+                let then_expr = self.parse_expr(0)?;
+                self.expect(&TokenKind::Colon)?;
+                let else_expr = self.parse_expr(0)?;
+                let hi = else_expr.span.hi;
+                // Lower to IfExpr with yield in both branches
+                let then_block = Block {
+                    stmts: vec![Stmt {
+                        kind: StmtKind::Yield(Box::new(then_expr)),
+                        span: Span::dummy(),
+                    }],
+                    span: Span::dummy(),
+                };
+                let else_block = Block {
+                    stmts: vec![Stmt {
+                        kind: StmtKind::Yield(Box::new(else_expr)),
+                        span: Span::dummy(),
+                    }],
+                    span: Span::dummy(),
+                };
+                lhs = Expr {
+                    kind: ExprKind::If(Box::new(IfExpr {
+                        cond: Box::new(lhs),
+                        then_block,
+                        else_branch: Some(ElseBranch::Block(else_block)),
+                        span: Span::new(lo, hi),
+                    })),
+                    span: Span::new(lo, hi),
+                };
+                continue;
             }
 
             // Binary operator?
-            if let Some((l_bp, r_bp)) = infix_bp(kind) {
+            if let Some((l_bp, r_bp)) = infix_bp(&kind) {
                 if l_bp < min_bp {
                     break;
                 }
@@ -1355,6 +1530,13 @@ impl Parser {
             TokenKind::String(s) => {
                 self.advance();
                 Ok(Expr { kind: ExprKind::String(s), span: Span::new(lo, self.current_span().lo) })
+            }
+            // F-string: f"Hello {name}!"
+            // Assembled into a chain of string concatenations at parse time.
+            // Each {expr} is coerced to string in the typechecker.
+            TokenKind::FStringStart => {
+                self.advance(); // consume FStringStart
+                self.parse_fstring(lo)
             }
             TokenKind::True => {
                 self.advance();

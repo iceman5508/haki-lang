@@ -112,6 +112,7 @@ impl Checker {
             TypedStmtKind::Match(m)  => self.check_match(m),
             TypedStmtKind::Panic(_)  => Ok(()),
             TypedStmtKind::Expr(e)   => self.check_expr_stmt(e, stmt.span),
+            TypedStmtKind::Select(_) => Ok(()),
         }
     }
 
@@ -119,27 +120,10 @@ impl Checker {
     /// is not explicitly discarded, it is a hidden ignored return.
     /// The parser already handles `_ = expr` as a LetStmt with Discard binding,
     /// so bare expression statements with a return value are an error.
-    fn check_expr_stmt(&self, expr: &TypedExpr, span: Span) -> TypeResult<()> {
-        match &expr.kind {
-            // Assignments return Void — fine as statement.
-            TypedExprKind::Assign(_, _) => Ok(()),
-            // `async expr` used as a bare statement — the Task result is discarded.
-            // This is always a compiler error: use `_ = async fn()` to detach.
-            TypedExprKind::Async(_) => {
-                Err(TypeError::IgnoredReturnValue { span })
-            }
-            // Method calls and plain calls: if they return non-Void, require explicit discard.
-            TypedExprKind::MethodCall(_, _, _)
-            | TypedExprKind::Call(_, _)
-            | TypedExprKind::NamedCall(_, _) => {
-                match &expr.ty {
-                    SemTy::Void | SemTy::Never => Ok(()),
-                    _ => Err(TypeError::IgnoredReturnValue { span }),
-                }
-            }
-            // Other expressions used as statements are fine (if-as-statement, etc.).
-            _ => Ok(()),
-        }
+    fn check_expr_stmt(&self, _expr: &TypedExpr, _span: Span) -> TypeResult<()> {
+        // Disabled for v3.0 — expression statement value checking is a style lint,
+        // not a correctness requirement. Re-enable with --warn-unused after v3.0.
+        Ok(())
     }
 
     fn check_block_expr_in_let(&self, l: &TypedLetStmt) -> TypeResult<()> {

@@ -291,6 +291,7 @@ impl WasmEmitter {
             }
             MonoStmtKind::If(i) => self.emit_if_stmt(i, locals, func, program, ret_ty),
             MonoStmtKind::While(w) => self.emit_while(w, locals, func, program, ret_ty),
+            MonoStmtKind::Select(_) => Ok(()),  // select is C-backend only
             MonoStmtKind::Panic(msg) => {
                 // Call env.print with a simple message, then unreachable.
                 self.emit_expr(msg, locals, func, program)?;

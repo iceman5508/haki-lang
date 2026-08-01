@@ -560,6 +560,7 @@ fn find_ident_in_stmt(
             }
         }
         StmtKind::Continue | StmtKind::Break => {}
+        StmtKind::Select(_) => {}
     }
 }
 
@@ -827,6 +828,7 @@ fn resolve_in_stmt(stmt: &haki_ast::Stmt, cursor: u32, scopes: &mut Vec<ScopeFra
         }
         StmtKind::Defer(e) | StmtKind::Panic(e) => resolve_in_expr(e, cursor, scopes),
         StmtKind::Continue | StmtKind::Break => None,
+        StmtKind::Select(_) => None,
     }
 }
 

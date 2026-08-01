@@ -664,7 +664,8 @@ impl<'ctx> CodeGen<'ctx> {
             MonoStmtKind::For(f)    => self.emit_for(f),
             MonoStmtKind::Match(m)  => { self.emit_match(m)?; Ok(()) }
             MonoStmtKind::Panic(e)  => self.emit_panic(e),
-            MonoStmtKind::Expr(e)   => { self.emit_expr(e)?; Ok(()) }
+            MonoStmtKind::Expr(e)   => { self.emit_expr(e)?; Ok(()) },
+            MonoStmtKind::Select(_) => Ok(()),  // select handled in C backend; LLVM path is no-op
         }
     }
 

@@ -346,6 +346,7 @@ impl Inferer {
             StmtKind::If(i)     => TypedStmtKind::If(self.infer_if(i, type_args)?),
             StmtKind::While(w)  => TypedStmtKind::While(self.infer_while(w, type_args)?),
             StmtKind::For(f)    => TypedStmtKind::For(self.infer_for(f, type_args)?),
+            StmtKind::Select(s) => TypedStmtKind::Select(self.infer_select(s, type_args)?),
             StmtKind::Match(m)  => TypedStmtKind::Match(self.infer_match(m, type_args)?),
             StmtKind::Panic(e)  => {
                 let typed = self.infer_expr(e, type_args)?;
@@ -509,12 +510,15 @@ impl Inferer {
 
         // The element type depends on what we're iterating over.
         // `Array<T>` → element type is `T`.
+        // `Chan<T>`  → element type is `T` (receives until closed).
         let elem_ty = match &iter.ty {
             SemTy::Generic(name, args) if name == "Array" && args.len() == 1 => {
                 args[0].clone()
             }
+            SemTy::Generic(name, args) if name == "Chan" && args.len() == 1 => {
+                args[0].clone()
+            }
             // For unknown or opaque iterables, fall back to Named("_Elem")
-            // The monomorphizer will resolve this properly.
             other => other.clone(),
         };
 
@@ -538,6 +542,43 @@ impl Inferer {
     }
 
     // ── If / Match ────────────────────────────────────────────────────────
+
+    fn infer_select(
+        &mut self,
+        s: &haki_ast::SelectStmt,
+        type_args: &HashMap<String, SemTy>,
+    ) -> TypeResult<TypedSelectStmt> {
+        let mut typed_arms = Vec::new();
+        for arm in &s.arms {
+            let typed_chan = self.infer_expr(&arm.channel, type_args)?;
+            // Determine element type from the channel expression.
+            // The channel expr is typically `chan.receive()` which returns (T, bool).
+            // But for select syntax `binding = chan.receive()`, we treat the binding
+            // as type T directly.
+            let elem_ty = match &typed_chan.ty {
+                SemTy::Tuple(ts) if !ts.is_empty() => ts[0].clone(),
+                SemTy::Generic(n, args) if n == "Chan" && !args.is_empty() => args[0].clone(),
+                other => other.clone(),
+            };
+            self.push_scope();
+            self.define(&arm.binding.name, elem_ty.clone(), Mut::Const);
+            let typed_body = self.infer_block(&arm.body, type_args)?;
+            self.pop_scope();
+            typed_arms.push(TypedSelectArm {
+                binding:    arm.binding.clone(),
+                binding_ty: elem_ty,
+                channel:    Box::new(typed_chan),
+                body:       typed_body,
+                span:       arm.span,
+            });
+        }
+        let typed_timeout = if let Some((ms, body)) = &s.timeout {
+            let typed_ms = self.infer_expr(ms, type_args)?;
+            let typed_body = self.infer_block(body, type_args)?;
+            Some((Box::new(typed_ms), typed_body))
+        } else { None };
+        Ok(TypedSelectStmt { arms: typed_arms, timeout: typed_timeout, span: s.span })
+    }
 
     fn infer_if(
         &mut self,
@@ -1213,6 +1254,69 @@ impl Inferer {
         let typed_recv = self.infer_expr(recv, type_args)?;
         let ty_name = sem_ty_name(&typed_recv.ty);
 
+        // ── Chan<T> built-in methods ──────────────────────────────────────────
+        // send(val: T) -> void, receive() -> (T, bool), close() -> void
+        if ty_name == "Chan" || typed_recv.ty.is_chan() {
+            let elem_ty = match &typed_recv.ty {
+                SemTy::Generic(_, args) if !args.is_empty() => args[0].clone(),
+                _ => SemTy::Void,
+            };
+            let typed_args = args.iter()
+                .map(|a| self.infer_expr(a, type_args))
+                .collect::<TypeResult<Vec<_>>>()?;
+            let (ret_ty, c_name) = match method.name.as_str() {
+                "send"     => (SemTy::Int, "haki_chan_send"),   // 0=ok 1=closed
+                "receive"  => (SemTy::Tuple(vec![elem_ty, SemTy::Bool]), "haki_chan_recv"),
+                "close"    => (SemTy::Void, "haki_chan_close"),
+                "isClosed" => (SemTy::Bool, "haki_chan_is_closed"),
+                _ => return Err(TypeError::NoSuchMethod {
+                    ty: "Chan".into(), method: method.name.clone(), span
+                }),
+            };
+            let callee = TypedExpr {
+                kind: TypedExprKind::Ident(Ident::new(c_name, method.span)),
+                ty:   SemTy::Fn(vec![], Box::new(ret_ty.clone())),
+                span: method.span,
+            };
+            let mut all_args = vec![typed_recv];
+            all_args.extend(typed_args);
+            return Ok(TypedExpr {
+                kind: TypedExprKind::Call(Box::new(callee), all_args),
+                ty:   ret_ty,
+                span,
+            });
+        }
+
+        // ── TaskGroup<T> built-in methods ─────────────────────────────────────
+        if ty_name == "TaskGroup" || typed_recv.ty.is_taskgroup() {
+            let elem_ty = match &typed_recv.ty {
+                SemTy::Generic(_, args) if !args.is_empty() => args[0].clone(),
+                _ => SemTy::Void,
+            };
+            let typed_args = args.iter()
+                .map(|a| self.infer_expr(a, type_args))
+                .collect::<TypeResult<Vec<_>>>()?;
+            let (ret_ty, c_name) = match method.name.as_str() {
+                "spawn"    => (SemTy::Void, "haki_taskgroup_spawn"),
+                "awaitAll" => (SemTy::Generic("Array".into(), vec![elem_ty]), "haki_taskgroup_await_all"),
+                _ => return Err(TypeError::NoSuchMethod {
+                    ty: "TaskGroup".into(), method: method.name.clone(), span
+                }),
+            };
+            let callee = TypedExpr {
+                kind: TypedExprKind::Ident(Ident::new(c_name, method.span)),
+                ty:   SemTy::Fn(vec![], Box::new(ret_ty.clone())),
+                span: method.span,
+            };
+            let mut all_args = vec![typed_recv];
+            all_args.extend(typed_args);
+            return Ok(TypedExpr {
+                kind: TypedExprKind::Call(Box::new(callee), all_args),
+                ty:   ret_ty,
+                span,
+            });
+        }
+
         let method_info = self.sym.lookup_method(&ty_name, &method.name)
             .cloned()
             .ok_or_else(|| TypeError::NoSuchMethod {
@@ -1312,6 +1416,111 @@ impl Inferer {
             }
         }
 
+        // ── F-string coercion: __fstr(val: expr) ─────────────────────────────
+        // Inserted by the parser for each {expr} in an f-string.
+        // Coerce expr to string: int→int_to_string, float→float_to_string,
+        // bool→bool_to_string, string→identity.
+        if callee_name == "__fstr" {
+            let inner = args.first().map(|a| self.infer_expr(a, type_args))
+                .transpose()?
+                .unwrap_or_else(|| TypedExpr {
+                    kind: TypedExprKind::String(std::string::String::new()),
+                    ty: SemTy::String,
+                    span,
+                });
+            let coerced = match &inner.ty {
+                SemTy::String                        => inner,
+                SemTy::Int                           => {
+                    let to_str = TypedExpr {
+                        kind: TypedExprKind::Ident(Ident::new("int_to_string", span)),
+                        ty: SemTy::Fn(vec![SemTy::Int], Box::new(SemTy::String)),
+                        span,
+                    };
+                    TypedExpr {
+                        kind: TypedExprKind::Call(Box::new(to_str), vec![inner]),
+                        ty: SemTy::String,
+                        span,
+                    }
+                }
+                SemTy::Float                         => {
+                    let to_str = TypedExpr {
+                        kind: TypedExprKind::Ident(Ident::new("float_to_string", span)),
+                        ty: SemTy::Fn(vec![SemTy::Float], Box::new(SemTy::String)),
+                        span,
+                    };
+                    TypedExpr {
+                        kind: TypedExprKind::Call(Box::new(to_str), vec![inner]),
+                        ty: SemTy::String,
+                        span,
+                    }
+                }
+                SemTy::Bool                          => {
+                    let to_str = TypedExpr {
+                        kind: TypedExprKind::Ident(Ident::new("bool_to_string", span)),
+                        ty: SemTy::Fn(vec![SemTy::Bool], Box::new(SemTy::String)),
+                        span,
+                    };
+                    TypedExpr {
+                        kind: TypedExprKind::Call(Box::new(to_str), vec![inner]),
+                        ty: SemTy::String,
+                        span,
+                    }
+                }
+                _                                    => {
+                    // Unknown type — emit as-is and let downstream handle it
+                    inner
+                }
+            };
+            return Ok(coerced);
+        }
+
+        // ── Chan<T>(capacity: N) construction ─────────────────────────────────
+        // Chan<int>(capacity: 10) or Chan<string>() (unbounded)
+        // Lowers to haki_chan_new(capacity, sizeof(elem)) at codegen.
+        if callee_name == "Chan" {
+            let capacity_arg = args.first().map(|a| self.infer_expr(a, type_args));
+            let capacity = if let Some(Ok(a)) = capacity_arg { a }
+                else {
+                    TypedExpr { kind: TypedExprKind::Int(0), ty: SemTy::Int, span }
+                };
+            // Extract the element type from explicit type_args context
+            // e.g. Chan<int> has T=int, Chan<string> has T=string
+            let elem_ty = type_args.get("T").cloned()
+                .or_else(|| {
+                    // Try to infer from context — for now default to Void
+                    // User must write Chan<int>(...) with explicit type
+                    None
+                })
+                .unwrap_or(SemTy::Void);
+            let ret_ty = SemTy::Generic("Chan".into(), vec![elem_ty]);
+            let callee_expr = TypedExpr {
+                kind: TypedExprKind::Ident(Ident::new("haki_chan_new", span)),
+                ty: SemTy::Fn(vec![SemTy::Int, SemTy::Int], Box::new(ret_ty.clone())),
+                span,
+            };
+            return Ok(TypedExpr {
+                kind: TypedExprKind::Call(Box::new(callee_expr), vec![capacity]),
+                ty: ret_ty,
+                span,
+            });
+        }
+
+        // ── TaskGroup<T>() construction ────────────────────────────────────────
+        if callee_name == "TaskGroup" {
+            let elem_ty = type_args.get("T").cloned().unwrap_or(SemTy::Void);
+            let ret_ty = SemTy::Generic("TaskGroup".into(), vec![elem_ty]);
+            let callee_expr = TypedExpr {
+                kind: TypedExprKind::Ident(Ident::new("haki_taskgroup_new", span)),
+                ty: SemTy::Fn(vec![], Box::new(ret_ty.clone())),
+                span,
+            };
+            return Ok(TypedExpr {
+                kind: TypedExprKind::Call(Box::new(callee_expr), vec![]),
+                ty: ret_ty,
+                span,
+            });
+        }
+
         // Unified print(any): accept any single argument type — the codegen
         // dispatches to haki_print, haki_print_int, etc. based on the arg type.
         if callee_name == "print" && args.len() == 1 {            let typed_arg = self.infer_expr(&args[0], type_args)?;
@@ -1361,7 +1570,15 @@ impl Inferer {
 
         // Is it a top-level function?
         if let Some(fn_info) = self.sym.lookup_fn(&callee_name).cloned() {
-            let typed_args = self.infer_call_args(&fn_info.params, args, &callee_name, type_args, span)?;
+            // Extern functions registered with empty params skip arg count validation
+            // (params: vec![] means "accept any args" for platform builtins)
+            let typed_args = if fn_info.is_extern && fn_info.params.is_empty() {
+                args.iter()
+                    .map(|a| self.infer_expr(a, type_args))
+                    .collect::<TypeResult<Vec<_>>>()?
+            } else {
+                self.infer_call_args(&fn_info.params, args, &callee_name, type_args, span)?
+            };
             let ret_ty = self.sym.resolve_return_ty(&fn_info.return_ty, type_args)?;
             let param_tys: Vec<SemTy> = fn_info.params.iter()
                 .map(|p| self.sym.resolve_ty(&p.ty, type_args).unwrap_or(SemTy::Void))
@@ -1855,6 +2072,12 @@ fn subst_stmt(stmt: &mut Stmt, concrete: &str) {
         StmtKind::Match(m) => {
             subst_expr(&mut m.scrutinee, concrete);
             for arm in &mut m.arms { subst_block(&mut arm.body, concrete); }
+        }
+        StmtKind::Select(s) => {
+            for arm in &mut s.arms {
+                subst_expr(&mut arm.channel, concrete);
+                subst_block(&mut arm.body, concrete);
+            }
         }
     }
 }
