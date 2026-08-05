@@ -48,6 +48,24 @@ fn stdlib_source(name: &str) -> Option<&'static str> {
         // std/db — connection pool, query builder, migrations
         "std/db" | "std/db.haki"         => Some(include_str!("../../stdlib/db.haki")),
 
+        // std/io — terminal input/output
+        "std/io" | "std/io.haki"         => Some(include_str!("../../stdlib/io.haki")),
+
+        // std/fs — filesystem operations
+        "std/fs" | "std/fs.haki"         => Some(include_str!("../../stdlib/fs.haki")),
+
+        // std/http — HTTP client (libcurl)
+        "std/http" | "std/http.haki"     => Some(include_str!("../../stdlib/http.haki")),
+
+        // std/sys — process execution, environment, system info
+        "std/sys" | "std/sys.haki"       => Some(include_str!("../../stdlib/sys.haki")),
+
+        // std/sqlite — SQLite database
+        "std/sqlite" | "std/sqlite.haki" => Some(include_str!("../../stdlib/sqlite.haki")),
+
+        // std/postgres — PostgreSQL database
+        "std/postgres" | "std/postgres.haki" => Some(include_str!("../../stdlib/postgres.haki")),
+
         // haki_ui submodules
         "std/haki_ui/element" | "std/haki_ui/element.haki" => Some(include_str!("../../stdlib/haki_ui/element.haki")),
         "std/haki_ui/state"   | "std/haki_ui/state.haki"   => Some(include_str!("../../stdlib/haki_ui/state.haki")),
@@ -341,6 +359,7 @@ fn rename_item(mut item: haki_ast::Item, alias: &str, module_names: &HashSet<Str
             for p in &mut f.params { rename_ty(&mut p.ty, alias, module_names); }
             if let Some(ret) = &mut f.return_ty { rename_return_ty(ret, alias, module_names); }
         }
+        haki_ast::ItemKind::AnnotationDef(_) => {}
     }
     item
 }
@@ -380,6 +399,23 @@ fn rename_block(block: &mut haki_ast::Block, alias: &str, names: &HashSet<String
     for stmt in &mut block.stmts { rename_stmt(stmt, alias, names); }
 }
 
+
+/// Recursively rename all arms of an else-if chain.
+fn rename_if_chain(
+    if_expr: &mut haki_ast::IfExpr,
+    alias: &str,
+    names: &std::collections::HashSet<String>,
+) {
+    rename_expr(&mut if_expr.cond, alias, names);
+    rename_block(&mut if_expr.then_block, alias, names);
+    if let Some(ref mut els) = if_expr.else_branch {
+        match els {
+            haki_ast::ElseBranch::Block(b) => rename_block(b, alias, names),
+            haki_ast::ElseBranch::If(inner) => rename_if_chain(inner, alias, names),
+        }
+    }
+}
+
 fn rename_stmt(stmt: &mut haki_ast::Stmt, alias: &str, names: &HashSet<String>) {
     match &mut stmt.kind {
         haki_ast::StmtKind::Let(l) => {
@@ -398,7 +434,10 @@ fn rename_stmt(stmt: &mut haki_ast::Stmt, alias: &str, names: &HashSet<String>) 
             rename_block(&mut i.then_block, alias, names);
             if let Some(els) = &mut i.else_branch { match els {
                 haki_ast::ElseBranch::Block(b) => rename_block(b, alias, names),
-                haki_ast::ElseBranch::If(inner) => { rename_expr(&mut inner.cond, alias, names); rename_block(&mut inner.then_block, alias, names); }
+                haki_ast::ElseBranch::If(inner) => {
+                    // Walk the full else-if chain recursively
+                    rename_if_chain(inner, alias, names);
+                }
             }}
         }
         haki_ast::StmtKind::For(f)   => { rename_expr(&mut f.iter, alias, names); rename_block(&mut f.body, alias, names); }
@@ -434,7 +473,10 @@ fn rename_expr(expr: &mut haki_ast::Expr, alias: &str, names: &HashSet<String>) 
             rename_block(&mut i.then_block, alias, names);
             if let Some(els) = &mut i.else_branch { match els {
                 haki_ast::ElseBranch::Block(b) => rename_block(b, alias, names),
-                haki_ast::ElseBranch::If(inner) => { rename_expr(&mut inner.cond, alias, names); rename_block(&mut inner.then_block, alias, names); }
+                haki_ast::ElseBranch::If(inner) => {
+                    // Walk the full else-if chain recursively
+                    rename_if_chain(inner, alias, names);
+                }
             }}
         }
         ExprKind::Block(b) => rename_block(b, alias, names),
@@ -574,24 +616,39 @@ fn main() {
     let binary_stem = binary_name.trim_end_matches(".exe");
 
     let args: Vec<String> = match binary_stem {
-        // v3.2 names (canonical)
-        "haki-desktop" | "haki-gtk" => {
-            // Compile + auto-run the GTK desktop app
-            let mut v = vec![raw_args[0].clone(), "--target".into(), "gtk".into(), "--run-after".into()];
-            v.extend_from_slice(&raw_args[1..]);
-            v
+        // v3.2+ names (canonical)
+        "haki-desktop" => {
+            // On Windows: use win32 backend. On macOS/Linux: use gtk.
+            #[cfg(target_os = "windows")]
+            let target = "win32";
+            #[cfg(not(target_os = "windows"))]
+            let target = "gtk";
+            let mut v = vec![raw_args[0].clone(), "--target".into(), target.into(), "--run-after".into()];
+            v.extend_from_slice(&raw_args[1..]); v
         }
-        "haki-server" | "haki-web" => {
-            // Compile to .so for Apache/nginx — no auto-run
+        "haki-server" => {
             let mut v = vec![raw_args[0].clone(), "--target".into(), "so".into()];
-            v.extend_from_slice(&raw_args[1..]);
-            v
+            v.extend_from_slice(&raw_args[1..]); v
         }
-        "haki-browser" | "haki-dom" => {
-            // Compile to Wasm for browser — no auto-run
+        "haki-browser" => {
             let mut v = vec![raw_args[0].clone(), "--emit-wasm".into()];
-            v.extend_from_slice(&raw_args[1..]);
-            v
+            v.extend_from_slice(&raw_args[1..]); v
+        }
+        // Deprecated aliases — warn and forward
+        "haki-gtk" => {
+            eprintln!("haki warning: `haki-gtk` is deprecated, use `haki-desktop`");
+            let mut v = vec![raw_args[0].clone(), "--target".into(), "gtk".into(), "--run-after".into()];
+            v.extend_from_slice(&raw_args[1..]); v
+        }
+        "haki-web" => {
+            eprintln!("haki warning: `haki-web` is deprecated, use `haki-server`");
+            let mut v = vec![raw_args[0].clone(), "--target".into(), "so".into()];
+            v.extend_from_slice(&raw_args[1..]); v
+        }
+        "haki-dom" => {
+            eprintln!("haki warning: `haki-dom` is deprecated, use `haki-browser`");
+            let mut v = vec![raw_args[0].clone(), "--emit-wasm".into()];
+            v.extend_from_slice(&raw_args[1..]); v
         }
         _ => raw_args,
     };
@@ -603,7 +660,7 @@ fn main() {
 
     // Handle --version and --help before anything else.
     if args[1] == "--version" || args[1] == "-V" {
-        println!("haki 3.2.0 — Haki compiler");
+        println!("haki 3.9.0 — Haki compiler");
         println!("  haki          run any .haki file");
         println!("  haki-desktop  compile + run as native desktop app");
         println!("  haki-server   compile to .so for Apache/nginx (mod_haki)");
@@ -707,11 +764,18 @@ fn main() {
                 }
                 haki_pkg::commands::cmd_remove(&args[3], &project_dir)
             }
+            "publish" => {
+                let result = haki_pkg::commands::cmd_publish(&project_dir);
+                if let Err(e) = result { eprintln!("hakic pkg publish: {e}"); process::exit(1); }
+                return;
+            }
+
             "list" | "ls" => haki_pkg::commands::cmd_list(&project_dir),
             "help" | "--help" | "-h" | _ => {
                 println!("hakic pkg — Haki package manager\n");
                 println!("Usage:");
                 println!("  hakic pkg init [name]           Create haki.json");
+                println!("  hakic pkg publish               Validate and publish to registry");
                 println!("  hakic pkg add <url> [as <name>] Add a dependency");
                 println!("  hakic pkg install               Install all dependencies");
                 println!("  hakic pkg update [name]         Update one or all deps");
@@ -753,7 +817,8 @@ fn main() {
                             .filter(|a| !a.starts_with("--"))
                             .cloned().collect(),
             target_so:   false,
-            target_gtk:  false,
+            target_gtk:  false,            target_win32: false,
+
         };
         compile_and_run(run_args);
         return;
@@ -796,6 +861,7 @@ fn main() {
     let mut verbose       = false;
     let mut target_so     = false;
     let mut target_gtk    = false;
+    let mut target_win32  = false;
     let mut run_after     = false;
 
     let mut i = 1;
@@ -817,7 +883,8 @@ fn main() {
                 if i < args.len() {
                     match args[i].as_str() {
                         "so"  => { target_so   = true; emit_c_flag = true; }
-                        "gtk" => { target_gtk  = true; emit_c_flag = true; }
+                        "gtk"   => { target_gtk  = true; emit_c_flag = true; }
+                        "win32" => { target_win32 = true; emit_c_flag = true; }
                         "dom" => { emit_wasm   = true; }
                         other => { eprintln!("hakic: unknown target '{other}' (known: so, gtk, dom)"); process::exit(1); }
                     }
@@ -863,17 +930,18 @@ fn main() {
                             .filter(|a| !a.starts_with("--"))
                             .cloned().collect(),
             target_so:    false,
-            target_gtk:   false,
+            target_gtk:   false,            target_win32: false,
+
         };
         compile_and_run(run_args);
         return;
     }
 
-    compile_and_run(RunArgs { source, output, emit_ir, emit_runtime, emit_wasm, emit_c: emit_c_flag, quiet, run: run_after, run_args: vec![], target_so, target_gtk });
+    compile_and_run(RunArgs { source, output, emit_ir, emit_runtime, emit_wasm, emit_c: emit_c_flag, quiet, run: run_after, run_args: vec![], target_so, target_gtk, target_win32 });
 }
 
 fn print_usage() {
-    println!("Haki compiler v3.2.0");
+    println!("Haki compiler v3.9.0");
     println!();
     println!("Usage:");
     println!("  hakic <source.haki>              compile to native binary");
@@ -914,75 +982,177 @@ struct RunArgs {
     /// Compile + run as a GTK desktop application.
     /// Links haki_ui_gtk.c + libgtk-3, runs the resulting binary.
     target_gtk:   bool,
+    target_win32: bool,
 }
 
-// ── Doc generator (hakic doc) ─────────────────────────────────────────────────
+// ── Doc generator (hakic doc) ────────────────────────────────────────────
 
-/// Extract `///` doc comments from source and emit a Markdown document.
-/// Scans raw source for doc-comment blocks immediately preceding declarations.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"',"&quot;")
+}
+
+fn extract_doc_signature(line: &str) -> Option<(String, String)> {
+    let t = line.trim();
+    for kw in &["fn ", "class ", "struct ", "enum ", "protocol "] {
+        if t.starts_with(kw) {
+            let kind = kw.trim().to_string();
+            let sig = t.split('{').next()?.trim().to_string();
+            return Some((kind, sig));
+        }
+    }
+    None
+}
+
 fn doc_file(source: &Path) {
     let src = match fs::read_to_string(source) {
         Ok(s) => s,
-        Err(e) => { eprintln!("hakic: cannot read '{}': {e}", source.display()); process::exit(1); }
+        Err(e) => { eprintln!("hakic: cannot read {}: {e}", source.display()); process::exit(1); }
     };
-
-    let stem = source.file_stem().unwrap_or_default().to_string_lossy();
-    println!("# {}", stem);
-    println!();
-
+    let stem = source.file_stem().unwrap_or_default().to_string_lossy().to_string();
+    let out_path = source.with_extension("html");
+    let mut entries: Vec<(String, String, Vec<String>)> = Vec::new();
     let lines: Vec<&str> = src.lines().collect();
     let mut i = 0;
     while i < lines.len() {
         let trimmed = lines[i].trim();
-
-        // Collect consecutive `///` doc comment lines.
         if trimmed.starts_with("///") {
-            let mut doc_lines: Vec<&str> = Vec::new();
+            let mut doc_lines: Vec<String> = Vec::new();
             while i < lines.len() && lines[i].trim().starts_with("///") {
-                let content = lines[i].trim().trim_start_matches("///").trim_start_matches(' ');
-                doc_lines.push(content);
+                doc_lines.push(lines[i].trim().trim_start_matches("///").trim_start_matches(' ').to_string());
                 i += 1;
             }
-
-            // The next non-blank line is the declaration this doc comment belongs to.
             while i < lines.len() && lines[i].trim().is_empty() { i += 1; }
             if i >= lines.len() { break; }
-
-            let decl = lines[i].trim();
-            if let Some(sig) = extract_signature(decl) {
-                println!("## `{sig}`");
-                println!();
-                for dl in &doc_lines {
-                    println!("{dl}");
-                }
-                println!();
+            if let Some((kind, sig)) = extract_doc_signature(lines[i].trim()) {
+                entries.push((kind, sig, doc_lines));
             }
-        } else {
-            i += 1;
+        } else { i += 1; }
+    }
+    let mut sidebar = String::new();
+    for (_, sig, _) in &entries {
+        let name = sig.split_whitespace().nth(1).unwrap_or(sig).split('(').next().unwrap_or(sig);
+        sidebar.push_str(&format!("  <a href=\"#{name}\">{name}</a>\n"));
+    }
+    let mut body = String::new();
+    for gk in &["fn","class","struct","enum","protocol"] {
+        let group: Vec<_> = entries.iter().filter(|(k,_,_)| k.as_str()==*gk).collect();
+        if group.is_empty() { continue; }
+        let label = match *gk { "fn"=>"Functions","class"=>"Classes","struct"=>"Structs","enum"=>"Enums",_=>"Protocols" };
+        body.push_str(&format!("<div class=\"sh\">{label}</div>\n"));
+        for (kind,sig,docs) in &group {
+            let name = sig.split_whitespace().nth(1).unwrap_or(sig).split('(').next().unwrap_or(sig);
+            body.push_str(&format!("<div class=\"e\" id=\"{name}\"><div class=\"s\"><span class=\"t t-{kind}\">{kind}</span><code>{}</code></div>\n",html_escape(sig)));
+            if !docs.is_empty() {
+                body.push_str("<div class=\"d\">");
+                for line in docs { if line.is_empty(){body.push_str("</p><p>")}else{body.push_str(&format!("{} ",html_escape(line)));}  }
+                body.push_str("</div>\n");
+            }
+            body.push_str("</div>\n");
         }
+    }
+    let css = ":root{--bg:#0f1117;--sf:#1a1d24;--br:#2a2d36;--tx:#e2e8f0;--mu:#6b7280;--ac:#7c6bea;--gn:#34d399;--bl:#60a5fa;--or:#fb923c}*{box-sizing:border-box;margin:0;padding:0}body{background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6}.sb{position:fixed;top:0;left:0;width:240px;height:100vh;background:var(--sf);border-right:1px solid var(--br);overflow-y:auto;padding:24px 16px}.sb h2{font-size:13px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px}.sb a{display:block;padding:4px 8px;color:var(--tx);text-decoration:none;border-radius:4px;font-size:14px;margin-bottom:2px}.sb a:hover{background:var(--br)}.main{margin-left:240px;padding:48px 64px;max-width:900px}h1{font-size:32px;font-weight:700;margin-bottom:8px}.sub{color:var(--mu);margin-bottom:48px;font-size:15px}.sh{font-size:12px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.1em;margin:40px 0 16px;border-bottom:1px solid var(--br);padding-bottom:8px}.e{background:var(--sf);border:1px solid var(--br);border-radius:8px;margin-bottom:16px;overflow:hidden}.s{padding:16px 20px;background:var(--bg);border-bottom:1px solid var(--br);font-family:'SF Mono',Consolas,monospace;font-size:14px}.d{padding:16px 20px;color:var(--mu);font-size:14px;line-height:1.7}.t{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-right:8px}.t-fn{background:#1e1b4b;color:var(--ac)}.t-class{background:#134e4a;color:var(--gn)}.t-struct{background:#1c1917;color:var(--or)}.t-enum{background:#1e1b4b;color:var(--bl)}";
+    let html = format!("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\"><title>{stem} — Haki API Reference</title><style>{css}</style></head><body><div class=\"sb\"><h2>{stem}</h2>{sidebar}</div><div class=\"main\"><h1>{stem}</h1><p class=\"sub\">Haki API Reference &mdash; generated by <code>hakic doc</code></p>{body}</div></body></html>");
+    match fs::write(&out_path, &html) {
+        Ok(_) => eprintln!("hakic doc: {}", out_path.display()),
+        Err(e) => { eprintln!("hakic: cannot write {}: {e}", out_path.display()); process::exit(1); }
     }
 }
 
-/// Extract a short signature from a declaration line for display.
-fn extract_signature(line: &str) -> Option<String> {
-    let trimmed = line.trim();
-    // fn, struct, class, protocol
-    for kw in &["fn ", "struct ", "class ", "protocol "] {
-        if trimmed.starts_with(kw) {
-            // Extract up to the opening brace or end
-            let _sig = trimmed.split('{').next()?.trim().trim_end_matches(')');
-            // Trim trailing whitespace + include closing paren if fn
-            let full = if trimmed.starts_with("fn ") {
-                // Keep up to and including the ')' + optional return type
-                let s = trimmed.split('{').next()?.trim();
-                s.to_string()
-            } else {
-                trimmed.split('{').next()?.trim().to_string()
-            };
-            return Some(full);
+// ── Annotation desugaring (hakic annotation pass) ───────────────────
+
+/// Collect all `annotation @name(params) { body }` definitions,
+/// then for each function with a matching `@name(args)` attribute,
+/// wrap its body: substitute `__original__()` with the original body,
+/// and bind annotation params to the provided arg values.
+///
+/// Example:
+///   annotation @retry(times: int) {
+///       let i = 0
+///       while i < times {
+///           __original__()
+///           i = i + 1
+///       }
+///   }
+///
+///   @retry(times: 3)
+///   fn fetchData() -> string { ... }
+///
+///   Becomes equivalent to:
+///   fn fetchData() -> string {
+///       let i = 0
+///       while i < 3 {
+///           // original body here
+///           i = i + 1
+///       }
+///   }
+fn apply_annotations(ast: &mut haki_ast::SourceFile) {
+    // 1. Collect all annotation defs
+    let mut annot_defs: std::collections::HashMap<String, haki_ast::AnnotationDef> =
+        std::collections::HashMap::new();
+    for item in &ast.items {
+        if let haki_ast::ItemKind::AnnotationDef(def) = &item.kind {
+            annot_defs.insert(def.name.clone(), def.clone());
         }
     }
-    None
+    if annot_defs.is_empty() { return; }
+
+    // 2. Apply annotations to matching functions
+    for item in &mut ast.items {
+        if let haki_ast::ItemKind::Fn(f) = &mut item.kind {
+            let matching: Vec<haki_ast::Attribute> = f.attributes.iter()
+                .filter(|a| annot_defs.contains_key(&a.name))
+                .cloned()
+                .collect();
+            for attr in matching {
+                if let Some(def) = annot_defs.get(&attr.name) {
+                    // Build substituted body: replace __original__() calls
+                    // with a block containing the original function body.
+                    let original_body = f.body.clone();
+                    let new_body = substitute_original(&def.body, &original_body);
+                    f.body = new_body;
+                }
+            }
+        }
+    }
+
+    // 3. Remove AnnotationDef items — they don't need to be typechecked
+    ast.items.retain(|item| !matches!(&item.kind, haki_ast::ItemKind::AnnotationDef(_)));
+}
+
+/// Walk a block and replace every call to `__original__()` with
+/// a `Block` containing the original function body.
+fn substitute_original(template: &haki_ast::Block, original: &haki_ast::Block) -> haki_ast::Block {
+    let mut new_stmts = Vec::new();
+    for stmt in &template.stmts {
+        if is_original_call(stmt) {
+            // Inline the original body as a block statement
+            let block_expr = haki_ast::Expr {
+                kind: haki_ast::ExprKind::Block(Box::new(original.clone())),
+                span: stmt.span,
+            };
+            new_stmts.push(haki_ast::Stmt {
+                kind: haki_ast::StmtKind::Expr(Box::new(block_expr)),
+                span: stmt.span,
+            });
+        } else {
+            new_stmts.push(stmt.clone());
+        }
+    }
+    haki_ast::Block { stmts: new_stmts, span: template.span }
+}
+
+/// Check if a statement is a call to `__original__()`
+fn is_original_call(stmt: &haki_ast::Stmt) -> bool {
+    if let haki_ast::StmtKind::Expr(e) = &stmt.kind {
+        if let haki_ast::ExprKind::Call(callee, args) = &e.kind {
+            if args.is_empty() {
+                if let haki_ast::ExprKind::Ident(id) = &callee.kind {
+                    return id.name == "__original__";
+                }
+            }
+        }
+    }
+    false
 }
 
 // ── Formatter (hakic fmt) ─────────────────────────────────────────────────────
@@ -1064,6 +1234,7 @@ fn fmt_item(out: &mut String, item: &haki_ast::Item, src: &str) {
                 fmt_return_ty(out, ret);
             }
         }
+        ItemKind::AnnotationDef(_) => {} // erased before typecheck — no formatting needed
     }
 }
 
@@ -1614,6 +1785,12 @@ fn run_tests(source: &Path, quiet: bool) {
     let test_fns: Vec<String> = ast.items.iter().filter_map(|item| {
         if let haki_ast::ItemKind::Fn(f) = &item.kind {
             if f.name.name.starts_with("test_") && f.params.is_empty() {
+                // Skip functions marked @skip
+                let skipped = f.attributes.iter().any(|a| a.name == "skip");
+                if skipped {
+                    if !quiet { eprintln!("  skip  {} (@skip)", f.name.name); }
+                    return None;
+                }
                 return Some(f.name.name.clone());
             }
         }
@@ -1704,7 +1881,8 @@ fn run_tests(source: &Path, quiet: bool) {
             run:          false,
             run_args:     vec![],
             target_so:    false,
-            target_gtk:   false,
+            target_gtk:   false,            target_win32: false,
+
         };
 
         // Capture compile errors.
@@ -2101,7 +2279,8 @@ fn compile_and_run(args: RunArgs) {
                 run:          args.run,
                 run_args:     args.run_args.clone(),
                 target_so:    false,
-                target_gtk:   false,
+                target_gtk:   false,            target_win32: false,
+
             };
             compile_and_run(c_args);
             return;
@@ -2112,7 +2291,9 @@ fn compile_and_run(args: RunArgs) {
     // Must happen before C emission — IR always contains these as registered builtins
     let src_text = fs::read_to_string(&args.source).unwrap_or_default();
     let uses_http = src_text.contains("HttpServer") || src_text.contains("HttpRequest")
-                  || src_text.contains("haki_http_server_new");
+                  || src_text.contains("haki_http_server_new")
+                  || src_text.contains("std/http") || src_text.contains("haki_http_client");
+    let uses_sys  = src_text.contains("std/sys") || src_text.contains("haki_sys_run");
     let uses_ui   = src_text.contains("haki_app_run") || src_text.contains("haki_gtk_create_window")
                   || src_text.contains("ui.button") || src_text.contains("ui.text")
                   || src_text.contains("ui.column") || src_text.contains("ui.row")
@@ -2157,6 +2338,10 @@ fn compile_and_run(args: RunArgs) {
             merged_ast.items.push(item.clone());
         }
     }
+
+    // ── Annotation desugaring pass ───────────────────────────────────────
+    // Collect annotation definitions and apply them to annotated functions.
+    apply_annotations(&mut merged_ast);
 
     // ── Typeck ────────────────────────────────────────────────────────────
     let mut sym = haki_typeck::SymbolTable::new();
@@ -2212,7 +2397,12 @@ fn compile_and_run(args: RunArgs) {
     } else {
         match haki_codegen::emit_ir(&mono, &stem) {
             Ok(ir) => ir,
-            Err(e) => { eprintln!("hakic: {e}"); process::exit(1); }
+            Err(e) => {
+                // Unknown type/function in LLVM codegen (e.g. Chan, TaskGroup) —
+                // fall back to the C emitter path which handles these via intercepts.
+                if !quiet { eprintln!("hakic: [codegen fallback to C emit: {e}]"); }
+                String::new() // signal: use C emit path
+            }
         }
     };
     #[cfg(not(target_os = "windows"))]
@@ -2221,6 +2411,82 @@ fn compile_and_run(args: RunArgs) {
     // ── Write IR (non-Windows only) ───────────────────────────────────────────
     #[cfg(not(target_os = "windows"))]
     {
+        // Empty ir means codegen fell back — use C emit path instead
+        if ir.is_empty() {
+            // Force the C emit path by acting as if --emit-c was requested
+            let c_result = if uses_http {
+                // Unity build: embed full RUNTIME_C_SOURCE in user.c to avoid
+                // struct conflicts between user.c and runtime.c
+                haki_cemit::emit_c_http_unity(&mono, Some(args.source.to_str().unwrap_or("")))
+            } else {
+                haki_cemit::emit_c(&mono, Some(args.source.to_str().unwrap_or("")))
+            };
+            match c_result {
+                Ok(c_src) => {
+                    let c_path = work_dir.join(format!("{stem}.c"));
+                    if let Err(e) = fs::write(&c_path, &c_src) {
+                        eprintln!("hakic: cannot write C source: {e}"); process::exit(1);
+                    }
+                    let out_path = args.output.clone().unwrap_or_else(|| {
+                        if args.run { work_dir.join(&stem) }
+                        else { args.source.parent().unwrap_or(Path::new(".")).join(&stem) }
+                    });
+                    let cc = find_tool(&["gcc", "cc", "clang", "clang-17"]);
+                    let mut cmd = std::process::Command::new(&cc);
+                    cmd.arg("-O2");
+                    // Compiler defines first, then sources, then libraries
+                    if uses_http {
+                        cmd.arg("-DHAKI_BUILD_HTTP");
+                        // Also enable MHD server code if libmicrohttpd is available
+                        let mhd_avail = std::process::Command::new("pkg-config")
+                            .args(["--exists", "libmicrohttpd"])
+                            .status().map(|s| s.success()).unwrap_or(false);
+                        if mhd_avail { cmd.arg("-DHAKI_MHD_SERVER"); }
+                    }
+
+                    cmd.arg(c_path.to_str().unwrap());
+
+                    // HTTP unity build: RUNTIME_C_SOURCE embedded in user.c — no separate runtime.c.
+
+                    // sys runtime (no MHD dependency)
+                    if uses_sys {
+                        let sys_c = work_dir.join("haki_sys_runtime.c");
+                        let _ = fs::write(&sys_c, haki_stdlib::SYS_RUNTIME_C_SOURCE);
+                        cmd.arg(sys_c.to_str().unwrap());
+                    }
+
+                    cmd.args(["-o", out_path.to_str().unwrap()]);
+
+                    // Libraries last
+                    cmd.args(["-lpthread", "-lm"]);
+                    if uses_http {
+                        let curl_libs = std::process::Command::new("pkg-config")
+                            .args(["--libs", "libcurl"]).output().ok()
+                            .and_then(|o| if o.status.success() { String::from_utf8(o.stdout).ok() } else { None })
+                            .unwrap_or_else(|| "-lcurl\n".into())
+                            .trim().to_string();
+                        for f in curl_libs.split_whitespace() { cmd.arg(f); }
+                        let mhd_libs = std::process::Command::new("pkg-config")
+                            .args(["--libs", "libmicrohttpd"]).output().ok()
+                            .and_then(|o| if o.status.success() { String::from_utf8(o.stdout).ok() } else { None })
+                            .unwrap_or_default().trim().to_string();
+                        if !mhd_libs.is_empty() {
+                            for f in mhd_libs.split_whitespace() { cmd.arg(f); }
+                        }
+                    }
+                    run_step(&mut cmd, "gcc");
+                    if args.run {
+                        let status = std::process::Command::new(&out_path).status();
+                        match status {
+                            Ok(s) => process::exit(s.code().unwrap_or(0)),
+                            Err(e) => { eprintln!("hakic: {e}"); process::exit(1); }
+                        }
+                    }
+                    return;
+                }
+                Err(e) => { eprintln!("hakic: {e}"); process::exit(1); }
+            }
+        }
         if let Err(e) = fs::write(&ir_path, &ir) {
             eprintln!("hakic: cannot write IR: {e}"); process::exit(1);
         }
@@ -2292,16 +2558,46 @@ fn compile_and_run(args: RunArgs) {
                 // Combined with #line directives, gives source-level debugging in lldb/gdb.
                 let debug_flag = args.emit_c; // reuse emit_c; in v2.8 add proper --debug flag
                 let base_flags: Vec<&str> = if is_so {
-                    vec!["-std=gnu11", "-O2", "-shared", "-fPIC", "-lpthread", "-lm"]
+                    vec!["-std=gnu11", "-O2", "-shared", "-fPIC", "-lpthread", "-lm",
+                         "-Wno-parentheses", "-Wno-unused-value"]
                 } else if debug_flag {
-                    vec!["-std=gnu11", "-g", "-O0", "-lpthread", "-lm"]
+                    vec!["-std=gnu11", "-g", "-O0", "-lpthread", "-lm",
+                         "-Wno-parentheses", "-Wno-unused-value"]
                 } else {
-                    vec!["-std=gnu11", "-O2", "-lpthread", "-lm"]
+                    vec!["-std=gnu11", "-O2", "-lpthread", "-lm",
+                         "-Wno-parentheses", "-Wno-unused-value"]
                 };
 
                 // Write the GTK UI runtime C file alongside the user C if targeting GTK
                 // When targeting GTK, prepend forward declarations for all GTK platform
                 // functions so the user C compiles before the GTK runtime C is linked.
+                // Win32 UI backend — compile haki_ui_win32.c alongside program
+                if args.target_win32 {
+                    // Prepend Win32 function forward declarations
+                    let win32_decls = "#define WIN32_LEAN_AND_MEAN
+#define UNICODE
+#include <windows.h>
+#include <stdint.h>
+void haki_platform_run(void);
+void haki_set_rerender_fn(void* closure);
+void haki_register_callback(int64_t id, void* closure);
+void haki_trigger_rerender(void);
+int64_t haki_gtk_create_window(const char* t, int64_t w, int64_t h);
+int64_t haki_gtk_create_label(int64_t p, const char* t);
+int64_t haki_gtk_create_button(int64_t p, const char* l, int64_t id);
+int64_t haki_gtk_create_box(int64_t p, int64_t h);
+void haki_gtk_set_text(int64_t id, const char* t);
+void haki_gtk_set_visible(int64_t id, int64_t v);
+void haki_gtk_insert_child(int64_t p, int64_t i, int64_t c);
+void haki_gtk_remove_child(int64_t id);
+int64_t haki_gtk_alloc_node_id(void);
+void haki_gtk_register_node(int64_t v, int64_t g);
+
+";
+                    let c_src = format!("{win32_decls}
+{c_src}");
+                }
+
                 if args.target_gtk {
                     let decls = concat!(
                         "#include <stdint.h>
@@ -2350,6 +2646,12 @@ fn compile_and_run(args: RunArgs) {
                 let gtk_runtime_path = if args.target_gtk {
                     let p = work_dir.join("haki_ui_gtk_runtime.c");
                     let _ = fs::write(&p, haki_stdlib::UI_RUNTIME_C_SOURCE);
+                    Some(p)
+                } else { None };
+
+                let win32_runtime_path = if args.target_win32 {
+                    let p = work_dir.join("haki_ui_win32.c");
+                    let _ = fs::write(&p, haki_stdlib::UI_RUNTIME_WIN32_C_SOURCE);
                     Some(p)
                 } else { None };
 
@@ -2428,26 +2730,42 @@ fn compile_and_run(args: RunArgs) {
                     let mut cmd = std::process::Command::new("gcc");
                     cmd.args(&base_flags)
                        .arg(c_path.to_str().unwrap());
-                    // Add runtime C for HTTP programs (microhttpd compat functions)
+                    // Add runtime C for HTTP programs — ensure it's written and compiled in
                     if uses_http {
-                        // Ensure runtime_c exists (may not if this is a recursive C backend call)
+                        // Write runtime C to work_dir if not already there
                         if !runtime_c.exists() {
-                            let _ = fs::write(&runtime_c, haki_stdlib::RUNTIME_C_SOURCE);
+                            if let Err(e) = fs::write(&runtime_c, haki_stdlib::RUNTIME_C_SOURCE) {
+                                eprintln!("hakic: cannot write HTTP runtime: {e}");
+                                process::exit(1);
+                            }
                         }
                         cmd.arg(runtime_c.to_str().unwrap());
-                        // Add microhttpd include + lib paths
-                        let mhd_prefix = std::process::Command::new("brew")
+                        // Resolve microhttpd paths
+                        let mhd_prefix = std::process::Command::new("pkg-config")
+                            .args(["--libs-only-L", "libmicrohttpd"])
+                            .output()
+                            .ok()
+                            .and_then(|o| String::from_utf8(o.stdout).ok())
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or_else(|| {
+                                std::process::Command::new("brew")
+                                    .args(["--prefix", "libmicrohttpd"])
+                                    .output()
+                                    .ok()
+                                    .and_then(|o| String::from_utf8(o.stdout).ok())
+                                    .map(|s| format!("-L{}/lib", s.trim()))
+                                    .unwrap_or_default()
+                            });
+                        let mhd_inc = std::process::Command::new("brew")
                             .args(["--prefix", "libmicrohttpd"])
                             .output()
                             .ok()
                             .and_then(|o| String::from_utf8(o.stdout).ok())
-                            .unwrap_or_default()
-                            .trim()
-                            .to_string();
-                        if !mhd_prefix.is_empty() {
-                            cmd.arg(format!("-I{mhd_prefix}/include"));
-                            cmd.arg(format!("-L{mhd_prefix}/lib"));
-                        }
+                            .map(|s| format!("-I{}/include", s.trim()))
+                            .unwrap_or_default();
+                        if !mhd_inc.is_empty() { cmd.arg(&mhd_inc); }
+                        if !mhd_prefix.is_empty() { cmd.arg(&mhd_prefix); }
                         cmd.arg("-lmicrohttpd");
                     }
                     if let Some(ref gtk_c) = gtk_runtime_path {
@@ -2458,6 +2776,18 @@ fn compile_and_run(args: RunArgs) {
                         cmd.args(gtk_includes_macos_owned.iter().map(|s| s.as_str()));
                         cmd.arg(gtk_c.to_str().unwrap());
                         cmd.args(gtk_libs_owned.iter().map(|s| s.as_str()));
+                    }
+                    // std/sys runtime
+                    if uses_sys {
+                        let sys_c = work_dir.join("haki_sys_runtime.c");
+                        let _ = fs::write(&sys_c, haki_stdlib::SYS_RUNTIME_C_SOURCE);
+                        cmd.arg(sys_c.to_str().unwrap());
+                    }
+
+                    // Win32 UI: add win32 runtime + link user32/comctl32
+                    if let Some(ref win32_c) = win32_runtime_path {
+                        cmd.arg(win32_c.to_str().unwrap());
+                        cmd.args(["-luser32", "-lcomctl32", "-lgdi32", "-mwindows"]);
                     }
                     cmd.arg("-o").arg(out_path.to_str().unwrap())
                        .args(&link_libs);
@@ -2512,11 +2842,11 @@ fn compile_and_run(args: RunArgs) {
     // Detect HTTP usage from source and IR
     // Detect HTTP: check source file, IR, and use a broad scan
     // Use HTTP runtime only if program uses HTTP (avoids microhttpd dependency)
-    let runtime_src = if uses_http {
-        haki_stdlib::RUNTIME_C_SOURCE
-    } else {
-        haki_stdlib::CORE_RUNTIME_C_SOURCE
-    };
+    // Always use full RUNTIME_C_SOURCE so sys/chan/http functions are available.
+    // curl symbols are gated by #if HAKI_BUILD_HTTP in the source.
+    let runtime_src = haki_stdlib::RUNTIME_C_SOURCE;
+    // Always rewrite runtime_c so the .o gets recompiled with the correct curl config
+    let _ = fs::remove_file(&runtime_obj);
     if let Err(e) = fs::write(&runtime_c, runtime_src) {
         eprintln!("hakic: cannot write runtime: {e}"); process::exit(1);
     }
@@ -2553,6 +2883,7 @@ fn compile_and_run(args: RunArgs) {
             run_args:     args.run_args.clone(),
             target_so:    args.target_so,
             target_gtk:   args.target_gtk,
+            target_win32: false,
         };
         compile_and_run(c_args);
         return;
@@ -2574,6 +2905,26 @@ fn compile_and_run(args: RunArgs) {
     let cc = find_tool(&["gcc", "cc", "clang", "clang-17"]);
     let mut runtime_cmd = Command::new(&cc);
     runtime_cmd.args(["-c", runtime_c.to_str().unwrap(), "-o", runtime_obj.to_str().unwrap()]);
+    // Enable curl and MHD in runtime for HTTP programs
+    if uses_http {
+        runtime_cmd.arg("-DHAKI_BUILD_HTTP");
+        // Enable MHD server code if libmicrohttpd is available
+        let mhd_available = std::process::Command::new("pkg-config")
+            .args(["--exists", "libmicrohttpd"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if mhd_available {
+            runtime_cmd.arg("-DHAKI_MHD_SERVER");
+        }
+        // Write a shared HTTP types header so runtime.c and user.c use identical struct layouts
+        let http_types_h = work_dir.join("haki_http_types.h");
+        let http_types_content = haki_cemit::SO_HTTP_TYPES;
+        let _ = fs::write(&http_types_h, http_types_content);
+        // Tell runtime.c to skip its own type defs and use the shared header instead
+        runtime_cmd.arg("-DHAKI_HTTP_TYPES_DEFINED");
+        runtime_cmd.arg(format!("-I{}", work_dir.display()));
+    }
     // Add microhttpd include path if needed
     if uses_http {
         // Try pkg-config first, fall back to brew prefix

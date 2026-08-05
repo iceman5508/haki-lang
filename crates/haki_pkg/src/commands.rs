@@ -283,3 +283,39 @@ fn copy_dir_all(src: &Path, dst: &Path) -> PkgResult<()> {
     }
     Ok(())
 }
+
+/// `hakic pkg publish` — publish package to pkg.haki-lang.org registry.
+///
+/// In v3.7 this is a stub that validates the manifest and shows what would be published.
+/// Full registry integration ships in v4.0 when pkg.haki-lang.org is live.
+pub fn cmd_publish(project_dir: &Path) -> PkgResult<()> {
+    let manifest = crate::manifest::HakiJson::read(project_dir)?;
+
+    // Validate required fields
+    manifest.validate_for_publish()
+        .map_err(|e| crate::PkgError::Manifest(e))?;
+
+    eprintln!("hakic pkg: validating {}@{}", manifest.name, manifest.version);
+    eprintln!();
+    eprintln!("  name:        {}", manifest.name);
+    eprintln!("  version:     {}", manifest.version);
+    eprintln!("  description: {}", manifest.description);
+    eprintln!("  license:     {}", manifest.license);
+    if !manifest.author.is_empty() {
+        eprintln!("  author:      {}", manifest.author);
+    }
+    if !manifest.repository.is_empty() {
+        eprintln!("  repository:  {}", manifest.repository);
+    }
+    if !manifest.keywords.is_empty() {
+        eprintln!("  keywords:    {}", manifest.keywords.join(", "));
+    }
+    eprintln!("  deps:        {}", manifest.dependencies.len());
+    eprintln!();
+    eprintln!("pkg.haki-lang.org registry launches with v4.0.");
+    eprintln!("Run `hakic pkg publish` again after v4.0 to push to the registry.");
+    eprintln!();
+    eprintln!("✓  manifest valid — ready for v4.0 registry submission");
+
+    Ok(())
+}

@@ -119,6 +119,9 @@ fn emitExpr(e: compiler.Expr, depth: int, sc: tinfer.Scope, sym: typeck.SymTable
         EBool(b)            { yield "bool" }
         ENull               { yield "null" }
         EString(s)          { yield "string" }
+        EFStr(segs)         { yield "fstr" }
+        ETry(inner)         { yield "try" }
+        ENamedCall(n, args) { yield "namedcall" }
         EIdent(n)           { yield "ident" }
         EUnary(op, inner)   { yield "unary" }
         EBinary(op, l, r)   { yield "binary" }
@@ -144,6 +147,23 @@ fn emitExpr(e: compiler.Expr, depth: int, sc: tinfer.Scope, sym: typeck.SymTable
     }
     if tag == "null"   { return "NULL" }
     if tag == "string" {
+        // f-string: emit as haki_string_concat chain
+        if exprTag == "fstr" {
+            const segs = match e { EFStr(segs) { yield segs } _ { yield compiler.emptyExprs() } }
+            if segs.length == 0 { return """" }
+            let r = emitExpr(segs[0], depth, sc, sym)
+            let i = 1
+            while i < segs.length {
+                r = "haki_string_concat(" + r + ", " + emitExpr(segs[i], depth, sc, sym) + ")"
+                i = i + 1
+            }
+            return r
+        }
+        // try desugaring: emitted as __try_val from desugar (handled by compiler driver)
+        if exprTag == "try" {
+            const inner = match e { ETry(inner) { yield inner } _ { yield compiler.nullExpr() } }
+            return emitExpr(inner, depth, sc, sym)
+        }
         const s = match e { EString(s) { yield s } _ { yield "" } }
         return "\"" + escapeStr(s) + "\""
     }
@@ -389,8 +409,10 @@ fn emitStmt(stmt: compiler.Stmt, depth: int, sc: tinfer.Scope, sym: typeck.SymTa
         SContinue               { yield "continue" }
         SBreak                  { yield "break" }
         SExpr(e)                { yield "expr" }
-        SAssign(target, val)    { yield "assign" }
-        SIf(c, th, el)          { yield "if" }
+        SAssign(target, val)             { yield "assign" }
+        SCompoundAssign(target, op, val) { yield "compound" }
+        SAnnotated(attrs, inner)         { yield "annotated" }
+        SIf(c, th, el)                   { yield "if" }
         SWhile(cond, body)      { yield "while" }
         SFor(v, iter, body)     { yield "for" }
     }
@@ -441,6 +463,20 @@ fn emitStmt(stmt: compiler.Stmt, depth: int, sc: tinfer.Scope, sym: typeck.SymTa
         const target = match stmt { SAssign(t, v) { yield t } _ { yield compiler.nullExpr() } }
         const val    = match stmt { SAssign(t, v) { yield v } _ { yield compiler.nullExpr() } }
         return ind + emitExpr(target, depth, sc, sym) + " = " + emitExpr(val, depth, sc, sym) + ";\n"
+    }
+
+    if tag == "compound" {
+        const target = match stmt { SCompoundAssign(t, op, v) { yield t }  _ { yield compiler.nullExpr() } }
+        const op     = match stmt { SCompoundAssign(t, op, v) { yield op } _ { yield "+" } }
+        const val    = match stmt { SCompoundAssign(t, op, v) { yield v }  _ { yield compiler.nullExpr() } }
+        const te = emitExpr(target, depth, sc, sym)
+        const ve = emitExpr(val, depth, sc, sym)
+        return ind + te + " = " + te + " " + op + " " + ve + ";\n"
+    }
+
+    if tag == "annotated" {
+        const inner = match stmt { SAnnotated(attrs, s) { yield s } _ { yield SBreak } }
+        return emitStmt(inner, depth, sc, sym)
     }
 
     if tag == "if" {

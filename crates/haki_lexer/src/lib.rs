@@ -57,6 +57,7 @@ pub enum TokenKind {
     Continue,
     Break,
 
+    Annotation,
     True,
     False,
     Null,
@@ -140,6 +141,7 @@ impl TokenKind {
             "import"   => Some(TokenKind::Import),
             "defer"    => Some(TokenKind::Defer),
             "extern"   => Some(TokenKind::Extern),
+            "annotation" => Some(TokenKind::Annotation),
             "enum"     => Some(TokenKind::Enum),
             "try"      => Some(TokenKind::Try),
             "continue" => Some(TokenKind::Continue),

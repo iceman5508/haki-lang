@@ -160,11 +160,8 @@ int64_t haki_gtk_create_box(int64_t parent_id, int64_t horizontal) {
 
 void haki_gtk_set_text(int64_t node_id, const char* text) {
     GtkWidget* w = node_get(node_id);
-    fprintf(stderr, "[haki_ui] set_text: node_id=%lld widget=%p text=%s\n",
             (long long)node_id, (void*)w, text ? text : "(null)");
-    if (!w) { fprintf(stderr, "[haki_ui] set_text: WIDGET NOT FOUND\n"); return; }
     if (GTK_IS_LABEL(w)) {
-        fprintf(stderr, "[haki_ui] set_text: IS_LABEL, updating\n");
         gtk_label_set_text(GTK_LABEL(w), text);
         gtk_widget_queue_draw(w);
     }
@@ -204,7 +201,6 @@ void haki_gtk_remove_child(int64_t node_id) {
 // GTK button-clicked signal calls haki_fire_callback(id).
 
 void haki_register_callback(int64_t node_id, void* closure) {
-    fprintf(stderr, "[haki_ui] register_callback: node_id=%lld closure=%p\n",
             (long long)node_id, closure);
     if (node_id > 0 && node_id < HAKI_MAX_CALLBACKS)
         g_callbacks_fwd[node_id] = closure;
@@ -212,7 +208,6 @@ void haki_register_callback(int64_t node_id, void* closure) {
 
 int64_t haki_gtk_alloc_node_id_debug(void) {
     int64_t id = g_next_id++;
-    fprintf(stderr, "[haki_ui] alloc_node_id: %lld\n", (long long)id);
     return id;
 }
 
@@ -220,7 +215,6 @@ int64_t haki_gtk_alloc_node_id_debug(void) {
 // Used for buttons so their id is known before widget creation
 int64_t haki_gtk_alloc_node_id(void) {
     int64_t id = g_next_id++;
-    fprintf(stderr, "[haki_ui] alloc_node_id → %lld\n", (long long)id);
     return id;
 }
 
@@ -233,7 +227,6 @@ int64_t haki_gtk_peek_next_id(void) {
 static int64_t g_marked_label_id = 0;
 void haki_gtk_mark_label(int64_t node_id) {
     if (g_marked_label_id == 0) g_marked_label_id = node_id;
-    fprintf(stderr, "[haki_ui] mark_label: %lld\n", (long long)node_id);
 }
 int64_t haki_gtk_get_label_id(void) {
     return g_marked_label_id;
@@ -253,27 +246,22 @@ static int64_t   g_label_node_id = 0;
 
 void haki_set_rerender_callback(int64_t label_id, void* closure) {
     g_label_node_id = label_id;
-    fprintf(stderr, "[haki_ui] set_rerender: label_id=%lld closure=%p\n",
             (long long)label_id, closure);
     if (closure) {
         void** fat = (void**)closure;
-        fprintf(stderr, "[haki_ui] rerender fat[0]=%p fat[1]=%p\n", fat[0], fat[1]);
         g_rerender_fn  = (HakiStrFn)fat[0];
         g_rerender_env = fat[1];
     }
 }
 
 static void do_rerender_debug(void) {
-    fprintf(stderr, "[haki_ui] do_rerender: fn=%p env=%p label=%lld\n",
             (void*)g_rerender_fn, g_rerender_env, (long long)g_label_node_id);
 }
 
 static void do_rerender(void) {
-    fprintf(stderr, "[haki_ui] do_rerender called: fn=%p label=%lld\n",
             (void*)g_rerender_fn, (long long)g_label_node_id);
     if (!g_rerender_fn || !g_label_node_id) return;
     const char* new_text = g_rerender_fn(g_rerender_env);
-    fprintf(stderr, "[haki_ui] new_text=%s\n", new_text ? new_text : "(null)");
     if (new_text) haki_gtk_set_text(g_label_node_id, new_text);
 }
 
@@ -296,4 +284,183 @@ void haki_app_run(const char* json, const char* title, int64_t width, int64_t he
     // Haki will call haki_platform_run() after mounting the VNode tree
     // For backwards compat: if no VNode tree is mounted, just run the loop
     haki_platform_run();
+}
+
+// ── v3.4: Node ID registry ───────────────────────────────────────────────────
+// Maps VNode.id (Haki integer) to GTK widget pointer
+// Used by applyMutation to find the widget for a given node_id
+
+#define HAKI_NODE_REGISTRY_SIZE 8192
+static GtkWidget* g_node_registry[HAKI_NODE_REGISTRY_SIZE];
+
+void haki_gtk_register_node(int64_t vnode_id, int64_t gtk_id) {
+    if (vnode_id >= 0 && vnode_id < HAKI_NODE_REGISTRY_SIZE) {
+        // gtk_id is actually the node_id we assigned — map vnode→widget
+        if (gtk_id >= 0 && gtk_id < HAKI_MAX_NODES) {
+            g_node_registry[vnode_id] = g_node_id_map[gtk_id];
+        }
+    }
+}
+
+// ── v3.4: Diff-engine rerender fn ────────────────────────────────────────────
+// The new rerender path: a void fn() closure called on every state change.
+// Unlike the old path which only updated one label, this calls the full diff cycle.
+
+typedef void (*HakiVoidFn)(void*);
+static HakiVoidFn g_rerender_void_fn  = NULL;
+static void*      g_rerender_void_env = NULL;
+
+void haki_set_rerender_fn(void* closure) {
+    if (closure) {
+        void** fat = (void**)closure;
+        g_rerender_void_fn  = (HakiVoidFn)fat[0];
+        g_rerender_void_env = fat[1];
+    }
+}
+
+static gboolean haki_idle_rerender(gpointer data) {
+    (void)data;
+    if (g_rerender_void_fn) {
+        g_rerender_void_fn(g_rerender_void_env);
+    }
+    return G_SOURCE_REMOVE;  // run once
+}
+
+// Called from Haki State.set() path via button click handler
+void haki_trigger_rerender(void) {
+    if (g_rerender_void_fn) {
+        g_idle_add(haki_idle_rerender, NULL);
+    }
+}
+
+// ── v3.4: set_callback (for diff mutations) ───────────────────────────────────
+void haki_gtk_set_callback(int64_t node_id, int64_t cb_id) {
+    (void)node_id; (void)cb_id;
+    // Callback re-registration — for now a no-op as callbacks are stable
+    // Full implementation in v3.5 with callback registry refresh
+}
+
+// ── v3.4: New widgets ─────────────────────────────────────────────────────────
+
+// TextField — single-line text input
+int64_t haki_gtk_create_text_field(int64_t parent_id, const char* placeholder, int64_t node_id) {
+    int64_t id = haki_gtk_alloc_node_id();
+    if (id >= HAKI_MAX_NODES) return -1;
+    GtkWidget* entry = gtk_entry_new();
+    if (placeholder && placeholder[0]) {
+        gtk_entry_set_placeholder_text(GTK_ENTRY(entry), placeholder);
+    }
+    g_node_id_map[id] = entry;
+    if (parent_id > 0 && parent_id < HAKI_MAX_NODES && g_node_id_map[parent_id]) {
+        GtkWidget* parent = g_node_id_map[parent_id];
+        if (GTK_IS_CONTAINER(parent)) {
+            gtk_container_add(GTK_CONTAINER(parent), entry);
+        }
+    } else if (g_window) {
+        gtk_container_add(GTK_CONTAINER(g_window), entry);
+    }
+    gtk_widget_show(entry);
+    return id;
+}
+
+// Checkbox — toggle with label
+int64_t haki_gtk_create_checkbox(int64_t parent_id, const char* label, int64_t checked, int64_t node_id) {
+    int64_t id = haki_gtk_alloc_node_id();
+    if (id >= HAKI_MAX_NODES) return -1;
+    GtkWidget* cb = gtk_check_button_new_with_label(label ? label : "");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(cb), checked ? TRUE : FALSE);
+    g_node_id_map[id] = cb;
+    // Connect toggled signal to callback dispatcher
+    g_signal_connect(cb, "toggled", G_CALLBACK(haki_button_clicked), (gpointer)(intptr_t)node_id);
+    if (parent_id > 0 && parent_id < HAKI_MAX_NODES && g_node_id_map[parent_id]) {
+        GtkWidget* parent = g_node_id_map[parent_id];
+        if (GTK_IS_CONTAINER(parent)) {
+            gtk_container_add(GTK_CONTAINER(parent), cb);
+        }
+    }
+    gtk_widget_show(cb);
+    return id;
+}
+
+// Dropdown — combo box
+int64_t haki_gtk_create_dropdown(int64_t parent_id, const char* options_csv, int64_t node_id) {
+    int64_t id = haki_gtk_alloc_node_id();
+    if (id >= HAKI_MAX_NODES) return -1;
+    GtkWidget* combo = gtk_combo_box_text_new();
+    // options_csv is comma-separated list of option strings
+    if (options_csv && options_csv[0]) {
+        char* buf = strdup(options_csv);
+        char* tok = strtok(buf, ",");
+        while (tok) {
+            gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(combo), tok);
+            tok = strtok(NULL, ",");
+        }
+        free(buf);
+    }
+    gtk_combo_box_set_active(GTK_COMBO_BOX(combo), 0);
+    g_node_id_map[id] = combo;
+    g_signal_connect(combo, "changed", G_CALLBACK(haki_button_clicked), (gpointer)(intptr_t)node_id);
+    if (parent_id > 0 && parent_id < HAKI_MAX_NODES && g_node_id_map[parent_id]) {
+        GtkWidget* parent = g_node_id_map[parent_id];
+        if (GTK_IS_CONTAINER(parent)) {
+            gtk_container_add(GTK_CONTAINER(parent), combo);
+        }
+    }
+    gtk_widget_show(combo);
+    return id;
+}
+
+// Image — GtkImage from file path
+int64_t haki_gtk_create_image(int64_t parent_id, const char* path, int64_t w, int64_t h) {
+    int64_t id = haki_gtk_alloc_node_id();
+    if (id >= HAKI_MAX_NODES) return -1;
+    GtkWidget* img;
+    if (w > 0 && h > 0) {
+        GdkPixbuf* pb = gdk_pixbuf_new_from_file_at_scale(path, (int)w, (int)h, TRUE, NULL);
+        img = pb ? gtk_image_new_from_pixbuf(pb) : gtk_image_new_from_file(path);
+    } else {
+        img = gtk_image_new_from_file(path);
+    }
+    g_node_id_map[id] = img;
+    if (parent_id > 0 && parent_id < HAKI_MAX_NODES && g_node_id_map[parent_id]) {
+        GtkWidget* parent = g_node_id_map[parent_id];
+        if (GTK_IS_CONTAINER(parent)) {
+            gtk_container_add(GTK_CONTAINER(parent), img);
+        }
+    }
+    gtk_widget_show(img);
+    return id;
+}
+
+// ── v3.4: Layout ─────────────────────────────────────────────────────────────
+
+// Set padding on a widget (via GTK margin properties)
+void haki_gtk_set_padding(int64_t node_id, int64_t px) {
+    if (node_id < 0 || node_id >= HAKI_MAX_NODES || !g_node_id_map[node_id]) return;
+    GtkWidget* w = g_node_id_map[node_id];
+    gtk_widget_set_margin_start(w, (gint)px);
+    gtk_widget_set_margin_end(w, (gint)px);
+    gtk_widget_set_margin_top(w, (gint)px);
+    gtk_widget_set_margin_bottom(w, (gint)px);
+}
+
+// Set spacing on a GtkBox
+void haki_gtk_set_spacing(int64_t node_id, int64_t px) {
+    if (node_id < 0 || node_id >= HAKI_MAX_NODES || !g_node_id_map[node_id]) return;
+    GtkWidget* w = g_node_id_map[node_id];
+    if (GTK_IS_BOX(w)) gtk_box_set_spacing(GTK_BOX(w), (gint)px);
+}
+
+// Set alignment on a widget
+void haki_gtk_set_alignment(int64_t node_id, const char* align) {
+    if (node_id < 0 || node_id >= HAKI_MAX_NODES || !g_node_id_map[node_id]) return;
+    GtkWidget* w = g_node_id_map[node_id];
+    GtkAlign a = GTK_ALIGN_START;
+    if (align) {
+        if (strcmp(align, "center") == 0) a = GTK_ALIGN_CENTER;
+        else if (strcmp(align, "end") == 0) a = GTK_ALIGN_END;
+        else if (strcmp(align, "fill") == 0) a = GTK_ALIGN_FILL;
+    }
+    gtk_widget_set_halign(w, a);
+    gtk_widget_set_valign(w, a);
 }

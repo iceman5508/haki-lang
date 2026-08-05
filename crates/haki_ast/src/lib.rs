@@ -203,6 +203,19 @@ pub enum ItemKind {
     /// `extern "js" fn name(params) -> RetTy`
     /// No body — emits as a Wasm import from module "env".
     ExternFn(ExternFnDef),
+    /// `annotation @retry(times: int, delay: int) { ... }`
+    /// User-defined annotation that wraps target function bodies.
+    AnnotationDef(AnnotationDef),
+}
+
+/// A user-defined annotation declaration.
+/// `annotation @name(params) { body_template }` where `__original__()` is the yield point.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnnotationDef {
+    pub name:   String,
+    pub params: Vec<Param>,
+    pub body:   Block,
+    pub span:   Span,
 }
 
 /// An extern function declaration — a function provided by the host environment.

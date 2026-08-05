@@ -1,8 +1,8 @@
 {
   "name": "haki-language",
   "displayName": "Haki",
-  "description": "Haki language support: diagnostics, hover, go-to-definition (cross-file), completions, signature help, find references, rename, document symbols",
-  "version": "0.2.0",
+  "description": "Haki language support \u2014 v3.5 (f-strings, @annotations, channels, try, Map iteration)",
+  "version": "0.3.0",
   "publisher": "haki-lang",
   "license": "MIT",
   "repository": {

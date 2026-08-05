@@ -163,6 +163,22 @@ impl Parser {
         }
     }
 
+    /// Like `expect_ident` but also accepts `_` as a discard identifier.
+    fn expect_ident_or_underscore(&mut self) -> Result<Ident, ParseError> {
+        let span = self.current_span();
+        match self.peek_kind().clone() {
+            TokenKind::Ident(name) => {
+                self.advance();
+                Ok(Ident::new(name, span))
+            }
+            TokenKind::Under => {
+                self.advance();
+                Ok(Ident::new("_", span))
+            }
+            _ => Err(ParseError::expected("identifier or _", self.peek_kind(), span)),
+        }
+    }
+
     /// Like `expect_ident` but also accepts `Self` as a keyword-identifier.
     #[allow(dead_code)]
     fn expect_ident_or_self(&mut self) -> Result<Ident, ParseError> {
@@ -244,6 +260,7 @@ impl Parser {
                                 | TokenKind::Class
                                 | TokenKind::Enum
                                 | TokenKind::Protocol
+                | TokenKind::Annotation
                                 | TokenKind::Impl
                                 | TokenKind::Import
                                 | TokenKind::Eof => return,
@@ -288,6 +305,7 @@ impl Parser {
             TokenKind::Impl     => ItemKind::Impl(self.parse_impl()?),
             TokenKind::Fn       => ItemKind::Fn(self.parse_fn_def_with_attrs(attributes)?),
             TokenKind::Extern   => ItemKind::ExternFn(self.parse_extern_fn_with_attrs(attributes)?),
+            TokenKind::Annotation => ItemKind::AnnotationDef(self.parse_annotation_def()?),
             _ => {
                 if !attributes.is_empty() {
                     return Err(ParseError::expected(
@@ -1108,11 +1126,11 @@ impl Parser {
 
     fn parse_for_stmt(&mut self) -> Result<StmtKind, ParseError> {
         self.expect(&TokenKind::For)?;
-        let first = self.expect_ident()?;
+        let first = self.expect_ident_or_underscore()?;
         // `for i, v in` — two variables: index then element
         let (index_var, var) = if matches!(self.peek_kind(), TokenKind::Comma) {
             self.advance(); // consume `,`
-            let v = self.expect_ident()?;
+            let v = self.expect_ident_or_underscore()?;
             (Some(first), v)
         } else {
             (None, first)
@@ -1683,6 +1701,38 @@ impl Parser {
                 let ident = Ident::new(name, Span::new(lo, self.current_span().hi));
                 self.advance();
 
+                // Generic constructor: `Type<T>(field: val)` or `Type<T>(val)`
+                // Disambiguate: `<` followed by type name followed by `>` then `(`
+                if matches!(self.peek_kind(), TokenKind::Lt) {
+                    // Speculatively try to parse type args
+                    let saved_pos = self.pos;
+                    if let Ok(type_args) = self.try_parse_type_args_for_constructor() {
+                        if matches!(self.peek_kind(), TokenKind::LParen) {
+                            self.advance(); // consume `(`
+                            let (named, positional) = self.parse_call_args_mixed()?;
+                            self.expect(&TokenKind::RParen)?;
+                            let hi = self.current_span().lo;
+                            // Build a GenericType ident to carry the type args
+                            let generic_name = format!("{}<{}>", ident.name,
+                                type_args.iter().map(|t| t.as_str()).collect::<Vec<_>>().join(","));
+                            let callee = Expr {
+                                kind: ExprKind::Ident(Ident::new(&generic_name, ident.span)),
+                                span: Span::new(lo, hi)
+                            };
+                            return if named.is_empty() {
+                                Ok(Expr { kind: ExprKind::Call(Box::new(callee), positional), span: Span::new(lo, hi) })
+                            } else {
+                                Ok(Expr { kind: ExprKind::NamedCall(Box::new(callee), named), span: Span::new(lo, hi) })
+                            };
+                        } else {
+                            // Wasn't a constructor call, restore position
+                            self.pos = saved_pos;
+                        }
+                    } else {
+                        self.pos = saved_pos;
+                    }
+                }
+
                 // Is this a call?
                 if matches!(self.peek_kind(), TokenKind::LParen) {
                     self.advance(); // consume `(`
@@ -1702,6 +1752,61 @@ impl Parser {
             }
 
             _ => Err(ParseError::unexpected(self.peek_kind(), self.current_span())),
+        }
+    }
+
+    // ── Annotation definition ────────────────────────────────────────────────
+
+    fn parse_annotation_def(&mut self) -> Result<haki_ast::AnnotationDef, ParseError> {
+        let lo = self.current_span().lo;
+        self.expect(&TokenKind::Annotation)?;
+        self.expect(&TokenKind::At)?;
+        let name = self.expect_ident()?.name;
+        let params = if matches!(self.peek_kind(), TokenKind::LParen) {
+            self.advance();
+            let mut ps = Vec::new();
+            while !matches!(self.peek_kind(), TokenKind::RParen | TokenKind::Eof) {
+                let pname = self.expect_ident()?;
+                self.expect(&TokenKind::Colon)?;
+                let pty = self.parse_ty()?;
+                ps.push(haki_ast::Param { name: pname, ty: pty, span: haki_ast::Span::dummy() });
+                if !self.eat(&TokenKind::Comma) { break; }
+            }
+            self.expect(&TokenKind::RParen)?;
+            ps
+        } else { vec![] };
+        let body = self.parse_block()?;
+        let hi = self.current_span().hi;
+        Ok(haki_ast::AnnotationDef { name, params, body, span: haki_ast::Span::new(lo, hi) })
+    }
+
+    // ── Generic constructor type args ─────────────────────────────────────
+
+    /// Try to parse `<TypeArg, ...>` for a generic constructor call.
+    /// Returns Ok(type_args) if successful, Err if this isn't a type arg list.
+    /// Uses a simple heuristic: `<` IDENT (`,` IDENT)* `>` followed by `(`
+    fn try_parse_type_args_for_constructor(&mut self) -> Result<Vec<String>, ParseError> {
+        // Must start with `<`
+        if !matches!(self.peek_kind(), TokenKind::Lt) {
+            return Err(ParseError::unexpected(self.peek_kind(), self.current_span()));
+        }
+        self.advance(); // consume `<`
+        let mut args = Vec::new();
+        loop {
+            match self.peek_kind() {
+                TokenKind::Ident(name) => {
+                    args.push(name.clone());
+                    self.advance();
+                    if self.eat(&TokenKind::Comma) { continue; }
+                    // Expect `>`
+                    if matches!(self.peek_kind(), TokenKind::Gt) {
+                        self.advance(); // consume `>`
+                        return Ok(args);
+                    }
+                    return Err(ParseError::unexpected(self.peek_kind(), self.current_span()));
+                }
+                _ => return Err(ParseError::unexpected(self.peek_kind(), self.current_span())),
+            }
         }
     }
 

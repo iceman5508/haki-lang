@@ -73,6 +73,24 @@ enum TokenKind {
     TkAmpAmp       // &&
     TkPipePipe     // ||
 
+    // v3.x new tokens
+    TkAt             // @ (for annotations)
+    TkPlusEq         // +=
+    TkMinusEq        // -=
+    TkStarEq         // *=
+    TkSlashEq        // /=
+    TkFStrStart      // f" (f-string open)
+    TkPipe           // | (channel operator)
+
+    // v3.x keywords
+    TkExtern
+    TkAnnotation
+    TkSelect
+    TkTimeout
+    TkExtends
+    TkBreak
+    TkContinue
+
     // Meta
     TkEof
     TkError(string)  // lexer error with message
@@ -186,7 +204,14 @@ fn identToKeyword(s: string) -> (TokenKind, bool) {
     if s == "try"      { return TkTry,      true }
     if s == "true"     { return TkTrue,     true }
     if s == "false"    { return TkFalse,    true }
-    if s == "null"     { return TkNull,     true }
+    if s == "null"       { return TkNull,       true }
+    if s == "extern"     { return TkExtern,     true }
+    if s == "annotation" { return TkAnnotation, true }
+    if s == "select"     { return TkSelect,     true }
+    if s == "timeout"    { return TkTimeout,    true }
+    if s == "extends"    { return TkExtends,    true }
+    if s == "break"      { return TkBreak,      true }
+    if s == "continue"   { return TkContinue,   true }
     return TkEof, false   // sentinel: not a keyword
 }
 
@@ -271,6 +296,13 @@ fn tokenize(src: string) -> Array<Token> {
             continue
         }
 
+        // f-string: f"..."
+        if ch == "f" && charAt(l, l.pos + 1) == "\"" {
+            l.pos = l.pos + 1  // skip f
+            tokens.append(Token(kind: TkFStrStart, lo: lo, hi: l.pos))
+            continue
+        }
+
         // Two-character operators
         const ch2 = charAt(l, l.pos + 1)
         if ch == "-" && ch2 == ">" { tokens.append(Token(kind: TkArrow,    lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
@@ -281,6 +313,10 @@ fn tokenize(src: string) -> Array<Token> {
         if ch == ">" && ch2 == "=" { tokens.append(Token(kind: TkGtEq,     lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
         if ch == "&" && ch2 == "&" { tokens.append(Token(kind: TkAmpAmp,   lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
         if ch == "|" && ch2 == "|" { tokens.append(Token(kind: TkPipePipe, lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+        if ch == "+" && ch2 == "=" { tokens.append(Token(kind: TkPlusEq,   lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+        if ch == "-" && ch2 == "=" { tokens.append(Token(kind: TkMinusEq,  lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+        if ch == "*" && ch2 == "=" { tokens.append(Token(kind: TkStarEq,   lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
+        if ch == "/" && ch2 == "=" { tokens.append(Token(kind: TkSlashEq,  lo: lo, hi: lo+2))  l.pos = l.pos + 2  continue }
 
         // Single-character tokens
         l.pos = l.pos + 1
@@ -304,6 +340,8 @@ fn tokenize(src: string) -> Array<Token> {
         if ch == "*" { tokens.append(Token(kind: TkStar,      lo: lo, hi: l.pos))  continue }
         if ch == "/" { tokens.append(Token(kind: TkSlash,     lo: lo, hi: l.pos))  continue }
         if ch == "%" { tokens.append(Token(kind: TkPercent,   lo: lo, hi: l.pos))  continue }
+        if ch == "@" { tokens.append(Token(kind: TkAt,        lo: lo, hi: l.pos))  continue }
+        if ch == "|" { tokens.append(Token(kind: TkPipe,      lo: lo, hi: l.pos))  continue }
 
         // Unknown character — emit error token
         tokens.append(Token(kind: TkError("unexpected char: " + ch), lo: lo, hi: l.pos))
@@ -350,6 +388,13 @@ fn showKind(k: TokenKind) -> string {
         TkAmpAmp    { yield "&&" }       TkPipePipe{ yield "||" }
         TkEof       { yield "EOF" }      TkSemicolon{ yield ";" }
         TkFloat(n)  { yield "Float(" + int_to_string(n) + ")" }
+        TkAt         { yield "@" }          TkPlusEq    { yield "+=" }
+        TkMinusEq    { yield "-=" }         TkStarEq    { yield "*=" }
+        TkSlashEq    { yield "/=" }         TkFStrStart { yield "f\"" }
+        TkPipe       { yield "|" }          TkExtern    { yield "extern" }
+        TkAnnotation { yield "annotation" } TkSelect    { yield "select" }
+        TkTimeout    { yield "timeout" }    TkExtends   { yield "extends" }
+        TkBreak      { yield "break" }      TkContinue  { yield "continue" }
     }
     return s
 }

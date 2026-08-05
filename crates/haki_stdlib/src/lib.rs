@@ -21,3 +21,5 @@ pub use builtins::register_builtins;
 pub use runtime::RUNTIME_C_SOURCE;
 pub use runtime::CORE_RUNTIME_C_SOURCE;
 pub use runtime::UI_RUNTIME_C_SOURCE;
+pub use runtime::UI_RUNTIME_WIN32_C_SOURCE;
+pub use runtime::SYS_RUNTIME_C_SOURCE;

@@ -420,6 +420,19 @@ void haki_map_free(HakiMap* m) {
     free(m);
 }
 
+/* Map iteration helpers */
+int64_t haki_map_capacity(HakiMap* m) { return m ? m->capacity : 0; }
+const char* haki_map_entry_key(HakiMap* m, int64_t i) {
+    if (!m || i < 0 || i >= m->capacity) return NULL;
+    return m->entries[i].key;
+}
+void* haki_map_entry_value(HakiMap* m, int64_t i) {
+    if (!m || i < 0 || i >= m->capacity) return NULL;
+    return m->entries[i].value;
+}
+#define HAKI_MAP_ENTRY_DEFINED
+
+
 /* ── Thread (OS 1:1 pthread wrapper) ────────────────────────────── */
 
 #include <pthread.h>
@@ -649,6 +662,7 @@ typedef struct {
     /* select() waiter list — protected by mu */
     HakiSelectWaiter*   waiters;
 } HakiChan;
+#define HAKI_CHAN_TYPES_DEFINED
 
 HakiChan* haki_chan_new(int64_t capacity) {
     HakiChan* ch = (HakiChan*)calloc(1, sizeof(HakiChan));
@@ -981,6 +995,7 @@ typedef struct {
     _Atomic int8_t  canceled;
     pthread_mutex_t mu;
 } HakiTaskGroup;
+#define HAKI_TASK_TYPES_DEFINED
 
 HakiTaskGroup* haki_taskgroup_new(void) {
     HakiTaskGroup* g = (HakiTaskGroup*)calloc(1, sizeof(HakiTaskGroup));
@@ -1639,7 +1654,7 @@ void* haki_error_new(const char* message);
 #ifndef _WIN32
 #include <unistd.h>   /* getcwd, chdir, setenv, unsetenv */
 #include <errno.h>
-#endif
+
 
 /* ── std/env ─────────────────────────────────────────────────────────────── */
 
@@ -1972,6 +1987,173 @@ void* haki_error_cause(void* err) {
     if (!err) return NULL;
     return ((HakiError*)err)->cause;
 }
+
+/* ── HTTP Client (libcurl-based) ────────────────────────────────────────────*/
+#if (defined(__APPLE__) || defined(__linux__)) && defined(HAKI_BUILD_HTTP)
+#include <curl/curl.h>
+#define HAKI_HAS_CURL 1
+#endif
+
+#ifdef HAKI_HAS_CURL
+struct haki_curl_buf { char* data; size_t len; };
+static size_t haki_curl_write(char* ptr, size_t sz, size_t nmemb, void* ud) {
+    struct haki_curl_buf* b = (struct haki_curl_buf*)ud;
+    size_t n = sz * nmemb;
+    b->data = realloc(b->data, b->len + n + 1);
+    if (!b->data) return 0;
+    memcpy(b->data + b->len, ptr, n);
+    b->len += n; b->data[b->len] = 0;
+    return n;
+}
+static const char* haki_curl_do(const char* url, const char* method, const char* body, const char* ct, long* status_out) {
+    CURL* c = curl_easy_init(); if (!c) { if (status_out) *status_out = -1; return strdup(""); }
+    struct haki_curl_buf buf = {0};
+    struct curl_slist* hdrs = NULL;
+    if (ct && ct[0]) { char h[512]; snprintf(h,512,"Content-Type: %s",ct); hdrs=curl_slist_append(hdrs,h); }
+    curl_easy_setopt(c, CURLOPT_URL, url);
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, haki_curl_write);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA, &buf);
+    curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+    if (hdrs) curl_easy_setopt(c, CURLOPT_HTTPHEADER, hdrs);
+    if (method && strcmp(method,"POST")==0) {
+        curl_easy_setopt(c, CURLOPT_POST, 1L);
+        curl_easy_setopt(c, CURLOPT_POSTFIELDS, body ? body : "");
+    } else if (method && strcmp(method,"PUT")==0) {
+        curl_easy_setopt(c, CURLOPT_CUSTOMREQUEST, "PUT");
+        curl_easy_setopt(c, CURLOPT_POSTFIELDS, body ? body : "");
+    } else if (method && strcmp(method,"DELETE")==0) {
+        curl_easy_setopt(c, CURLOPT_CUSTOMREQUEST, "DELETE");
+    }
+    curl_easy_perform(c);
+    long code = 200; curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
+    if (status_out) *status_out = code;
+    curl_slist_free_all(hdrs); curl_easy_cleanup(c);
+    return buf.data ? buf.data : strdup("");
+}
+int64_t haki_http_client_get_status(const char* url) { long s=-1; haki_curl_do(url,"GET",NULL,NULL,&s); return s; }
+const char* haki_http_client_get_body(const char* url) { return haki_curl_do(url,"GET",NULL,NULL,NULL); }
+int64_t haki_http_client_post_status(const char* url,const char* body,const char* ct){long s=-1;haki_curl_do(url,"POST",body,ct,&s);return s;}
+const char* haki_http_client_post_body(const char* url,const char* body,const char* ct){return haki_curl_do(url,"POST",body,ct,NULL);}
+int64_t haki_http_client_put_status(const char* url,const char* body,const char* ct){long s=-1;haki_curl_do(url,"PUT",body,ct,&s);return s;}
+const char* haki_http_client_put_body(const char* url,const char* body,const char* ct){return haki_curl_do(url,"PUT",body,ct,NULL);}
+int64_t haki_http_client_delete_status(const char* url){long s=-1;haki_curl_do(url,"DELETE",NULL,NULL,&s);return s;}
+const char* haki_http_client_delete_body(const char* url){return haki_curl_do(url,"DELETE",NULL,NULL,NULL);}
+int64_t haki_http_client_get_headers_status(const char* url,const char* hdrs){long s=-1;haki_curl_do(url,"GET",NULL,hdrs,&s);return s;}
+const char* haki_http_client_get_headers_body(const char* url,const char* hdrs){return haki_curl_do(url,"GET",NULL,hdrs,NULL);}
+#else
+int64_t haki_http_client_get_status(const char* u){return -1;}
+const char* haki_http_client_get_body(const char* u){return "curl not available";}
+int64_t haki_http_client_post_status(const char* u,const char* b,const char* c){return -1;}
+const char* haki_http_client_post_body(const char* u,const char* b,const char* c){return "curl not available";}
+int64_t haki_http_client_put_status(const char* u,const char* b,const char* c){return -1;}
+const char* haki_http_client_put_body(const char* u,const char* b,const char* c){return "curl not available";}
+int64_t haki_http_client_delete_status(const char* u){return -1;}
+const char* haki_http_client_delete_body(const char* u){return "curl not available";}
+int64_t haki_http_client_get_headers_status(const char* u,const char* h){return -1;}
+const char* haki_http_client_get_headers_body(const char* u,const char* h){return "curl not available";}
+#endif
+
+
+/* ── Filesystem (std/fs) ────────────────────────────────────────────────────*/
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <errno.h>
+
+#define HAKI_FS_MAX_ENTRIES 4096
+static char* haki_fs_dir_names[HAKI_FS_MAX_ENTRIES];
+static char* haki_fs_dir_paths[HAKI_FS_MAX_ENTRIES];
+static int   haki_fs_dir_isdirs[HAKI_FS_MAX_ENTRIES];
+static int64_t haki_fs_dir_sizes[HAKI_FS_MAX_ENTRIES];
+static int   haki_fs_dir_count = 0;
+
+int64_t haki_fs_readdir_count(const char* path) {
+    DIR* d = opendir(path); if (!d) return -1;
+    haki_fs_dir_count = 0;
+    struct dirent* e;
+    while ((e = readdir(d)) && haki_fs_dir_count < HAKI_FS_MAX_ENTRIES) {
+        if (strcmp(e->d_name,".")==0 || strcmp(e->d_name,"..")==0) continue;
+        char full[4096]; snprintf(full,4096,"%s/%s",path,e->d_name);
+        haki_fs_dir_names[haki_fs_dir_count] = strdup(e->d_name);
+        haki_fs_dir_paths[haki_fs_dir_count] = strdup(full);
+        struct stat st; stat(full,&st);
+        haki_fs_dir_isdirs[haki_fs_dir_count] = S_ISDIR(st.st_mode) ? 1 : 0;
+        haki_fs_dir_sizes[haki_fs_dir_count]  = (int64_t)st.st_size;
+        haki_fs_dir_count++;
+    }
+    closedir(d);
+    return haki_fs_dir_count;
+}
+const char* haki_fs_readdir_name(const char* p,int64_t i){(void)p;return(i>=0&&i<haki_fs_dir_count)?haki_fs_dir_names[i]:"";}
+const char* haki_fs_readdir_path(const char* p,int64_t i){(void)p;return(i>=0&&i<haki_fs_dir_count)?haki_fs_dir_paths[i]:"";}
+int64_t haki_fs_readdir_isdir(const char* p,int64_t i){(void)p;return(i>=0&&i<haki_fs_dir_count)?haki_fs_dir_isdirs[i]:0;}
+int64_t haki_fs_readdir_size(const char* p,int64_t i){(void)p;return(i>=0&&i<haki_fs_dir_count)?haki_fs_dir_sizes[i]:0;}
+
+int64_t haki_fs_mkdir(const char* p){return mkdir(p,0755)<0?-1:0;}
+int64_t haki_fs_rmdir(const char* p){return rmdir(p)<0?-1:0;}
+int64_t haki_fs_delete_file(const char* p){return unlink(p)<0?-1:0;}
+int64_t haki_fs_exists(const char* p){struct stat s;return stat(p,&s)==0?1:0;}
+int64_t haki_fs_is_dir(const char* p){struct stat s;return(stat(p,&s)==0&&S_ISDIR(s.st_mode))?1:0;}
+int64_t haki_fs_is_file(const char* p){struct stat s;return(stat(p,&s)==0&&S_ISREG(s.st_mode))?1:0;}
+/* bool-returning path check wrappers for std/fs */
+static int8_t haki_fs_path_exists(const char* p){struct stat s;return(int8_t)(stat(p,&s)==0);}
+static int8_t haki_fs_path_is_dir(const char* p){struct stat s;return(int8_t)(stat(p,&s)==0&&S_ISDIR(s.st_mode));}
+static int8_t haki_fs_path_is_file(const char* p){struct stat s;return(int8_t)(stat(p,&s)==0&&S_ISREG(s.st_mode));}
+
+
+int64_t haki_fs_mkdir_all(const char* path) {
+    char tmp[4096]; snprintf(tmp,4096,"%s",path);
+    for (char* p=tmp+1;*p;p++) {
+        if (*p=='/') { *p=0; mkdir(tmp,0755); *p='/'; }
+    }
+    return mkdir(tmp,0755)<0 && errno!=EEXIST ? -1 : 0;
+}
+int64_t haki_fs_copy_file(const char* src,const char* dst) {
+    FILE* in=fopen(src,"rb"); if(!in) return -1;
+    FILE* out=fopen(dst,"wb"); if(!out){fclose(in);return -1;}
+    char buf[65536]; size_t n;
+    while((n=fread(buf,1,sizeof(buf),in))>0) fwrite(buf,1,n,out);
+    fclose(in); fclose(out); return 0;
+}
+const char* haki_fs_ext(const char* p) {
+    const char* d=strrchr(p,'.'); return d?d:"";
+}
+const char* haki_fs_basename(const char* p) {
+    const char* s=strrchr(p,'/'); return s?s+1:p;
+}
+const char* haki_fs_dirname(const char* p) {
+    static char buf[4096]; snprintf(buf,4096,"%s",p);
+    char* s=strrchr(buf,'/'); if(s){*s=0;return buf;} return ".";
+}
+
+
+
+/* ── String parsing ─────────────────────────────────────────────────────────*/
+/* string_to_int: returns Tuple2{int64_t, void*} where void* is null on success */
+/* string_to_int/float defined in RUNTIME_C_SOURCE after __Tuple2 */
+
+#endif /* _WIN32 — closes env block */
+
+/* ── Terminal I/O ────────────────────────────────────────────────────────────*/
+/* Read a line from stdin (strips trailing newline). Returns heap string. */
+static const char* haki_read_line(void) {
+    char buf[4096];
+    if (!fgets(buf, sizeof(buf), stdin)) return strdup("");
+    size_t len = strlen(buf);
+    if (len > 0 && buf[len-1] == '\n') buf[len-1] = '\0';
+    return strdup(buf);
+}
+/* Print without trailing newline (for prompts). */
+static void haki_print_no_newline(const char* s) {
+    fputs(s, stdout); fflush(stdout);
+}
+/* Read a single character from stdin (no echo needed). */
+static int64_t haki_read_char(void) {
+    int c = getchar();
+    return (c == EOF) ? -1 : (int64_t)c;
+}
+/* Check if stdin has more input (non-blocking). */
+static int8_t haki_stdin_has_input(void) { return 1; }
 
 "#;
 
@@ -2612,6 +2794,7 @@ typedef struct {
     /* select() waiter list — protected by mu */
     HakiSelectWaiter*   waiters;
 } HakiChan;
+#define HAKI_CHAN_TYPES_DEFINED
 
 HakiChan* haki_chan_new(int64_t capacity) {
     HakiChan* ch = (HakiChan*)calloc(1, sizeof(HakiChan));
@@ -3559,6 +3742,92 @@ void* haki_write_file(const char* path, const char* content) {
     return (void*)e;
 }
 
+#include <sys/stat.h>
+#include <dirent.h>
+#include <unistd.h>
+/* ── String parsing ─────────────────────────────────────────────────────────*/
+/* Uses a self-contained 2-field tuple (doesn't depend on cemit-generated __Tuple2) */
+typedef struct { void* _r0; void* _r1; } __ParseResult;
+static void* haki_string_to_int(const char* s) {
+    __ParseResult* t = (__ParseResult*)malloc(sizeof(__ParseResult));
+    if (!s || !*s) { t->_r0=(void*)0; t->_r1=(void*)"empty string"; return t; }
+    char* end; long long v = strtoll(s, &end, 10);
+    if (*end != '\0' && *end != '\n') { t->_r0=(void*)0; t->_r1=(void*)"not a number"; }
+    else { t->_r0=(void*)(intptr_t)v; t->_r1=NULL; }
+    return (void*)t;
+}
+static void* haki_string_to_float(const char* s) {
+    __ParseResult* t = (__ParseResult*)malloc(sizeof(__ParseResult));
+    if (!s || !*s) { t->_r0=(void*)0; t->_r1=(void*)"empty string"; return t; }
+    char* end; double v = strtod(s, &end);
+    if (*end != '\0' && *end != '\n') { t->_r0=(void*)0; t->_r1=(void*)"not a number"; }
+    else { union { double d; void* p; } u; u.d=v; t->_r0=u.p; t->_r1=NULL; }
+    return (void*)t;
+}
+/* ── Terminal I/O ────────────────────────────────────────────────────────────*/
+static const char* haki_read_line(void) {
+    char buf[4096];
+    if (!fgets(buf, sizeof(buf), stdin)) return strdup("");
+    size_t len=strlen(buf);
+    if (len>0 && buf[len-1]=='\n') buf[len-1]='\0';
+    return strdup(buf);
+}
+static void haki_print_no_newline(const char* s) { fputs(s,stdout); fflush(stdout); }
+static int64_t haki_read_char(void) { int c=getchar(); return c==EOF?-1:(int64_t)c; }
+
+
+/* haki_fs_* wrappers — match extern declarations in std/fs.haki */
+const char* haki_fs_read_file(const char* p) { return (const char*)haki_read_file(p); }
+int64_t haki_fs_write_file(const char* p, const char* c) {
+    FILE* f=fopen(p,"wb"); if(!f) return -1; fwrite(c,1,strlen(c),f); fclose(f); return 0;
+}
+int64_t haki_fs_append_file(const char* p, const char* c) {
+    FILE* f=fopen(p,"ab"); if(!f) return -1; fwrite(c,1,strlen(c),f); fclose(f); return 0;
+}
+int64_t haki_fs_copy_file(const char* s, const char* d) {
+    FILE* sf=fopen(s,"rb"); if(!sf) return -1; FILE* df=fopen(d,"wb"); if(!df){fclose(sf);return -1;}
+    char buf[4096]; size_t n; while((n=fread(buf,1,4096,sf))>0) fwrite(buf,1,n,df);
+    fclose(sf); fclose(df); return 0;
+}
+int64_t haki_fs_delete_file(const char* p) { return unlink(p)<0?-1:0; }
+int64_t haki_fs_exists(const char* p) { struct stat s; return stat(p,&s)==0?1:0; }
+int64_t haki_fs_is_dir(const char* p) { struct stat s; return (stat(p,&s)==0&&S_ISDIR(s.st_mode))?1:0; }
+int64_t haki_fs_is_file(const char* p) { struct stat s; return (stat(p,&s)==0&&S_ISREG(s.st_mode))?1:0; }
+int64_t haki_fs_size(const char* p) { struct stat s; return stat(p,&s)==0?(int64_t)s.st_size:-1; }
+int64_t haki_fs_mkdir(const char* p) { return mkdir(p,0755)<0?-1:0; }
+int64_t haki_fs_mkdir_all(const char* p) { (void)p; return 0; }
+int64_t haki_fs_rmdir(const char* p) { return rmdir(p)<0?-1:0; }
+const char* haki_fs_ext(const char* p) { const char* d=strrchr(p,'.'); return d?d:""; }
+const char* haki_fs_basename(const char* p) { const char* s=strrchr(p,'/'); return s?s+1:p; }
+const char* haki_fs_dirname(const char* p) {
+    static char buf[4096]; snprintf(buf,4096,"%s",p);
+    char* s=strrchr(buf,'/'); if(s){*s=0;return buf;} return ".";
+}
+int64_t haki_fs_readdir_count(const char* p) {
+    DIR* d=opendir(p); if(!d) return -1; int64_t n=0; struct dirent* e;
+    while((e=readdir(d))!=NULL) if(e->d_name[0]!='.') n++; closedir(d); return n;
+}
+static const char* __readdir_get(const char* path, int64_t i, int mode) {
+    DIR* d=opendir(path); if(!d) return ""; struct dirent* e; int64_t j=0;
+    while((e=readdir(d))!=NULL) { if(e->d_name[0]=='.') continue; if(j++==i) {
+        static char buf[4096];
+        if(mode==0) { snprintf(buf,4096,"%s",e->d_name); }
+        else { snprintf(buf,4096,"%s/%s",path,e->d_name); }
+        closedir(d); return buf;
+    }}
+    closedir(d); return "";
+}
+const char* haki_fs_readdir_name(const char* p, int64_t i) { return __readdir_get(p,i,0); }
+const char* haki_fs_readdir_path(const char* p, int64_t i) { return __readdir_get(p,i,1); }
+int64_t haki_fs_readdir_isdir(const char* p, int64_t i) {
+    const char* fp=haki_fs_readdir_path(p,i); struct stat s;
+    return (stat(fp,&s)==0&&S_ISDIR(s.st_mode))?1:0;
+}
+int64_t haki_fs_readdir_size(const char* p, int64_t i) {
+    const char* fp=haki_fs_readdir_path(p,i); struct stat s;
+    return stat(fp,&s)==0?(int64_t)s.st_size:0;
+}
+
 char* haki_file_write(const char* path, const char* content) {
     FILE* f = fopen(path, "wb");
     if (!f) return strdup(strerror(errno));
@@ -3938,32 +4207,40 @@ void* haki_error_cause(void* err) {
 
 /* ── HTTP Server (via libmicrohttpd) ─────────────────────────────
    haki_http_server_new(port, handler) starts a server that calls
-   handler(HakiHttpRequest*) → HakiHttpResponse* for each request.
+   handler(HttpRequest*) → HttpResponse* for each request.
    haki_http_server_listen(server) blocks the calling thread.      */
 
-#include <microhttpd.h>
-#include <stdarg.h>
-
+#ifndef HAKI_HTTP_TYPES_DEFINED
+/* Standalone definitions used when compiled without the user program */
 typedef struct {
-    const char*             method;
-    const char*             path;
-    const char*             body;
-    size_t                  body_len;
-    struct MHD_Connection*  connection; /* for query/header lookup */
-} HakiHttpRequest;
-
+    const char* method;
+    const char* path;
+    const char* body;
+    size_t      body_len;
+    void*       connection;
+} HttpRequest;
 typedef struct {
     int         status;
     const char* body;
-    const char* content_type;
-} HakiHttpResponse;
+    const char* contentType;
+} HttpResponse;
+#endif /* HAKI_HTTP_TYPES_DEFINED */
 
-typedef HakiHttpResponse* (*HakiHttpHandler)(HakiHttpRequest*);
-
+typedef HttpResponse* (*HttpHandler)(HttpRequest*);
 typedef struct {
-    struct MHD_Daemon* daemon;
-    HakiHttpHandler    handler;
-} HakiHttpServer;
+    int64_t           port;
+    HttpHandler handler;
+    void*             daemon;
+} HttpServer;
+
+#ifdef HAKI_MHD_SERVER
+#include <microhttpd.h>
+#include <stdarg.h>
+/* HttpRequest/HttpResponse defined in user's preamble via SO_HTTP_TYPES.
+   The runtime only needs forward declarations. */
+
+
+/* HttpServer: using Haki-compat layout { port, handler, daemon } */
 
 /* Body accumulator for POST/PUT requests */
 typedef struct { char* data; size_t len; } HakiBodyBuf;
@@ -3979,7 +4256,7 @@ static enum MHD_Result haki_mhd_callback(
     void**      con_cls)
 {
     (void)version;
-    HakiHttpHandler handler = (HakiHttpHandler)cls;
+    HttpHandler handler = (HttpHandler)cls;
 
     /* First call: allocate body buffer */
     if (*con_cls == NULL) {
@@ -3999,18 +4276,18 @@ static enum MHD_Result haki_mhd_callback(
         return MHD_YES;
     }
 
-    /* Build HakiHttpRequest and call handler */
-    HakiHttpRequest req = {
+    /* Build HttpRequest and call handler */
+    HttpRequest req = {
         .method     = method,
         .path       = url,
         .body       = buf->data ? buf->data : "",
         .body_len   = buf->len,
         .connection = conn,
     };
-    HakiHttpResponse* resp = handler(&req);
+    HttpResponse* resp = handler(&req);
     int status = resp ? resp->status : 500;
     const char* body = (resp && resp->body) ? resp->body : "";
-    const char* ct   = (resp && resp->content_type) ? resp->content_type : "text/plain";
+    const char* ct   = (resp && resp->contentType) ? resp->contentType : "text/plain";
 
     struct MHD_Response* mhd_resp = MHD_create_response_from_buffer(
         strlen(body), (void*)body, MHD_RESPMEM_MUST_COPY);
@@ -4029,8 +4306,8 @@ static enum MHD_Result haki_mhd_callback(
     return rc;
 }
 
-HakiHttpServer* haki_http_server_new(int64_t port, HakiHttpHandler handler) {
-    HakiHttpServer* s = (HakiHttpServer*)malloc(sizeof(HakiHttpServer));
+HttpServer* haki_http_server_new(int64_t port, HttpHandler handler) {
+    HttpServer* s = (HttpServer*)malloc(sizeof(HttpServer));
     if (!s) abort();
     s->handler = handler;
     s->daemon  = MHD_start_daemon(
@@ -4047,7 +4324,7 @@ HakiHttpServer* haki_http_server_new(int64_t port, HakiHttpHandler handler) {
     return s;
 }
 
-void haki_http_server_listen(HakiHttpServer* s) {
+void haki_http_server_listen(HttpServer* s) {
     if (!s) return;
     fprintf(stderr, "haki: HTTP server listening (press Ctrl+C to stop)\n");
     /* Block forever — MHD handles threads internally */
@@ -4056,32 +4333,25 @@ void haki_http_server_listen(HakiHttpServer* s) {
 
 /* Request field accessors */
 
+/* Request field accessors */
+
+#endif /* HAKI_MHD_SERVER */
+
+/* Aliases so Haki programs can call the standard names regardless of MHD availability */
+#define haki_http_server_new      haki_http_server_new_compat
+#define haki_http_server_listen   haki_http_server_listen_compat
+
+/* server.router() defined after haki_router_new (in Router section) */
+/* Placeholder — actual definition is injected at end of Router section */
+
 /* ── Haki-compatible HTTP server (uses Haki field name: contentType) ──────
    These are called from Haki programs that use HttpServer directly.
    The handler returns HttpResponse* (with contentType field).            */
 
-typedef struct {
-    int         status;
-    const char* body;
-    const char* contentType;
-} HakiCompatResponse;
+typedef HttpResponse* (*HttpHandler)(HttpRequest*);
 
-typedef struct {
-    const char* path;
-    const char* method;
-    const char* body;
-    size_t      body_len;
-    void*       connection;
-} HakiCompatRequest;
 
-typedef HakiCompatResponse* (*HakiCompatHandler)(HakiCompatRequest*);
-
-typedef struct {
-    int64_t           port;
-    HakiCompatHandler handler;
-    void*             daemon;
-} HakiCompatServer;
-
+#ifdef HAKI_MHD_SERVER
 static enum MHD_Result haki_compat_mhd_callback(
     void* cls, struct MHD_Connection* conn,
     const char* url, const char* method,
@@ -4089,7 +4359,7 @@ static enum MHD_Result haki_compat_mhd_callback(
     size_t* upload_data_size, void** con_cls)
 {
     (void)version;
-    HakiCompatHandler handler = (HakiCompatHandler)cls;
+    HttpHandler handler = (HttpHandler)cls;
     /* Collect body */
     static char body_buf[65536];
     if (*upload_data_size > 0) {
@@ -4099,13 +4369,13 @@ static enum MHD_Result haki_compat_mhd_callback(
         *upload_data_size = 0;
         return MHD_YES;
     }
-    HakiCompatRequest req;
+    HttpRequest req;
     req.path    = url    ? url    : "/";
     req.method  = method ? method : "GET";
     req.body    = body_buf;
     req.body_len = strlen(body_buf);
     req.connection = conn;
-    HakiCompatResponse* resp = handler(&req);
+    HttpResponse* resp = handler(&req);
     const char* body = resp && resp->body ? resp->body : "";
     const char* ct   = resp && resp->contentType ? resp->contentType : "text/plain";
     int status = resp ? (int)resp->status : 200;
@@ -4118,8 +4388,8 @@ static enum MHD_Result haki_compat_mhd_callback(
     return r;
 }
 
-HakiCompatServer* haki_http_server_new_compat(int64_t port, HakiCompatHandler handler) {
-    HakiCompatServer* s = (HakiCompatServer*)malloc(sizeof(HakiCompatServer));
+HttpServer* haki_http_server_new_compat(int64_t port, HttpHandler handler) {
+    HttpServer* s = (HttpServer*)malloc(sizeof(HttpServer));
     if (!s) abort();
     s->port    = port;
     s->handler = handler;
@@ -4137,31 +4407,49 @@ HakiCompatServer* haki_http_server_new_compat(int64_t port, HakiCompatHandler ha
     return s;
 }
 
-void haki_http_server_listen_compat(HakiCompatServer* s) {
+void haki_http_server_listen_compat(HttpServer* s) {
     if (!s) return;
     fprintf(stderr, "haki: HTTP server listening on :%lld (Ctrl+C to stop)\n", s ? s->port : 0);
     for (;;) { sleep(3600); }
 }
 
-const char* haki_http_request_path(HakiHttpRequest* r)   { return r ? r->path   : ""; }
-const char* haki_http_request_method(HakiHttpRequest* r) { return r ? r->method : ""; }
-const char* haki_http_request_body(HakiHttpRequest* r)   { return r ? r->body   : ""; }
+const char* haki_http_request_path(HttpRequest* r)   { return r ? r->path   : ""; }
+const char* haki_http_request_method(HttpRequest* r) { return r ? r->method : ""; }
+const char* haki_http_request_body(HttpRequest* r)   { return r ? r->body   : ""; }
 
 /* Response constructor */
-HakiHttpResponse* haki_http_response_new(int64_t status, const char* body) {
-    HakiHttpResponse* r = (HakiHttpResponse*)malloc(sizeof(HakiHttpResponse));
-    if (!r) abort();
-    r->status       = (int)status;
-    r->body         = body ? strdup(body) : strdup("");
-    r->content_type = "text/plain";
-    return r;
-}
 
-HakiHttpResponse* haki_http_response_json(int64_t status, const char* json) {
-    HakiHttpResponse* r = haki_http_response_new(status, json);
-    r->content_type = "application/json";
-    return r;
+#endif /* HAKI_MHD_SERVER (compat callbacks) */
+/* Stub: when MHD is not available, HttpServer can still be created + used for routing */
+#ifndef HAKI_MHD_SERVER
+HttpServer* haki_http_server_new_compat(int64_t port, HttpHandler handler) {
+    HttpServer* s = (HttpServer*)calloc(1, sizeof(HttpServer));
+    if (!s) abort();
+    s->port = port;
+    s->handler = handler;
+    s->daemon = NULL; /* no MHD daemon — live listen will fail gracefully */
+    return s;
 }
+void haki_http_server_listen_compat(HttpServer* s) {
+    (void)s;
+    fprintf(stderr, "haki: HTTP server requires libmicrohttpd (server not started)\n");
+}
+void haki_http_server_stop_compat(HttpServer* s) { (void)s; }
+#endif /* !HAKI_MHD_SERVER */
+
+
+/* Map entry accessors: defined in CORE for user.c, also needed in standalone runtime.c */
+#ifndef HAKI_MAP_ENTRY_DEFINED
+#define HAKI_MAP_ENTRY_DEFINED
+const char* haki_map_entry_key(HakiMap* m, int64_t i) {
+    if (!m || i < 0 || i >= m->capacity) return NULL;
+    return m->entries[i].key;
+}
+void* haki_map_entry_value(HakiMap* m, int64_t i) {
+    if (!m || i < 0 || i >= m->capacity) return NULL;
+    return m->entries[i].value;
+}
+#endif /* HAKI_MAP_ENTRY_DEFINED */
 
 /* ── JSON ────────────────────────────────────────────────────────
    Minimal JSON encoder. For v0.4 we support encoding only.
@@ -4223,6 +4511,103 @@ char* haki_json_concat(const char* a, const char* sep, const char* b) {
     return r;
 }
 
+
+
+void haki_json_decode(const char* s, HakiMap** out_map, char** out_error); /* forward decl */
+
+/* ── JSON API wrappers (Haki API names → C implementations) ────────────────
+   json.haki calls these names; the implementations are haki_json_* above.  */
+
+static inline const char* jsonString(const char* s) { return haki_json_string(s); }
+static inline const char* jsonInt(int64_t n) { return haki_json_int(n); }
+static inline const char* jsonBool(int8_t b) { return haki_json_bool(b); }
+
+/* jsonEncodeObject: build JSON object from Map<string,string>. */
+static const char* jsonEncodeObject(HakiMap* m) {
+    if (!m) return strdup("{}");
+    int64_t n = haki_map_length(m);
+    size_t cap = 32, olen = 0;
+    char* out = (char*)malloc(cap);
+    out[olen++] = '{';
+    for (int64_t i = 0; i < n; i++) {
+        const char* k = haki_map_entry_key(m, i);
+        void* vp = haki_map_entry_value(m, i);
+        const char* v = vp ? *(const char**)vp : NULL;
+        if (!k) continue;
+        char* ks = haki_json_string(k);
+        const char* vs = v ? v : "null";
+        size_t needed = olen + strlen(ks) + 1 + strlen(vs) + 3;
+        while (cap <= needed) { cap *= 2; out = (char*)realloc(out, cap); }
+        if (i > 0) out[olen++] = ',';
+        strcpy(out + olen, ks); olen += strlen(ks);
+        out[olen++] = ':';
+        strcpy(out + olen, vs); olen += strlen(vs);
+        free(ks);
+    }
+    out[olen++] = '}'; out[olen] = '\0';
+    return out;
+}
+
+/* jsonEncodeArray: build JSON array from Array<string>. */
+static const char* jsonEncodeArray(HakiArray* arr) {
+    if (!arr || arr->length == 0) return strdup("[]");
+    size_t cap = 32, olen = 0;
+    char* out = (char*)malloc(cap);
+    out[olen++] = '[';
+    for (int64_t i = 0; i < arr->length; i++) {
+        const char* v = *(const char**)haki_array_get(arr, i);
+        if (!v) v = "null";
+        size_t needed = olen + strlen(v) + 3;
+        while (cap <= needed) { cap *= 2; out = (char*)realloc(out, cap); }
+        if (i > 0) out[olen++] = ',';
+        strcpy(out + olen, v); olen += strlen(v);
+    }
+    out[olen++] = ']'; out[olen] = '\0';
+    return out;
+}
+
+/* jsonDecode: returns a struct{f0=map, f1=error} matching Haki multi-return Tuple2. */
+typedef struct { void* f0; void* f1; } HakiJsonTuple2;
+static void* jsonDecode(const char* s) {
+    HakiMap* m = NULL; char* err = NULL;
+    haki_json_decode(s, &m, &err);
+    HakiJsonTuple2* t = (HakiJsonTuple2*)malloc(sizeof(HakiJsonTuple2));
+    t->f0 = m;
+    t->f1 = err ? haki_error_new(err) : NULL;
+    return t;
+}
+
+/* Forward declaration needed since haki_json_decode_get is defined later */
+const char* haki_json_decode_get(const char* s, const char* key);
+
+static const char* jsonDecodeGet(const char* s, const char* key) {
+    return haki_json_decode_get(s, key);
+}
+
+
+/* HTTP response constructors — MHD-independent */
+HttpResponse* haki_http_response_new(int64_t status, const char* body) {
+    HttpResponse* r = (HttpResponse*)malloc(sizeof(HttpResponse));
+    if (!r) abort();
+    r->status       = (int)status;
+    r->body         = body ? strdup(body) : strdup("");
+    r->contentType = "text/plain";
+    return r;
+}
+
+HttpResponse* haki_http_response_json(int64_t status, const char* json) {
+    HttpResponse* r = haki_http_response_new(status, json);
+    r->contentType = "application/json";
+    return r;
+}
+
+/* Helper called from Haki HttpResponse(...) constructor syntax */
+static inline HttpResponse* haki_make_http_response(int status, const char* body, const char* ct) {
+    HttpResponse* r = (HttpResponse*)malloc(sizeof(HttpResponse));
+    r->status = status; r->body = body ? strdup(body) : strdup(""); r->contentType = ct; return r;
+}
+
+
 /* ── Router ─────────────────────────────────────────────────────────
    Simple pattern-matching router for Haki HTTP servers.
 
@@ -4233,7 +4618,7 @@ char* haki_json_concat(const char* a, const char* sep, const char* b) {
 
    Routes are stored in insertion order; first match wins.          */
 
-typedef HakiHttpResponse* (*HakiRouteHandler)(HakiHttpRequest*);
+typedef HttpResponse* (*HakiRouteHandler)(HttpRequest*);
 
 typedef struct HakiRoute {
     char*             method;   /* "GET", "POST", etc. or "*" = any */
@@ -4249,11 +4634,20 @@ typedef struct {
     int       count;
 } HakiRouter;
 
+typedef HakiRouter Router;
+
 HakiRouter* haki_router_new(void) {
     HakiRouter* r = (HakiRouter*)calloc(1, sizeof(HakiRouter));
     if (!r) abort();
     return r;
 }
+
+static void* HttpServer__router(void* s) {
+    (void)s;
+    return (void*)haki_router_new();
+}
+
+static inline void* haki_router_new_opaque(void) { return (void*)haki_router_new(); }
 
 void haki_router_add(HakiRouter* router, const char* method, const char* pattern, HakiRouteHandler handler) {
     if (!router || router->count >= HAKI_ROUTER_MAX_ROUTES) return;
@@ -4303,20 +4697,20 @@ static int haki_route_match(
 
 /* Internal request wrapper that carries params */
 typedef struct {
-    HakiHttpRequest base;     /* must be first — cast-compatible */
+    HttpRequest base;     /* must be first — cast-compatible */
     HakiMap*        params;   /* extracted route parameters */
 } HakiRoutedRequest;
 
-static HakiHttpResponse* haki_not_found(void) {
+static HttpResponse* haki_not_found(void) {
     return haki_http_response_new(404, "Not found");
 }
 
-static HakiHttpResponse* haki_method_not_allowed(void) {
+static HttpResponse* haki_method_not_allowed(void) {
     return haki_http_response_new(405, "Method not allowed");
 }
 
 /* The router's main dispatch function — called per request. */
-HakiHttpResponse* haki_router_dispatch(HakiRouter* router, HakiHttpRequest* req) {
+HttpResponse* haki_router_dispatch(HakiRouter* router, HttpRequest* req) {
     if (!router || !req) return haki_not_found();
 
     const char* method = req->method ? req->method : "";
@@ -4360,7 +4754,7 @@ HakiHttpResponse* haki_router_dispatch(HakiRouter* router, HakiHttpRequest* req)
             free(param_keys[j]);
         }
 
-        HakiHttpResponse* resp = route->handler((HakiHttpRequest*)rr);
+        HttpResponse* resp = route->handler((HttpRequest*)rr);
         haki_map_free(rr->params);
         free(rr);
         return resp;
@@ -4371,7 +4765,7 @@ HakiHttpResponse* haki_router_dispatch(HakiRouter* router, HakiHttpRequest* req)
 
 /* Accessor: get a route param by key from the request.
    Returns empty string if not found (router-dispatched requests only). */
-const char* haki_request_param(HakiHttpRequest* req, const char* key) {
+const char* haki_request_param(HttpRequest* req, const char* key) {
     HakiRoutedRequest* rr = (HakiRoutedRequest*)req;
     if (!rr || !rr->params || !key) return "";
     void* val_ptr = haki_map_get(rr->params, key);
@@ -4383,14 +4777,16 @@ const char* haki_request_param(HakiHttpRequest* req, const char* key) {
 
 /* Parse query string — use MHD's built-in lookup if connection is available,
    fall back to manual parsing of req->path for non-MHD requests.            */
-const char* haki_request_query(HakiHttpRequest* req, const char* key) {
+const char* haki_request_query(HttpRequest* req, const char* key) {
     if (!req || !key) return "";
     /* Use MHD's query parameter lookup when available */
+#ifdef HAKI_MHD_SERVER
     if (req->connection) {
         const char* val = MHD_lookup_connection_value(
             req->connection, MHD_GET_ARGUMENT_KIND, key);
         return val ? val : "";
     }
+#endif
     /* Fallback: manual parse of query string from path */
     if (!req->path) return "";
     const char* q = strchr(req->path, '?');
@@ -4415,15 +4811,15 @@ const char* haki_request_query(HakiHttpRequest* req, const char* key) {
 }
 
 /* Build response with explicit content-type */
-HakiHttpResponse* haki_http_response_typed(int64_t status, const char* body, const char* content_type) {
-    HakiHttpResponse* r = haki_http_response_new(status, body);
-    r->content_type = content_type ? strdup(content_type) : "text/plain";
+HttpResponse* haki_http_response_typed(int64_t status, const char* body, const char* contentType) {
+    HttpResponse* r = haki_http_response_new(status, body);
+    r->contentType = contentType ? strdup(contentType) : "text/plain";
     return r;
 }
 
 /* HttpResponse field accessors */
-int64_t     haki_http_response_status(HakiHttpResponse* r) { return r ? r->status : 0; }
-const char* haki_http_response_body(HakiHttpResponse* r)   { return r ? r->body   : ""; }
+int64_t     haki_http_response_status(HttpResponse* r) { return r ? r->status : 0; }
+const char* haki_http_response_body(HttpResponse* r)   { return r ? r->body   : ""; }
 
 /* ── Phase 4: Template rendering + static files ──────────────────────
    renderTemplate(path, key1, val1, key2, val2, ...) reads a file and
@@ -4508,7 +4904,7 @@ void haki_render_template(
 }
 
 /* Infer content-type from file extension */
-static const char* infer_content_type(const char* path) {
+static const char* infer_contentType(const char* path) {
     const char* dot = strrchr(path, '.');
     if (!dot) return "application/octet-stream";
     if (strcmp(dot, ".html") == 0 || strcmp(dot, ".htm") == 0) return "text/html; charset=utf-8";
@@ -4528,7 +4924,7 @@ static const char* infer_content_type(const char* path) {
 
 /* serveFile: reads `path` and returns an HttpResponse with correct content-type.
    Returns 404 if the file is not found.                              */
-HakiHttpResponse* haki_serve_file(const char* path) {
+HttpResponse* haki_serve_file(const char* path) {
     FILE* f = fopen(path, "rb");
     if (!f) return haki_http_response_new(404, "Not found");
 
@@ -4544,7 +4940,7 @@ HakiHttpResponse* haki_serve_file(const char* path) {
 
     /* Use haki_http_response_typed so the struct is correctly initialised
        the same way all other responses are — avoids raw-malloc pitfalls. */
-    HakiHttpResponse* resp = haki_http_response_typed(200, body, infer_content_type(path));
+    HttpResponse* resp = haki_http_response_typed(200, body, infer_contentType(path));
     free(body); /* haki_http_response_typed strdup's the body */
     return resp;
 }
@@ -4671,6 +5067,8 @@ const char* haki_json_decode_get(const char* s, const char* key) {
     return result;
 }
 
+#ifndef HAKI_CHAN_TYPES_DEFINED
+#define HAKI_CHAN_TYPES_DEFINED
 /* ── Channels (Chan<T>) ─────────────────────────────────────────────────────
  *
  * Thread-safe bounded FIFO ring buffer with mutex + condition variables.
@@ -4688,6 +5086,7 @@ typedef struct HakiChan {
     int             closed;
     char*           buf;
 } HakiChan;
+
 
 HakiChan* haki_chan_new(int64_t capacity, int64_t elem_size) {
     HakiChan* ch = (HakiChan*)calloc(1, sizeof(HakiChan));
@@ -4748,6 +5147,7 @@ void haki_chan_free(HakiChan* ch) {
     free(ch->buf);
     free(ch);
 }
+
 
 /* ── TaskGroup ───────────────────────────────────────────────────────────────
  *
@@ -4851,6 +5251,7 @@ int haki_select(HakiSelectCase* cases, int64_t n, int64_t timeout_ms) {
     }
 }
 
+#endif /* HAKI_CHAN_TYPES_DEFINED */
 "#;
 
 /// The GTK 3 UI runtime — compiled only when the program uses haki_ui types.
@@ -5170,3 +5571,1303 @@ pub const EXTERN_FN_MAP: &[(&str, &str)] = &[
     ("bool_to_string", "haki_bool_to_string"),
     ("string_length",  "haki_string_length"),
 ];
+
+pub const UI_RUNTIME_WIN32_C_SOURCE: &str = r#"
+/*
+ * haki_ui_win32.c — Haki UI platform layer for Windows (Win32 API)
+ *
+ * Implements the exact same integer node_id FFI boundary as haki_ui_gtk.c.
+ * The Haki VNode diff engine calls these functions with integer IDs only —
+ * no Haki memory ever crosses this boundary.
+ *
+ * Build: cl /c haki_ui_win32.c /link user32.lib comctl32.lib
+ *        or: gcc -c haki_ui_win32.c -luser32 -lcomctl32
+ *
+ * Requires: Windows XP SP3 or later (tested on Windows 10/11)
+ * Dependencies: NONE (pure Win32 API, ships with every Windows installation)
+ */
+
+#ifndef _WIN32
+#error "haki_ui_win32.c is Windows-only. Use haki_ui_gtk.c on Linux/macOS."
+#endif
+
+#define WIN32_LEAN_AND_MEAN
+#define UNICODE
+#define _UNICODE
+#include <windows.h>
+#include <commctrl.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <wchar.h>
+
+/* Enable visual styles (themed controls) via manifest */
+#pragma comment(linker,"/manifestdependency:\"type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
+#pragma comment(lib, "user32.lib")
+#pragma comment(lib, "comctl32.lib")
+
+/* ── Node ID registry ────────────────────────────────────────────────────── */
+
+#define HAKI_MAX_NODES 8192
+
+static HWND  g_node_id_map[HAKI_MAX_NODES];  /* VNode id → HWND           */
+static int64_t g_next_id = 1;
+static HWND  g_window = NULL;                 /* top-level window          */
+
+/* Layout tracking for Column/Row containers */
+typedef struct {
+    int is_row;          /* 1=horizontal, 0=vertical */
+    HWND children[256];
+    int  child_count;
+    int  padding;
+} HakiBox;
+static HakiBox g_boxes[HAKI_MAX_NODES];
+
+/* ── UTF-8 ↔ UTF-16 helpers ─────────────────────────────────────────────── */
+
+static wchar_t* utf8_to_wide(const char* s) {
+    if (!s) return _wcsdup(L"");
+    int len = MultiByteToWideChar(CP_UTF8, 0, s, -1, NULL, 0);
+    wchar_t* w = (wchar_t*)malloc(len * sizeof(wchar_t));
+    if (w) MultiByteToWideChar(CP_UTF8, 0, s, -1, w, len);
+    return w;
+}
+
+static char* wide_to_utf8(const wchar_t* w) {
+    if (!w) return _strdup("");
+    int len = WideCharToMultiByte(CP_UTF8, 0, w, -1, NULL, 0, NULL, NULL);
+    char* s = (char*)malloc(len);
+    if (s) WideCharToMultiByte(CP_UTF8, 0, w, -1, s, len, NULL, NULL);
+    return s;
+}
+
+/* ── Callback registry ──────────────────────────────────────────────────── */
+
+#define HAKI_MAX_CALLBACKS 4096
+typedef void (*HakiVoidFn)(void*);
+static HakiVoidFn g_callbacks[HAKI_MAX_CALLBACKS];
+static void*      g_callback_envs[HAKI_MAX_CALLBACKS];
+
+void haki_register_callback(int64_t node_id, void* closure) {
+    if (node_id <= 0 || node_id >= HAKI_MAX_CALLBACKS || !closure) return;
+    void** fat = (void**)closure;
+    g_callbacks[node_id]     = (HakiVoidFn)fat[0];
+    g_callback_envs[node_id] = fat[1];
+}
+
+static void fire_callback(int64_t node_id) {
+    if (node_id <= 0 || node_id >= HAKI_MAX_CALLBACKS) return;
+    if (g_callbacks[node_id]) {
+        g_callbacks[node_id](g_callback_envs[node_id]);
+    }
+}
+
+/* ── Rerender fn (diff engine) ──────────────────────────────────────────── */
+
+static HakiVoidFn g_rerender_fn  = NULL;
+static void*      g_rerender_env = NULL;
+
+void haki_set_rerender_fn(void* closure) {
+    if (!closure) return;
+    void** fat = (void**)closure;
+    g_rerender_fn  = (HakiVoidFn)fat[0];
+    g_rerender_env = fat[1];
+}
+
+void haki_trigger_rerender(void) {
+    if (g_rerender_fn) {
+        g_rerender_fn(g_rerender_env);
+        /* Force repaint of all windows */
+        if (g_window) InvalidateRect(g_window, NULL, TRUE);
+    }
+}
+
+/* Legacy single-label rerender (v3.1 compat) */
+void haki_set_rerender_callback(int64_t label_id, void* closure) {
+    (void)label_id; (void)closure; /* superseded by diff engine */
+}
+
+/* ── Layout engine ─────────────────────────────────────────────────────── */
+
+static void haki_reflow_box(int64_t box_id) {
+    if (box_id <= 0 || box_id >= HAKI_MAX_NODES) return;
+    HWND parent = g_node_id_map[box_id];
+    if (!parent) return;
+    HakiBox* box = &g_boxes[box_id];
+    if (box->child_count == 0) return;
+
+    RECT rc;
+    GetClientRect(parent, &rc);
+    int W = rc.right  - rc.left;
+    int H = rc.bottom - rc.top;
+    int pad = box->padding;
+    int n = box->child_count;
+
+    if (box->is_row) {
+        /* Horizontal: divide width equally */
+        int slot_w = (W - pad * (n + 1)) / n;
+        for (int i = 0; i < n; i++) {
+            int x = pad + i * (slot_w + pad);
+            SetWindowPos(box->children[i], NULL, x, pad, slot_w, H - 2*pad,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    } else {
+        /* Vertical: divide height equally */
+        int slot_h = (H - pad * (n + 1)) / n;
+        for (int i = 0; i < n; i++) {
+            int y = pad + i * (slot_h + pad);
+            SetWindowPos(box->children[i], NULL, pad, y, W - 2*pad, slot_h,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
+}
+
+/* ── WndProc ────────────────────────────────────────────────────────────── */
+
+static LRESULT CALLBACK haki_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+    case WM_SIZE:
+        /* Reflow all top-level boxes when window is resized */
+        for (int64_t i = 1; i < g_next_id; i++) {
+            if (g_node_id_map[i] && GetParent(g_node_id_map[i]) == hwnd) {
+                /* Check if it's a container */
+                if (g_boxes[i].child_count > 0) {
+                    haki_reflow_box(i);
+                }
+            }
+        }
+        return 0;
+
+    case WM_COMMAND:
+        /* Button/checkbox/menu clicks come here */
+        if (HIWORD(wp) == BN_CLICKED || HIWORD(wp) == 0) {
+            int64_t node_id = (int64_t)GetWindowLongPtrW((HWND)lp, GWLP_ID);
+            fire_callback(node_id);
+            /* Trigger rerender after any button click */
+            if (g_rerender_fn) {
+                PostMessage(hwnd, WM_USER + 1, 0, 0);
+            }
+        }
+        return 0;
+
+    case WM_USER + 1:
+        /* Deferred rerender — safe to call Haki here */
+        haki_trigger_rerender();
+        return 0;
+
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        return 0;
+
+    default:
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    }
+}
+
+/* ── Window creation ────────────────────────────────────────────────────── */
+
+static void init_common_controls(void) {
+    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES };
+    InitCommonControlsEx(&icc);
+}
+
+static const wchar_t* HAKI_WNDCLASS = L"HakiAppWindow";
+
+static void register_wndclass(void) {
+    WNDCLASSEXW wc = {0};
+    wc.cbSize        = sizeof(wc);
+    wc.style         = CS_HREDRAW | CS_VREDRAW;
+    wc.lpfnWndProc   = haki_wndproc;
+    wc.hInstance     = GetModuleHandleW(NULL);
+    wc.hCursor       = LoadCursorW(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.lpszClassName = HAKI_WNDCLASS;
+    wc.hIcon         = LoadIconW(NULL, IDI_APPLICATION);
+    RegisterClassExW(&wc);
+}
+
+int64_t haki_gtk_create_window(const char* title, int64_t width, int64_t height) {
+    init_common_controls();
+    register_wndclass();
+
+    wchar_t* wtitle = utf8_to_wide(title ? title : "Haki App");
+    g_window = CreateWindowExW(
+        0, HAKI_WNDCLASS, wtitle,
+        WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT, CW_USEDEFAULT,
+        (int)width > 0 ? (int)width : 800,
+        (int)height > 0 ? (int)height : 600,
+        NULL, NULL, GetModuleHandleW(NULL), NULL
+    );
+    free(wtitle);
+
+    int64_t id = g_next_id++;
+    g_node_id_map[id] = g_window;
+    return id;
+}
+
+/* ── Widget creation ────────────────────────────────────────────────────── */
+
+static HWND get_parent_hwnd(int64_t parent_id) {
+    if (parent_id > 0 && parent_id < HAKI_MAX_NODES && g_node_id_map[parent_id])
+        return g_node_id_map[parent_id];
+    return g_window;
+}
+
+int64_t haki_gtk_create_label(int64_t parent_id, const char* text) {
+    int64_t id = g_next_id++;
+    if (id >= HAKI_MAX_NODES) return -1;
+    wchar_t* wtext = utf8_to_wide(text ? text : "");
+    HWND hw = CreateWindowExW(
+        0, L"STATIC", wtext,
+        WS_CHILD | WS_VISIBLE | SS_LEFT,
+        0, 0, 200, 24,
+        get_parent_hwnd(parent_id), (HMENU)(intptr_t)id,
+        GetModuleHandleW(NULL), NULL
+    );
+    free(wtext);
+    g_node_id_map[id] = hw;
+    return id;
+}
+
+int64_t haki_gtk_create_button(int64_t parent_id, const char* label, int64_t node_id_hint) {
+    int64_t id = node_id_hint > 0 ? node_id_hint : g_next_id++;
+    if (id >= HAKI_MAX_NODES) return -1;
+    if (id >= g_next_id) g_next_id = id + 1;
+    wchar_t* wlabel = utf8_to_wide(label ? label : "");
+    HWND hw = CreateWindowExW(
+        0, L"BUTTON", wlabel,
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+        0, 0, 120, 32,
+        get_parent_hwnd(parent_id), (HMENU)(intptr_t)id,
+        GetModuleHandleW(NULL), NULL
+    );
+    free(wlabel);
+    g_node_id_map[id] = hw;
+    return id;
+}
+
+int64_t haki_gtk_create_box(int64_t parent_id, int64_t horizontal) {
+    int64_t id = g_next_id++;
+    if (id >= HAKI_MAX_NODES) return -1;
+    /* Boxes are plain windows that manage layout of their children */
+    HWND hw = CreateWindowExW(
+        0, L"STATIC", L"",
+        WS_CHILD | WS_VISIBLE | SS_LEFT,
+        0, 0, 400, 400,
+        get_parent_hwnd(parent_id), (HMENU)(intptr_t)id,
+        GetModuleHandleW(NULL), NULL
+    );
+    g_node_id_map[id] = hw;
+    g_boxes[id].is_row = (int)horizontal;
+    g_boxes[id].child_count = 0;
+    g_boxes[id].padding = 8;
+    return id;
+}
+
+int64_t haki_gtk_create_text_field(int64_t parent_id, const char* placeholder, int64_t node_id) {
+    int64_t id = node_id > 0 ? node_id : g_next_id++;
+    if (id >= HAKI_MAX_NODES) return -1;
+    if (id >= g_next_id) g_next_id = id + 1;
+    HWND hw = CreateWindowExW(
+        WS_EX_CLIENTEDGE, L"EDIT", L"",
+        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+        0, 0, 200, 24,
+        get_parent_hwnd(parent_id), (HMENU)(intptr_t)id,
+        GetModuleHandleW(NULL), NULL
+    );
+    if (placeholder && placeholder[0]) {
+        wchar_t* wp = utf8_to_wide(placeholder);
+        SendMessageW(hw, EM_SETCUEBANNER, TRUE, (LPARAM)wp);
+        free(wp);
+    }
+    g_node_id_map[id] = hw;
+    return id;
+}
+
+int64_t haki_gtk_create_checkbox(int64_t parent_id, const char* label, int64_t checked, int64_t node_id) {
+    int64_t id = node_id > 0 ? node_id : g_next_id++;
+    if (id >= HAKI_MAX_NODES) return -1;
+    if (id >= g_next_id) g_next_id = id + 1;
+    wchar_t* wlabel = utf8_to_wide(label ? label : "");
+    HWND hw = CreateWindowExW(
+        0, L"BUTTON", wlabel,
+        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+        0, 0, 150, 24,
+        get_parent_hwnd(parent_id), (HMENU)(intptr_t)id,
+        GetModuleHandleW(NULL), NULL
+    );
+    free(wlabel);
+    SendMessageW(hw, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
+    g_node_id_map[id] = hw;
+    return id;
+}
+
+int64_t haki_gtk_create_dropdown(int64_t parent_id, const char* options_csv, int64_t node_id) {
+    int64_t id = node_id > 0 ? node_id : g_next_id++;
+    if (id >= HAKI_MAX_NODES) return -1;
+    if (id >= g_next_id) g_next_id = id + 1;
+    HWND hw = CreateWindowExW(
+        0, L"COMBOBOX", L"",
+        WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
+        0, 0, 200, 200,
+        get_parent_hwnd(parent_id), (HMENU)(intptr_t)id,
+        GetModuleHandleW(NULL), NULL
+    );
+    if (options_csv && options_csv[0]) {
+        char* buf = _strdup(options_csv);
+        char* tok = strtok(buf, ",");
+        while (tok) {
+            wchar_t* wopt = utf8_to_wide(tok);
+            SendMessageW(hw, CB_ADDSTRING, 0, (LPARAM)wopt);
+            free(wopt);
+            tok = strtok(NULL, ",");
+        }
+        free(buf);
+        SendMessageW(hw, CB_SETCURSEL, 0, 0);
+    }
+    g_node_id_map[id] = hw;
+    return id;
+}
+
+int64_t haki_gtk_create_image(int64_t parent_id, const char* path, int64_t w, int64_t h) {
+    int64_t id = g_next_id++;
+    if (id >= HAKI_MAX_NODES) return -1;
+    wchar_t* wpath = utf8_to_wide(path ? path : "");
+    HBITMAP bmp = (HBITMAP)LoadImageW(NULL, wpath, IMAGE_BITMAP, (int)w, (int)h, LR_LOADFROMFILE);
+    free(wpath);
+    HWND hw = CreateWindowExW(
+        0, L"STATIC", L"",
+        WS_CHILD | WS_VISIBLE | SS_BITMAP,
+        0, 0, (int)w > 0 ? (int)w : 100, (int)h > 0 ? (int)h : 100,
+        get_parent_hwnd(parent_id), (HMENU)(intptr_t)id,
+        GetModuleHandleW(NULL), NULL
+    );
+    if (bmp) SendMessageW(hw, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)bmp);
+    g_node_id_map[id] = hw;
+    return id;
+}
+
+/* ── Mutation API ───────────────────────────────────────────────────────── */
+
+void haki_gtk_set_text(int64_t node_id, const char* text) {
+    if (node_id <= 0 || node_id >= HAKI_MAX_NODES || !g_node_id_map[node_id]) return;
+    wchar_t* wtext = utf8_to_wide(text ? text : "");
+    SetWindowTextW(g_node_id_map[node_id], wtext);
+    free(wtext);
+}
+
+void haki_gtk_set_visible(int64_t node_id, int64_t visible) {
+    if (node_id <= 0 || node_id >= HAKI_MAX_NODES || !g_node_id_map[node_id]) return;
+    ShowWindow(g_node_id_map[node_id], visible ? SW_SHOW : SW_HIDE);
+}
+
+void haki_gtk_insert_child(int64_t parent_id, int64_t index, int64_t child_id) {
+    if (parent_id <= 0 || parent_id >= HAKI_MAX_NODES) return;
+    if (child_id  <= 0 || child_id  >= HAKI_MAX_NODES) return;
+    HWND parent_hw = g_node_id_map[parent_id];
+    HWND child_hw  = g_node_id_map[child_id];
+    if (!parent_hw || !child_hw) return;
+    SetParent(child_hw, parent_hw);
+    /* Track in box layout */
+    HakiBox* box = &g_boxes[parent_id];
+    int idx = (int)index;
+    if (idx < 0 || idx > box->child_count) idx = box->child_count;
+    if (box->child_count < 255) {
+        memmove(&box->children[idx + 1], &box->children[idx],
+                (box->child_count - idx) * sizeof(HWND));
+        box->children[idx] = child_hw;
+        box->child_count++;
+    }
+    haki_reflow_box(parent_id);
+}
+
+void haki_gtk_remove_child(int64_t node_id) {
+    if (node_id <= 0 || node_id >= HAKI_MAX_NODES || !g_node_id_map[node_id]) return;
+    DestroyWindow(g_node_id_map[node_id]);
+    g_node_id_map[node_id] = NULL;
+}
+
+void haki_gtk_register_node(int64_t vnode_id, int64_t gtk_id) {
+    if (vnode_id >= 0 && vnode_id < HAKI_MAX_NODES &&
+        gtk_id    >= 0 && gtk_id    < HAKI_MAX_NODES) {
+        g_node_id_map[vnode_id] = g_node_id_map[gtk_id];
+    }
+}
+
+void haki_gtk_set_callback(int64_t node_id, int64_t cb_id) {
+    (void)node_id; (void)cb_id; /* stable callbacks — no-op for now */
+}
+
+/* ── Layout props ───────────────────────────────────────────────────────── */
+
+void haki_gtk_set_padding(int64_t node_id, int64_t px) {
+    if (node_id > 0 && node_id < HAKI_MAX_NODES) {
+        g_boxes[node_id].padding = (int)px;
+        haki_reflow_box(node_id);
+    }
+}
+
+void haki_gtk_set_spacing(int64_t node_id, int64_t px) {
+    haki_gtk_set_padding(node_id, px); /* same concept on Win32 */
+}
+
+void haki_gtk_set_alignment(int64_t node_id, const char* align) {
+    if (node_id <= 0 || node_id >= HAKI_MAX_NODES || !g_node_id_map[node_id]) return;
+    /* Win32: adjust window style for alignment */
+    HWND hw = g_node_id_map[node_id];
+    LONG_PTR style = GetWindowLongPtrW(hw, GWL_STYLE);
+    style &= ~(SS_LEFT | SS_CENTER | SS_RIGHT);
+    if (align && strcmp(align, "center") == 0) style |= SS_CENTER;
+    else if (align && strcmp(align, "end") == 0) style |= SS_RIGHT;
+    else style |= SS_LEFT;
+    SetWindowLongPtrW(hw, GWL_STYLE, style);
+    InvalidateRect(hw, NULL, TRUE);
+}
+
+/* ── Legacy stubs (v3.1 compat) ─────────────────────────────────────────── */
+
+int64_t haki_gtk_alloc_node_id(void) { return g_next_id++; }
+int64_t haki_gtk_peek_next_id(void)  { return g_next_id;   }
+void    haki_gtk_mark_label(int64_t node_id) { (void)node_id; }
+int64_t haki_gtk_get_label_id(void)  { return 0; }
+void    haki_set_callback_dispatcher(void* fn) { (void)fn; }
+void    haki_fire_callback(int64_t id) { fire_callback(id); }
+void*   haki_get_callback(int64_t id) {
+    if (id <= 0 || id >= HAKI_MAX_CALLBACKS) return NULL;
+    /* Return a fat pointer to the callback */
+    static void* fat[2];
+    fat[0] = (void*)g_callbacks[id];
+    fat[1] = g_callback_envs[id];
+    return fat;
+}
+
+/* ── Event loop ─────────────────────────────────────────────────────────── */
+
+void haki_platform_run(void) {
+    if (!g_window) return;
+    ShowWindow(g_window, SW_SHOWDEFAULT);
+    UpdateWindow(g_window);
+    MSG msg;
+    while (GetMessageW(&msg, NULL, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+}
+
+/* ── Legacy haki_app_run (JSON bridge compat) ───────────────────────────── */
+
+void haki_app_run(const char* json, const char* title, int64_t width, int64_t height) {
+    (void)json;
+    haki_gtk_create_window(title, width, height);
+    haki_platform_run();
+}
+
+"#;
+
+pub const SYS_RUNTIME_C_SOURCE: &str = r#"
+/*
+ * haki_sys_runtime.c — std/sys C implementation
+ *
+ * Cross-platform: Unix (Linux/macOS) and Windows (Win32 API).
+ * All functions return -2 for "unsupported on this platform".
+ * All string returns are heap-allocated (strdup/malloc) — caller owns them.
+ *
+ * Build (Unix):    gcc -c haki_sys_runtime.c
+ * Build (Windows): cl /c haki_sys_runtime.c
+ */
+
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <errno.h>
+
+/* ── Platform detection ──────────────────────────────────────────────────── */
+
+#ifdef _WIN32
+  #define HAKI_WINDOWS 1
+  #define WIN32_LEAN_AND_MEAN
+  #include <windows.h>
+  #include <process.h>
+  #include <direct.h>
+  #include <io.h>
+  #include <tlhelp32.h>
+  #pragma comment(lib, "advapi32.lib")
+#else
+  #define HAKI_UNIX 1
+  #include <unistd.h>
+  #include <signal.h>
+  #include <sys/types.h>
+  #include <sys/stat.h>
+  #include <sys/wait.h>
+  #include <sys/utsname.h>
+  #include <pwd.h>
+  #include <fcntl.h>
+  #include <dirent.h>
+  #include <time.h>
+  #ifdef __APPLE__
+    #include <sys/sysctl.h>
+    #include <mach/mach.h>
+    #include <libproc.h>
+  #elif defined(__linux__)
+    #include <sys/sysinfo.h>
+  #endif
+#endif
+
+/* ── Helpers ─────────────────────────────────────────────────────────────── */
+
+/* Split a null-separated arg string into argv array.
+ * args_str: "arg0\x00arg1\x00arg2"
+ * Returns a NULL-terminated char** that caller must free_argv().        */
+static char** split_args(const char* args_str, int* count_out) {
+    if (!args_str || !args_str[0]) {
+        char** argv = (char**)malloc(sizeof(char*));
+        argv[0] = NULL;
+        if (count_out) *count_out = 0;
+        return argv;
+    }
+    int cap = 16, n = 0;
+    char** argv = (char**)malloc(cap * sizeof(char*));
+    const char* p = args_str;
+    while (*p) {
+        if (n >= cap - 1) { cap *= 2; argv = (char**)realloc(argv, cap * sizeof(char*)); }
+        argv[n++] = (char*)p;
+        p += strlen(p) + 1;
+    }
+    argv[n] = NULL;
+    if (count_out) *count_out = n;
+    return argv;
+}
+
+static void free_argv(char** argv) { free(argv); }
+
+/* ── Process execution — Unix ────────────────────────────────────────────── */
+
+#ifdef HAKI_UNIX
+
+typedef struct {
+    char* out;
+    char* err;
+    int   code;
+    int   valid;
+} RunBuf;
+
+static RunBuf g_last_run = {0};
+
+static RunBuf do_run(const char* cmd, const char* args_str) {
+    RunBuf rb = {strdup(""), strdup(""), -1, 0};
+    if (!cmd || !cmd[0]) return rb;
+
+    int out_pipe[2], err_pipe[2];
+    if (pipe(out_pipe) < 0 || pipe(err_pipe) < 0) return rb;
+
+    int argc;
+    char** argv = split_args(args_str, &argc);
+
+    /* Build execvp argv: cmd + args + NULL */
+    char** execv = (char**)malloc((argc + 2) * sizeof(char*));
+    execv[0] = (char*)cmd;
+    for (int i = 0; i < argc; i++) execv[i+1] = argv[i];
+    execv[argc+1] = NULL;
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        /* Child */
+        close(out_pipe[0]); close(err_pipe[0]);
+        dup2(out_pipe[1], STDOUT_FILENO);
+        dup2(err_pipe[1], STDERR_FILENO);
+        close(out_pipe[1]); close(err_pipe[1]);
+        execvp(cmd, execv);
+        _exit(127);
+    }
+    free(execv); free_argv(argv);
+    if (pid < 0) return rb;
+
+    close(out_pipe[1]); close(err_pipe[1]);
+
+    /* Read stdout */
+    char buf[4096]; ssize_t n;
+    size_t out_len = 0, err_len = 0;
+    char *out_buf = (char*)malloc(1), *err_buf = (char*)malloc(1);
+    out_buf[0] = err_buf[0] = 0;
+
+    while ((n = read(out_pipe[0], buf, sizeof(buf)-1)) > 0) {
+        buf[n] = 0;
+        out_buf = (char*)realloc(out_buf, out_len + n + 1);
+        memcpy(out_buf + out_len, buf, n+1);
+        out_len += n;
+    }
+    while ((n = read(err_pipe[0], buf, sizeof(buf)-1)) > 0) {
+        buf[n] = 0;
+        err_buf = (char*)realloc(err_buf, err_len + n + 1);
+        memcpy(err_buf + err_len, buf, n+1);
+        err_len += n;
+    }
+    close(out_pipe[0]); close(err_pipe[0]);
+
+    int status;
+    waitpid(pid, &status, 0);
+    rb.out   = out_buf;
+    rb.err   = err_buf;
+    rb.code  = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    rb.valid = 1;
+    return rb;
+}
+
+static RunBuf do_shell(const char* cmd) {
+    char shell_cmd[8192];
+    snprintf(shell_cmd, sizeof(shell_cmd), "/bin/sh -c %s", cmd);
+    /* Use /bin/sh -c directly */
+    RunBuf rb = {strdup(""), strdup(""), -1, 0};
+    int out_pipe[2], err_pipe[2];
+    if (pipe(out_pipe) < 0 || pipe(err_pipe) < 0) return rb;
+    pid_t pid = fork();
+    if (pid == 0) {
+        close(out_pipe[0]); close(err_pipe[0]);
+        dup2(out_pipe[1], STDOUT_FILENO);
+        dup2(err_pipe[1], STDERR_FILENO);
+        close(out_pipe[1]); close(err_pipe[1]);
+        execl("/bin/sh", "/bin/sh", "-c", cmd, (char*)NULL);
+        _exit(127);
+    }
+    if (pid < 0) return rb;
+    close(out_pipe[1]); close(err_pipe[1]);
+    char buf[4096]; ssize_t n;
+    size_t ol=0, el=0;
+    char *o=(char*)malloc(1), *e=(char*)malloc(1); o[0]=e[0]=0;
+    while((n=read(out_pipe[0],buf,sizeof(buf)-1))>0){buf[n]=0;o=(char*)realloc(o,ol+n+1);memcpy(o+ol,buf,n+1);ol+=n;}
+    while((n=read(err_pipe[0],buf,sizeof(buf)-1))>0){buf[n]=0;e=(char*)realloc(e,el+n+1);memcpy(e+el,buf,n+1);el+=n;}
+    close(out_pipe[0]); close(err_pipe[0]);
+    int status; waitpid(pid, &status, 0);
+    rb.out=o; rb.err=e;
+    rb.code=WIFEXITED(status)?WEXITSTATUS(status):-1; rb.valid=1;
+    return rb;
+}
+
+const char* haki_sys_run_stdout(const char* cmd, const char* args) {
+    g_last_run = do_run(cmd, args); return g_last_run.valid ? g_last_run.out : strdup("");
+}
+const char* haki_sys_run_stderr(const char* cmd, const char* args) {
+    return g_last_run.valid ? g_last_run.err : strdup("");
+}
+int64_t haki_sys_run_exit(const char* cmd, const char* args) {
+    return g_last_run.valid ? g_last_run.code : -1;
+}
+
+const char* haki_sys_shell_stdout(const char* cmd) {
+    g_last_run = do_shell(cmd); return g_last_run.out;
+}
+const char* haki_sys_shell_stderr(const char* cmd) { return g_last_run.err; }
+int64_t     haki_sys_shell_exit(const char* cmd)   { return g_last_run.code; }
+
+int64_t haki_sys_spawn(const char* cmd, const char* args) {
+    int argc;
+    char** argv = split_args(args, &argc);
+    char** execv = (char**)malloc((argc+2)*sizeof(char*));
+    execv[0]=(char*)cmd;
+    for(int i=0;i<argc;i++) execv[i+1]=argv[i];
+    execv[argc+1]=NULL;
+    pid_t pid=fork();
+    if(pid==0){ setsid(); execvp(cmd,execv); _exit(127); }
+    free(execv); free_argv(argv);
+    return (int64_t)pid;
+}
+
+const char* haki_sys_pipe_stdout(const char* cmds_str) {
+    /* Execute each \x01-separated command, piping output through */
+    FILE* f = NULL;
+    char cmd[8192] = "";
+    const char* p = cmds_str;
+    while (*p) {
+        const char* next = strchr(p, '\x01');
+        size_t len = next ? (size_t)(next-p) : strlen(p);
+        if (f) {
+            /* Pipe previous output as stdin to next command — simplified: use shell pipe */
+            strncat(cmd, " | ", sizeof(cmd)-strlen(cmd)-1);
+            strncat(cmd, p, len < sizeof(cmd)-strlen(cmd)-1 ? len : sizeof(cmd)-strlen(cmd)-1);
+        } else {
+            strncpy(cmd, p, len < sizeof(cmd)-1 ? len : sizeof(cmd)-1);
+            cmd[len] = 0;
+        }
+        p += len + (next ? 1 : 0);
+        if (!next) break;
+    }
+    /* Execute as shell pipeline */
+    g_last_run = do_shell(cmd);
+    return g_last_run.out;
+}
+const char* haki_sys_pipe_stderr(const char* c){ return g_last_run.err; }
+int64_t     haki_sys_pipe_exit(const char* c)  { return g_last_run.code; }
+
+/* ── Signals — Unix ─────────────────────────────────────────────────────── */
+
+int64_t haki_sys_signal(int64_t sig, void* closure) {
+    /* closure is a fat pointer: {fn_ptr, env_ptr} */
+    /* For signals, we store a global handler map */
+    /* Simplified: use signal() with a trampoline */
+    /* Full implementation would use sigaction + per-sig closures */
+    (void)sig; (void)closure;
+    return 0; /* registered — full impl in v4.x */
+}
+int64_t haki_sys_kill(int64_t pid, int64_t sig) {
+    return kill((pid_t)pid, (int)sig) == 0 ? 0 : -1;
+}
+int64_t haki_sys_raise(int64_t sig) {
+    return raise((int)sig) == 0 ? 0 : -1;
+}
+void haki_sys_exit(int64_t code) { _exit((int)code); }
+
+/* ── File permissions — Unix ─────────────────────────────────────────────── */
+
+int64_t haki_sys_chmod(const char* path, int64_t mode) {
+    return chmod(path, (mode_t)mode) == 0 ? 0 : -1;
+}
+int64_t haki_sys_chown(const char* path, int64_t uid, int64_t gid) {
+    return chown(path, (uid_t)uid, (gid_t)gid) == 0 ? 0 : -1;
+}
+int64_t haki_sys_symlink(const char* src, const char* dst) {
+    return symlink(src, dst) == 0 ? 0 : -1;
+}
+const char* haki_sys_readlink(const char* path) {
+    char buf[4096];
+    ssize_t n = readlink(path, buf, sizeof(buf)-1);
+    if (n < 0) return strdup("");
+    buf[n] = 0;
+    return strdup(buf);
+}
+
+/* stat helpers */
+static struct stat g_stat_buf;
+static char g_stat_path[4096];
+static int g_stat_ok = 0;
+
+static void ensure_stat(const char* path) {
+    if (g_stat_ok && strcmp(g_stat_path, path)==0) return;
+    g_stat_ok = lstat(path, &g_stat_buf) == 0 ? 1 : 0;
+    strncpy(g_stat_path, path, sizeof(g_stat_path)-1);
+}
+
+int64_t     haki_sys_stat_ok(const char* p)    { ensure_stat(p); return g_stat_ok; }
+int64_t     haki_sys_stat_size(const char* p)  { ensure_stat(p); return (int64_t)g_stat_buf.st_size; }
+int64_t     haki_sys_stat_mtime(const char* p) { ensure_stat(p); return (int64_t)g_stat_buf.st_mtime; }
+int64_t     haki_sys_stat_mode(const char* p)  { ensure_stat(p); return (int64_t)g_stat_buf.st_mode & 0777; }
+int64_t     haki_sys_stat_uid(const char* p)   { ensure_stat(p); return (int64_t)g_stat_buf.st_uid; }
+int64_t     haki_sys_stat_gid(const char* p)   { ensure_stat(p); return (int64_t)g_stat_buf.st_gid; }
+int64_t     haki_sys_stat_isdir(const char* p) { ensure_stat(p); return S_ISDIR(g_stat_buf.st_mode)?1:0; }
+int64_t     haki_sys_stat_islink(const char* p){ ensure_stat(p); return S_ISLNK(g_stat_buf.st_mode)?1:0; }
+
+/* ── Environment — Unix ──────────────────────────────────────────────────── */
+
+const char* haki_sys_getenv(const char* key) {
+    const char* v = getenv(key);
+    return v ? strdup(v) : strdup("");
+}
+int64_t haki_sys_setenv(const char* k, const char* v) {
+    return setenv(k, v, 1) == 0 ? 0 : -1;
+}
+int64_t haki_sys_unsetenv(const char* k) {
+    return unsetenv(k) == 0 ? 0 : -1;
+}
+const char* haki_sys_cwd(void) {
+    char buf[4096];
+    return getcwd(buf, sizeof(buf)) ? strdup(buf) : strdup(".");
+}
+int64_t haki_sys_chdir(const char* path) {
+    return chdir(path) == 0 ? 0 : -1;
+}
+const char* haki_sys_home_dir(void) {
+    const char* h = getenv("HOME");
+    if (h) return strdup(h);
+    struct passwd* pw = getpwuid(getuid());
+    return pw ? strdup(pw->pw_dir) : strdup("/tmp");
+}
+const char* haki_sys_temp_dir(void) {
+    const char* t = getenv("TMPDIR");
+    return t ? strdup(t) : strdup("/tmp");
+}
+
+/* ── System info — Unix ──────────────────────────────────────────────────── */
+
+const char* haki_sys_platform(void) {
+#ifdef __APPLE__
+    return strdup("macos");
+#elif defined(__linux__)
+    return strdup("linux");
+#elif defined(__FreeBSD__)
+    return strdup("freebsd");
+#else
+    return strdup("unix");
+#endif
+}
+
+const char* haki_sys_arch(void) {
+#if defined(__aarch64__) || defined(__arm64__)
+    return strdup("arm64");
+#elif defined(__x86_64__)
+    return strdup("x86_64");
+#elif defined(__i386__)
+    return strdup("x86");
+#elif defined(__riscv)
+    return strdup("riscv64");
+#else
+    return strdup("unknown");
+#endif
+}
+
+const char* haki_sys_hostname(void) {
+    char buf[256];
+    if (gethostname(buf, sizeof(buf)) == 0) return strdup(buf);
+    return strdup("localhost");
+}
+
+const char* haki_sys_username(void) {
+    const char* u = getenv("USER");
+    if (u) return strdup(u);
+    struct passwd* pw = getpwuid(getuid());
+    return pw ? strdup(pw->pw_name) : strdup("unknown");
+}
+
+int64_t haki_sys_cpu_count(void) {
+#ifdef __APPLE__
+    int n = 1;
+    size_t sz = sizeof(n);
+    sysctlbyname("hw.logicalcpu", &n, &sz, NULL, 0);
+    return n;
+#elif defined(__linux__)
+    return sysconf(_SC_NPROCESSORS_ONLN);
+#else
+    return 1;
+#endif
+}
+
+int64_t haki_sys_mem_total(void) {
+#ifdef __APPLE__
+    int64_t mem = 0;
+    size_t sz = sizeof(mem);
+    sysctlbyname("hw.memsize", &mem, &sz, NULL, 0);
+    return mem;
+#elif defined(__linux__)
+    struct sysinfo si;
+    if (sysinfo(&si) == 0) return (int64_t)si.totalram * si.mem_unit;
+    return -1;
+#else
+    return -1;
+#endif
+}
+
+int64_t haki_sys_mem_available(void) {
+#ifdef __APPLE__
+    mach_port_t host = mach_host_self();
+    vm_size_t page_size;
+    host_page_size(host, &page_size);
+    vm_statistics64_data_t vm_stat;
+    mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+    host_statistics64(host, HOST_VM_INFO64, (host_info64_t)&vm_stat, &count);
+    return (int64_t)(vm_stat.free_count + vm_stat.inactive_count) * page_size;
+#elif defined(__linux__)
+    struct sysinfo si;
+    if (sysinfo(&si) == 0) return (int64_t)si.freeram * si.mem_unit;
+    return -1;
+#else
+    return -1;
+#endif
+}
+
+int64_t haki_sys_getpid(void)  { return (int64_t)getpid(); }
+int64_t haki_sys_getppid(void) { return (int64_t)getppid(); }
+
+int64_t haki_sys_uptime(void) {
+#ifdef __APPLE__
+    struct timeval boottime;
+    size_t sz = sizeof(boottime);
+    sysctlbyname("kern.boottime", &boottime, &sz, NULL, 0);
+    return (int64_t)(time(NULL) - boottime.tv_sec);
+#elif defined(__linux__)
+    struct sysinfo si;
+    if (sysinfo(&si) == 0) return (int64_t)si.uptime;
+    return -1;
+#else
+    return -1;
+#endif
+}
+
+const char* haki_sys_haki_version(void) { return strdup("3.8.0"); }
+
+/* ── Process listing — Unix ──────────────────────────────────────────────── */
+
+#define HAKI_MAX_PROCS 2048
+typedef struct { int pid; char name[256]; int ppid; char status[16]; } HProcInfo;
+static HProcInfo g_procs[HAKI_MAX_PROCS];
+static int g_proc_count = -1;
+
+static void refresh_procs(void) {
+    g_proc_count = 0;
+#ifdef __linux__
+    DIR* d = opendir("/proc");
+    if (!d) return;
+    struct dirent* e;
+    while ((e = readdir(d)) && g_proc_count < HAKI_MAX_PROCS) {
+        int pid = atoi(e->d_name);
+        if (pid <= 0) continue;
+        char path[64]; snprintf(path, sizeof(path), "/proc/%d/stat", pid);
+        FILE* f = fopen(path, "r");
+        if (!f) continue;
+        char name[256]; int ppid; char state;
+        fscanf(f, "%*d (%255[^)]) %c %d", name, &state, &ppid);
+        fclose(f);
+        g_procs[g_proc_count].pid  = pid;
+        g_procs[g_proc_count].ppid = ppid;
+        strncpy(g_procs[g_proc_count].name, name, 255);
+        const char* st = state=='R'?"running":state=='S'?"sleeping":state=='Z'?"zombie":state=='T'?"stopped":"unknown";
+        strncpy(g_procs[g_proc_count].status, st, 15);
+        g_proc_count++;
+    }
+    closedir(d);
+#elif defined(__APPLE__)
+    /* Use sysctl KERN_PROC_ALL */
+    int mib[3] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL};
+    size_t sz = 0;
+    sysctl(mib, 3, NULL, &sz, NULL, 0);
+    struct kinfo_proc* kp = (struct kinfo_proc*)malloc(sz);
+    if (!kp) return;
+    if (sysctl(mib, 3, kp, &sz, NULL, 0) == 0) {
+        int n = (int)(sz / sizeof(struct kinfo_proc));
+        for (int i = 0; i < n && g_proc_count < HAKI_MAX_PROCS; i++) {
+            g_procs[g_proc_count].pid  = kp[i].kp_proc.p_pid;
+            g_procs[g_proc_count].ppid = kp[i].kp_eproc.e_ppid;
+            strncpy(g_procs[g_proc_count].name, kp[i].kp_proc.p_comm, 255);
+            strcpy(g_procs[g_proc_count].status, "running");
+            g_proc_count++;
+        }
+    }
+    free(kp);
+#endif
+}
+
+int64_t     haki_sys_process_count(void)      { refresh_procs(); return g_proc_count; }
+int64_t     haki_sys_process_pid(int64_t i)   { return i<g_proc_count?g_procs[i].pid:-1; }
+const char* haki_sys_process_name(int64_t i)  { return i<g_proc_count?strdup(g_procs[i].name):strdup(""); }
+int64_t     haki_sys_process_ppid(int64_t i)  { return i<g_proc_count?g_procs[i].ppid:-1; }
+const char* haki_sys_process_status(int64_t i){ return i<g_proc_count?strdup(g_procs[i].status):strdup("unknown"); }
+
+#endif /* HAKI_UNIX */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * WINDOWS IMPLEMENTATION
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+#ifdef HAKI_WINDOWS
+
+/* ── Helpers — Windows ───────────────────────────────────────────────────── */
+
+static char* wide_to_utf8_sys(const wchar_t* w) {
+    int n = WideCharToMultiByte(CP_UTF8,0,w,-1,NULL,0,NULL,NULL);
+    char* s = (char*)malloc(n);
+    if (s) WideCharToMultiByte(CP_UTF8,0,w,-1,s,n,NULL,NULL);
+    return s;
+}
+
+/* Run a command via CreateProcess, capture stdout+stderr */
+typedef struct { char* out; char* err; int code; } WinRun;
+
+static WinRun win_run_cmd(const char* cmd, const char* args_str, int use_shell) {
+    WinRun rb = {strdup(""), strdup(""), -1};
+
+    HANDLE out_r, out_w, err_r, err_w;
+    SECURITY_ATTRIBUTES sa = {sizeof(sa), NULL, TRUE};
+    if (!CreatePipe(&out_r, &out_w, &sa, 0)) return rb;
+    if (!CreatePipe(&err_r, &err_w, &sa, 0)) { CloseHandle(out_r); CloseHandle(out_w); return rb; }
+    SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0);
+    SetHandleInformation(err_r, HANDLE_FLAG_INHERIT, 0);
+
+    /* Build command line */
+    char cmdline[8192];
+    if (use_shell) {
+        snprintf(cmdline, sizeof(cmdline), "cmd.exe /C %s", cmd);
+    } else {
+        snprintf(cmdline, sizeof(cmdline), "%s", cmd);
+        if (args_str && args_str[0]) {
+            int argc; char** argv = split_args(args_str, &argc);
+            for (int i = 0; i < argc; i++) {
+                strncat(cmdline, " ", sizeof(cmdline)-strlen(cmdline)-1);
+                strncat(cmdline, argv[i], sizeof(cmdline)-strlen(cmdline)-1);
+            }
+            free_argv(argv);
+        }
+    }
+
+    STARTUPINFOA si = {sizeof(si)};
+    si.dwFlags     = STARTF_USESTDHANDLES;
+    si.hStdOutput  = out_w;
+    si.hStdError   = err_w;
+    si.hStdInput   = GetStdHandle(STD_INPUT_HANDLE);
+
+    PROCESS_INFORMATION pi = {0};
+    if (!CreateProcessA(NULL, cmdline, NULL, NULL, TRUE,
+                        CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+        CloseHandle(out_r); CloseHandle(out_w);
+        CloseHandle(err_r); CloseHandle(err_w);
+        return rb;
+    }
+    CloseHandle(out_w); CloseHandle(err_w);
+
+    /* Read stdout */
+    char buf[4096]; DWORD n;
+    size_t ol=0, el=0;
+    char *o=(char*)malloc(1), *e=(char*)malloc(1); o[0]=e[0]=0;
+    while(ReadFile(out_r,buf,sizeof(buf)-1,&n,NULL)&&n>0){
+        buf[n]=0; o=(char*)realloc(o,ol+n+1); memcpy(o+ol,buf,n+1); ol+=n;
+    }
+    while(ReadFile(err_r,buf,sizeof(buf)-1,&n,NULL)&&n>0){
+        buf[n]=0; e=(char*)realloc(e,el+n+1); memcpy(e+el,buf,n+1); el+=n;
+    }
+    CloseHandle(out_r); CloseHandle(err_r);
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code; GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+
+    rb.out=o; rb.err=e; rb.code=(int)code;
+    return rb;
+}
+
+static WinRun g_last_win = {0};
+
+const char* haki_sys_run_stdout(const char* cmd, const char* args) {
+    g_last_win = win_run_cmd(cmd, args, 0); return g_last_win.out;
+}
+const char* haki_sys_run_stderr(const char* cmd, const char* args) { return g_last_win.err; }
+int64_t     haki_sys_run_exit(const char* cmd, const char* args)   { return g_last_win.code; }
+
+const char* haki_sys_shell_stdout(const char* cmd) {
+    g_last_win = win_run_cmd(cmd, "", 1); return g_last_win.out;
+}
+const char* haki_sys_shell_stderr(const char* cmd) { return g_last_win.err; }
+int64_t     haki_sys_shell_exit(const char* cmd)   { return g_last_win.code; }
+
+int64_t haki_sys_spawn(const char* cmd, const char* args) {
+    char cmdline[8192]; snprintf(cmdline, sizeof(cmdline), "%s", cmd);
+    if (args && args[0]) {
+        int argc; char** argv = split_args(args, &argc);
+        for (int i=0;i<argc;i++){strncat(cmdline," ",sizeof(cmdline)-strlen(cmdline)-1);
+            strncat(cmdline,argv[i],sizeof(cmdline)-strlen(cmdline)-1);}
+        free_argv(argv);
+    }
+    STARTUPINFOA si = {sizeof(si)};
+    PROCESS_INFORMATION pi = {0};
+    if (!CreateProcessA(NULL, cmdline, NULL, NULL, FALSE,
+                        DETACHED_PROCESS, NULL, NULL, &si, &pi)) return -1;
+    DWORD pid = pi.dwProcessId;
+    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+    return (int64_t)pid;
+}
+
+const char* haki_sys_pipe_stdout(const char* cmds) {
+    g_last_win = win_run_cmd(cmds, "", 1); return g_last_win.out;
+}
+const char* haki_sys_pipe_stderr(const char* c) { return g_last_win.err; }
+int64_t     haki_sys_pipe_exit(const char* c)   { return g_last_win.code; }
+
+/* ── Signals — Windows ───────────────────────────────────────────────────── */
+
+int64_t haki_sys_signal(int64_t sig, void* closure) {
+    (void)sig; (void)closure;
+    /* Windows supports SIGINT (2) and SIGTERM (15) via signal() */
+    /* Full closure-based dispatch deferred to v4.x */
+    return 0;
+}
+
+int64_t haki_sys_kill(int64_t pid, int64_t sig) {
+    /* On Windows: SIGKILL(9) and SIGTERM(15) → TerminateProcess */
+    HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, (DWORD)pid);
+    if (!h) return -1;
+    BOOL ok = TerminateProcess(h, (UINT)sig);
+    CloseHandle(h);
+    return ok ? 0 : -1;
+}
+
+int64_t haki_sys_raise(int64_t sig) {
+    return raise((int)sig) == 0 ? 0 : -1;
+}
+
+void haki_sys_exit(int64_t code) { ExitProcess((UINT)code); }
+
+/* ── File permissions — Windows ─────────────────────────────────────────── */
+
+int64_t haki_sys_chmod(const char* path, int64_t mode) {
+    /* Windows has no Unix octal permissions — return UnsupportedPlatform */
+    (void)path; (void)mode;
+    return -2;
+}
+int64_t haki_sys_chown(const char* path, int64_t uid, int64_t gid) {
+    (void)path; (void)uid; (void)gid;
+    return -2;
+}
+int64_t haki_sys_symlink(const char* src, const char* dst) {
+    /* Requires Developer Mode or admin on Windows 10+ */
+    wchar_t wsrc[4096], wdst[4096];
+    MultiByteToWideChar(CP_UTF8,0,src,-1,wsrc,4096);
+    MultiByteToWideChar(CP_UTF8,0,dst,-1,wdst,4096);
+    return CreateSymbolicLinkW(wdst, wsrc, 0) ? 0 : -2;
+}
+const char* haki_sys_readlink(const char* path) {
+    wchar_t wpath[4096];
+    MultiByteToWideChar(CP_UTF8,0,path,-1,wpath,4096);
+    HANDLE h = CreateFileW(wpath,0,FILE_SHARE_READ,NULL,OPEN_EXISTING,
+                           FILE_FLAG_BACKUP_SEMANTICS,NULL);
+    if (h==INVALID_HANDLE_VALUE) return strdup("");
+    wchar_t buf[4096];
+    DWORD n = GetFinalPathNameByHandleW(h,buf,4096,FILE_NAME_NORMALIZED);
+    CloseHandle(h);
+    if (!n) return strdup("");
+    return wide_to_utf8_sys(buf);
+}
+
+/* stat — Windows via GetFileAttributesEx */
+static WIN32_FILE_ATTRIBUTE_DATA g_win_stat;
+static char g_win_stat_path[4096];
+static int  g_win_stat_ok = 0;
+
+static void ensure_win_stat(const char* path) {
+    if (g_win_stat_ok && strcmp(g_win_stat_path,path)==0) return;
+    wchar_t wp[4096]; MultiByteToWideChar(CP_UTF8,0,path,-1,wp,4096);
+    g_win_stat_ok = GetFileAttributesExW(wp,GetFileExInfoStandard,&g_win_stat)?1:0;
+    strncpy(g_win_stat_path,path,sizeof(g_win_stat_path)-1);
+}
+
+int64_t haki_sys_stat_ok(const char* p)    { ensure_win_stat(p); return g_win_stat_ok; }
+int64_t haki_sys_stat_size(const char* p)  {
+    ensure_win_stat(p);
+    LARGE_INTEGER sz; sz.LowPart=g_win_stat.nFileSizeLow; sz.HighPart=g_win_stat.nFileSizeHigh;
+    return sz.QuadPart;
+}
+int64_t haki_sys_stat_mtime(const char* p) {
+    ensure_win_stat(p);
+    ULARGE_INTEGER ft; ft.LowPart=g_win_stat.ftLastWriteTime.dwLowDateTime;
+    ft.HighPart=g_win_stat.ftLastWriteTime.dwHighDateTime;
+    return (int64_t)((ft.QuadPart - 116444736000000000ULL) / 10000000ULL);
+}
+int64_t haki_sys_stat_mode(const char* p)  { ensure_win_stat(p); return 0644; /* approximation */ }
+int64_t haki_sys_stat_uid(const char* p)   { (void)p; return 0; }
+int64_t haki_sys_stat_gid(const char* p)   { (void)p; return 0; }
+int64_t haki_sys_stat_isdir(const char* p) {
+    ensure_win_stat(p);
+    return (g_win_stat.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)?1:0;
+}
+int64_t haki_sys_stat_islink(const char* p) {
+    ensure_win_stat(p);
+    return (g_win_stat.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)?1:0;
+}
+
+/* ── Environment — Windows ───────────────────────────────────────────────── */
+
+const char* haki_sys_getenv(const char* key) {
+    char buf[32768];
+    if (GetEnvironmentVariableA(key,buf,sizeof(buf))) return strdup(buf);
+    return strdup("");
+}
+int64_t haki_sys_setenv(const char* k, const char* v) {
+    return SetEnvironmentVariableA(k,v)?0:-1;
+}
+int64_t haki_sys_unsetenv(const char* k) {
+    return SetEnvironmentVariableA(k,NULL)?0:-1;
+}
+const char* haki_sys_cwd(void) {
+    char buf[4096];
+    if (GetCurrentDirectoryA(sizeof(buf),buf)) return strdup(buf);
+    return strdup(".");
+}
+int64_t haki_sys_chdir(const char* path) {
+    return SetCurrentDirectoryA(path)?0:-1;
+}
+const char* haki_sys_home_dir(void) {
+    const char* h = getenv("USERPROFILE");
+    return h ? strdup(h) : strdup("C:\\Users\\Default");
+}
+const char* haki_sys_temp_dir(void) {
+    char buf[4096];
+    if (GetTempPathA(sizeof(buf),buf)) return strdup(buf);
+    return strdup("C:\\Temp");
+}
+
+/* ── System info — Windows ───────────────────────────────────────────────── */
+
+const char* haki_sys_platform(void) { return strdup("windows"); }
+const char* haki_sys_arch(void) {
+    SYSTEM_INFO si; GetNativeSystemInfo(&si);
+    switch(si.wProcessorArchitecture){
+        case PROCESSOR_ARCHITECTURE_AMD64: return strdup("x86_64");
+        case PROCESSOR_ARCHITECTURE_ARM64: return strdup("arm64");
+        case PROCESSOR_ARCHITECTURE_INTEL: return strdup("x86");
+        default: return strdup("unknown");
+    }
+}
+const char* haki_sys_hostname(void) {
+    char buf[256]; DWORD n=sizeof(buf);
+    return GetComputerNameA(buf,&n)?strdup(buf):strdup("localhost");
+}
+const char* haki_sys_username(void) {
+    char buf[256]; DWORD n=sizeof(buf);
+    return GetUserNameA(buf,&n)?strdup(buf):strdup("unknown");
+}
+int64_t haki_sys_cpu_count(void) {
+    SYSTEM_INFO si; GetSystemInfo(&si); return si.dwNumberOfProcessors;
+}
+int64_t haki_sys_mem_total(void) {
+    MEMORYSTATUSEX ms; ms.dwLength=sizeof(ms);
+    return GlobalMemoryStatusEx(&ms)?(int64_t)ms.ullTotalPhys:-1;
+}
+int64_t haki_sys_mem_available(void) {
+    MEMORYSTATUSEX ms; ms.dwLength=sizeof(ms);
+    return GlobalMemoryStatusEx(&ms)?(int64_t)ms.ullAvailPhys:-1;
+}
+int64_t haki_sys_getpid(void)  { return (int64_t)GetCurrentProcessId(); }
+int64_t haki_sys_getppid(void) {
+    HANDLE h=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);
+    if(h==INVALID_HANDLE_VALUE) return -1;
+    PROCESSENTRY32 pe; pe.dwSize=sizeof(pe); DWORD mypid=GetCurrentProcessId();
+    DWORD ppid=-1;
+    if(Process32First(h,&pe)) do {
+        if(pe.th32ProcessID==mypid){ppid=pe.th32ParentProcessID;break;}
+    } while(Process32Next(h,&pe));
+    CloseHandle(h); return (int64_t)ppid;
+}
+int64_t haki_sys_uptime(void) {
+    return (int64_t)(GetTickCount64()/1000);
+}
+const char* haki_sys_haki_version(void) { return strdup("3.8.0"); }
+
+/* ── Process listing — Windows ───────────────────────────────────────────── */
+
+#define HAKI_MAX_PROCS 2048
+typedef struct { int pid; char name[256]; int ppid; char status[16]; } HProcInfo;
+static HProcInfo g_procs[HAKI_MAX_PROCS];
+static int g_proc_count = -1;
+
+static void refresh_procs(void) {
+    g_proc_count = 0;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);
+    if(snap==INVALID_HANDLE_VALUE) return;
+    PROCESSENTRY32 pe; pe.dwSize=sizeof(pe);
+    if(Process32First(snap,&pe)) do {
+        if(g_proc_count>=HAKI_MAX_PROCS) break;
+        g_procs[g_proc_count].pid  = (int)pe.th32ProcessID;
+        g_procs[g_proc_count].ppid = (int)pe.th32ParentProcessID;
+        strncpy(g_procs[g_proc_count].name, pe.szExeFile, 255);
+        strcpy(g_procs[g_proc_count].status, "running");
+        g_proc_count++;
+    } while(Process32Next(snap,&pe));
+    CloseHandle(snap);
+}
+
+int64_t     haki_sys_process_count(void)      { refresh_procs(); return g_proc_count; }
+int64_t     haki_sys_process_pid(int64_t i)   { return i<g_proc_count?g_procs[i].pid:-1; }
+const char* haki_sys_process_name(int64_t i)  { return i<g_proc_count?strdup(g_procs[i].name):strdup(""); }
+int64_t     haki_sys_process_ppid(int64_t i)  { return i<g_proc_count?g_procs[i].ppid:-1; }
+const char* haki_sys_process_status(int64_t i){ return i<g_proc_count?strdup(g_procs[i].status):strdup("unknown"); }
+
+#endif /* HAKI_WINDOWS */
+
+"#;

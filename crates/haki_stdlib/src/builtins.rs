@@ -274,7 +274,8 @@ pub fn register_builtins(sym: &mut SymbolTable) {
     // ── std/json additional builtins ───────────────────────────────────────
     sym.functions.insert("jsonEncodeObject".into(), FnInfo {
         name: "jsonEncodeObject".into(), type_params: vec![],
-        params: vec![param("fields", named_ty("Map"))],
+        params: vec![param("fields", map_str_str_ty())],
+        // Map<string,string> param — matches json.haki fn object signature
         return_ty: Some(ReturnTy::Single(str_ty())),
         span: Span::dummy(), is_extern: false, extern_abi: None });
     sym.functions.insert("jsonEncodeArray".into(), FnInfo {
@@ -334,6 +335,19 @@ pub fn register_builtins(sym: &mut SymbolTable) {
         ("haki_gtk_peek_next_id",            true),   // → int
         ("haki_gtk_mark_label",              false),  // → void
         ("haki_gtk_get_label_id",            true),   // → int
+        // v3.4 new functions
+        ("haki_gtk_register_node",           false),  // → void
+        ("haki_set_rerender_fn",             false),  // → void
+        ("haki_trigger_rerender",            false),  // → void
+        ("haki_gtk_set_callback",            false),  // → void
+        ("haki_gtk_create_text_field",       true),   // → int
+        ("haki_gtk_create_checkbox",         true),   // → int
+        ("haki_gtk_create_dropdown",         true),   // → int
+        ("haki_gtk_create_image",            true),   // → int
+        ("haki_gtk_set_padding",             false),  // → void
+        ("haki_gtk_set_spacing",             false),  // → void
+        ("haki_gtk_set_alignment",           false),  // → void
+        ("haki_get_callback",                true),   // → void* closure
     ];
     for (name, returns_int) in gtk_fns {
         sym.functions.insert((*name).into(), FnInfo {
@@ -366,6 +380,12 @@ fn str_ty()   -> Ty { named_ty("string") }
 fn int_ty()   -> Ty { named_ty("int") }
 fn float_ty() -> Ty { named_ty("f64") }
 fn bool_ty()  -> Ty { named_ty("bool") }
+fn map_str_str_ty() -> Ty {
+    Ty { kind: TyKind::Generic(
+        Ident::new("Map", Span::dummy()),
+        vec![named_ty("string"), named_ty("string")]
+    ), span: Span::dummy() }
+}
 
 fn param(name: &str, ty: Ty) -> Param {
     Param { name: Ident::new(name, Span::dummy()), ty, span: Span::dummy() }

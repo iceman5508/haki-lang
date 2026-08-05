@@ -1,14 +1,25 @@
 /**
- * Haki VS Code Extension
+ * Haki VS Code Extension v0.3.0
  *
  * Activates when a .haki file is opened. Spawns `hakic lsp` as a subprocess
  * and connects it to the VS Code Language Client, which handles all the
  * JSON-RPC communication automatically.
  *
- * Features provided by hakic-lsp:
+ * Features provided by hakic-lsp (v3.5+):
  *   - Inline diagnostics (parse errors + type errors)
  *   - Hover: shows the type of any expression
- *   - Go-to-definition: jumps to function/struct/class/enum definitions
+ *   - Go-to-definition: jumps to function/struct/class/enum/annotation definitions
+ *   - Completions: f-strings, @annotations, Map iteration, channels
+ *   - Signature help: try expressions, annotation params
+ *   - Find references + rename: across modules
+ *   - Document symbols: includes annotation definitions
+ *
+ * New in v3.5:
+ *   - @annotation syntax highlighting and completion
+ *   - f"string {interpolation}" support
+ *   - `for k, v in map` snippet
+ *   - `annotation @name(params) { }` snippet
+ *   - `try expr` snippet
  */
 
 import * as path from 'path';

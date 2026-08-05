@@ -554,9 +554,12 @@ impl SymbolTable {
         let http_req_def = TypeDef {
             kind: TypeKind::Class, name: "HttpRequest".into(), type_params: vec![],
             fields: vec![
-                FieldInfo { name: "path".into(),   ty: str_ty2.clone(), mutability: Mut::Const, is_weak: false, span: Span::dummy() },
-                FieldInfo { name: "method".into(), ty: str_ty2.clone(), mutability: Mut::Const, is_weak: false, span: Span::dummy() },
-                FieldInfo { name: "body".into(),   ty: str_ty2.clone(), mutability: Mut::Const, is_weak: false, span: Span::dummy() },
+                FieldInfo { name: "path".into(),        ty: str_ty2.clone(), mutability: Mut::Const, is_weak: false, span: Span::dummy() },
+                FieldInfo { name: "method".into(),      ty: str_ty2.clone(), mutability: Mut::Const, is_weak: false, span: Span::dummy() },
+                FieldInfo { name: "body".into(),        ty: str_ty2.clone(), mutability: Mut::Const, is_weak: false, span: Span::dummy() },
+                FieldInfo { name: "contentType".into(), ty: str_ty2.clone(), mutability: Mut::Const, is_weak: false, span: Span::dummy() },
+// params field temporarily removed to diagnose Map type error
+                // FieldInfo { name: "params" -- see v3.9 fix notes 
             ],
             methods: vec![], superclass: None, span: Span::dummy(),
         };
@@ -566,8 +569,9 @@ impl SymbolTable {
         let http_resp_def = TypeDef {
             kind: TypeKind::Class, name: "HttpResponse".into(), type_params: vec![],
             fields: vec![
-                FieldInfo { name: "status".into(), ty: int_ty2.clone(), mutability: Mut::Const, is_weak: false, span: Span::dummy() },
-                FieldInfo { name: "body".into(),   ty: str_ty2.clone(), mutability: Mut::Const, is_weak: false, span: Span::dummy() },
+                FieldInfo { name: "status".into(),      ty: int_ty2.clone(), mutability: Mut::Const, is_weak: false, span: Span::dummy() },
+                FieldInfo { name: "body".into(),        ty: str_ty2.clone(), mutability: Mut::Const, is_weak: false, span: Span::dummy() },
+                FieldInfo { name: "contentType".into(), ty: str_ty2.clone(), mutability: Mut::Const, is_weak: false, span: Span::dummy() },
             ],
             methods: vec![], superclass: None, span: Span::dummy(),
         };
@@ -576,20 +580,68 @@ impl SymbolTable {
         // HttpServer
         let http_server_def = TypeDef {
             kind: TypeKind::Class, name: "HttpServer".into(), type_params: vec![],
-            fields: vec![],
+            fields: vec![
+                FieldInfo { name: "port".into(), ty: int_ty2.clone(), mutability: Mut::Const, is_weak: false, span: Span::dummy() },
+                FieldInfo { name: "host".into(), ty: str_ty2.clone(), mutability: Mut::Const, is_weak: false, span: Span::dummy() },
+            ],
             methods: vec![
-                FnInfo { name: "listen".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None, },
+                FnInfo { name: "listen".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None },
+                FnInfo { name: "listenAsync".into(), type_params: vec![], params: vec![], return_ty: Some(ReturnTy::Single(Ty { kind: TyKind::Optional(Box::new(Ty { kind: TyKind::Named(Ident::new("Error", Span::dummy())), span: Span::dummy() })), span: Span::dummy() })), span: Span::dummy(), is_extern: false, extern_abi: None },
+                FnInfo { name: "stop".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None },
+                FnInfo { name: "router".into(), type_params: vec![], params: vec![], return_ty: Some(ReturnTy::Single(Ty { kind: TyKind::Named(Ident::new("Router", Span::dummy())), span: Span::dummy() })), span: Span::dummy(), is_extern: false, extern_abi: None },
             ],
             superclass: None, span: Span::dummy(),
         };
         self.types.insert("HttpServer".into(), http_server_def);
 
+        // Router type — router.get/post/handle
+        let handler_ty = Ty { kind: TyKind::Fn(
+                    vec![Ty { kind: TyKind::Named(Ident::new("HttpRequest", Span::dummy())), span: Span::dummy() }],
+                    Some(Box::new(Ty { kind: TyKind::Named(Ident::new("HttpResponse", Span::dummy())), span: Span::dummy() })),
+                ), span: Span::dummy() };
+        let router_def = TypeDef {
+            kind: TypeKind::Class, name: "Router".into(), type_params: vec![],
+            fields: vec![],
+            methods: vec![
+                FnInfo { name: "get".into(), type_params: vec![],
+                    params: vec![
+                        Param { name: Ident::new("path", Span::dummy()), ty: str_ty2.clone(), span: Span::dummy() },
+                        Param { name: Ident::new("handler", Span::dummy()), ty: handler_ty.clone(), span: Span::dummy() },
+                    ], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None },
+                FnInfo { name: "post".into(), type_params: vec![],
+                    params: vec![
+                        Param { name: Ident::new("path", Span::dummy()), ty: str_ty2.clone(), span: Span::dummy() },
+                        Param { name: Ident::new("handler", Span::dummy()), ty: handler_ty.clone(), span: Span::dummy() },
+                    ], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None },
+                FnInfo { name: "put".into(), type_params: vec![],
+                    params: vec![
+                        Param { name: Ident::new("path", Span::dummy()), ty: str_ty2.clone(), span: Span::dummy() },
+                        Param { name: Ident::new("handler", Span::dummy()), ty: handler_ty.clone(), span: Span::dummy() },
+                    ], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None },
+                FnInfo { name: "handle".into(), type_params: vec![],
+                    params: vec![
+                        Param { name: Ident::new("req", Span::dummy()), ty: Ty { kind: TyKind::Named(Ident::new("HttpRequest", Span::dummy())), span: Span::dummy() }, span: Span::dummy() },
+                    ],
+                    return_ty: Some(ReturnTy::Single(Ty { kind: TyKind::Named(Ident::new("HttpResponse", Span::dummy())), span: Span::dummy() })), span: Span::dummy(), is_extern: false, extern_abi: None },
+            ],
+            superclass: None, span: Span::dummy(),
+        };
+        self.types.insert("Router".into(), router_def);
+
         // HttpServer constructor as free function
+        // handler: fn(HttpRequest) -> HttpResponse
+        let http_handler_ty = Ty {
+            kind: TyKind::Fn(
+                vec![Ty { kind: TyKind::Named(Ident::new("HttpRequest", Span::dummy())), span: Span::dummy() }],
+                Some(Box::new(Ty { kind: TyKind::Named(Ident::new("HttpResponse", Span::dummy())), span: Span::dummy() })),
+            ),
+            span: Span::dummy(),
+        };
         self.functions.insert("HttpServer".into(), FnInfo {
             name: "HttpServer".into(), type_params: vec![],
             params: vec![
                 Param { name: Ident::new("port",    Span::dummy()), ty: int_ty2.clone(), span: Span::dummy() },
-                Param { name: Ident::new("handler", Span::dummy()), ty: str_ty2.clone(), span: Span::dummy() },
+                Param { name: Ident::new("handler", Span::dummy()), ty: http_handler_ty, span: Span::dummy() },
             ],
             return_ty: Some(ReturnTy::Single(Ty { kind: TyKind::Named(Ident::new("HttpServer", Span::dummy())), span: Span::dummy() })),
             span: Span::dummy(),
@@ -1128,6 +1180,32 @@ impl SymbolTable {
             span: Span::dummy(),
         };
         self.types.insert("MutexGuard".into(), mutex_guard_def);
+
+        // `Chan<T>` — concurrent channel
+        let chan_def = TypeDef {
+            kind: TypeKind::Class,
+            name: "Chan".into(),
+            type_params: vec!["T".into()],
+            fields: vec![],
+            methods: vec![
+                FnInfo { name: "send".into(), type_params: vec![], params: vec![Param {
+                    name: Ident::new("value", Span::dummy()),
+                    ty: Ty { kind: TyKind::Named(Ident::new("T", Span::dummy())), span: Span::dummy() },
+                    span: Span::dummy(),
+                }], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None },
+                FnInfo { name: "receive".into(), type_params: vec![], params: vec![], return_ty: Some(ReturnTy::Single(Ty {
+                    kind: TyKind::Optional(Box::new(Ty { kind: TyKind::Named(Ident::new("T", Span::dummy())), span: Span::dummy() })),
+                    span: Span::dummy(),
+                })), span: Span::dummy(), is_extern: false, extern_abi: None },
+                FnInfo { name: "close".into(), type_params: vec![], params: vec![], return_ty: None, span: Span::dummy(), is_extern: false, extern_abi: None },
+                FnInfo { name: "isClosed".into(), type_params: vec![], params: vec![], return_ty: Some(ReturnTy::Single(Ty {
+                    kind: TyKind::Named(Ident::new("bool", Span::dummy())), span: Span::dummy(),
+                })), span: Span::dummy(), is_extern: false, extern_abi: None },
+            ],
+            superclass: None,
+            span: Span::dummy(),
+        };
+        self.types.insert("Chan".into(), chan_def);
     }
 
     // ── Collection pass ───────────────────────────────────────────────────
@@ -1153,6 +1231,9 @@ impl SymbolTable {
                 self.functions.insert(f.name.name.clone(), FnInfo::from_extern_fn_def(f));
                 Ok(())
             }
+            // AnnotationDef items are erased by apply_annotations() before typecheck.
+            // Any that reach here are ignored — they have no runtime representation.
+            ItemKind::AnnotationDef(_) => Ok(()),
         }
     }
 

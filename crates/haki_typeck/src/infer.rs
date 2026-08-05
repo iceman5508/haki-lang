@@ -134,6 +134,12 @@ impl Inferer {
             // ExternFn: no body to infer — pass through as-is.
             // The function is already registered in sym by collect_item.
             ItemKind::ExternFn(f) => TypedItemKind::ExternFn(f.clone()),
+            // AnnotationDef: erased by apply_annotations() before typecheck reaches here.
+            // Filter them out by emitting a harmless Import placeholder.
+            ItemKind::AnnotationDef(_) => TypedItemKind::Import {
+                path: "__annotation_erased__".into(),
+                alias: "__annotation_erased__".into(),
+            },
         };
         Ok(TypedItem { kind, span: item.span })
     }
@@ -511,21 +517,26 @@ impl Inferer {
         // The element type depends on what we're iterating over.
         // `Array<T>` → element type is `T`.
         // `Chan<T>`  → element type is `T` (receives until closed).
-        let elem_ty = match &iter.ty {
+        // Determine element type and key type based on iterator type
+        let (key_ty, elem_ty) = match &iter.ty {
             SemTy::Generic(name, args) if name == "Array" && args.len() == 1 => {
-                args[0].clone()
+                (SemTy::Int, args[0].clone())
             }
             SemTy::Generic(name, args) if name == "Chan" && args.len() == 1 => {
-                args[0].clone()
+                (SemTy::Int, args[0].clone())
             }
-            // For unknown or opaque iterables, fall back to Named("_Elem")
-            other => other.clone(),
+            // Map<K, V> — for k, v in map { }
+            // index_var = key (string), var = value
+            SemTy::Generic(name, args) if name == "Map" && args.len() == 2 => {
+                (args[0].clone(), args[1].clone())
+            }
+            other => (SemTy::Int, other.clone()),
         };
 
         self.push_scope();
-        // Bind index variable as int if present.
+        // Bind index/key variable
         if let Some(idx) = &f.index_var {
-            self.define(&idx.name, SemTy::Int, Mut::Const);
+            self.define(&idx.name, key_ty, Mut::Const);
         }
         self.define(&f.var.name, elem_ty.clone(), Mut::Const);
         let body = self.infer_block(&f.body, type_args)?;
@@ -1060,6 +1071,8 @@ impl Inferer {
                 match (lty, rty) {
                     (SemTy::Int, SemTy::Int)     => SemTy::Int,
                     (SemTy::Float, SemTy::Float) => SemTy::Float,
+                    // Mixed numeric: int/f64 coerces to f64 (like Python, Swift, Kotlin)
+                    (SemTy::Float, SemTy::Int) | (SemTy::Int, SemTy::Float) => SemTy::Float,
                     // String concatenation via `+`
                     (SemTy::String, SemTy::String) if op == BinaryOp::Add => SemTy::String,
                     // Allow Never on either side (panic)
@@ -1206,12 +1219,28 @@ impl Inferer {
             }
         }
 
-        let field_info = self.sym.lookup_field(&ty_name, &field.name)
-            .ok_or_else(|| TypeError::NoSuchField {
-                ty: ty_name.clone(),
-                field: field.name.clone(),
-                span,
-            })?;
+        // Try looking up the field. If ty_name has a module prefix (e.g. "vn__VNode"),
+        // also try the unqualified name ("VNode") as a fallback.
+        let field_info_opt = self.sym.lookup_field(&ty_name, &field.name);
+        let (field_info, resolved_ty_name) = if let Some(fi) = field_info_opt {
+            (fi, ty_name.clone())
+        } else {
+            // Strip module prefix: "vn__VNode" -> "VNode"
+            let base_name = if let Some(dpos) = ty_name.find("__") {
+                ty_name[dpos+2..].to_string()
+            } else {
+                ty_name.clone()
+            };
+            let fi = self.sym.lookup_field(&base_name, &field.name)
+                .ok_or_else(|| TypeError::NoSuchField {
+                    ty: ty_name.clone(),
+                    field: field.name.clone(),
+                    span,
+                })?;
+            (fi, base_name)
+        };
+        let _ = resolved_ty_name; // used for potential future generic resolution
+        let field_info = field_info;
 
         // Resolve the field's type with generic substitutions applied.
         let field_ty = self.sym.resolve_ty(&field_info.ty.clone(), &field_type_args)?;
@@ -1285,7 +1314,7 @@ impl Inferer {
                 .collect::<TypeResult<Vec<_>>>()?;
             let (ret_ty, c_name) = match method.name.as_str() {
                 "send"     => (SemTy::Int, "haki_chan_send"),   // 0=ok 1=closed
-                "receive"  => (SemTy::Tuple(vec![elem_ty, SemTy::Bool]), "haki_chan_recv"),
+                "receive"  => (SemTy::Optional(Box::new(elem_ty)), "haki_chan_receive"),
                 "close"    => (SemTy::Void, "haki_chan_close"),
                 "isClosed" => (SemTy::Bool, "haki_chan_is_closed"),
                 _ => return Err(TypeError::NoSuchMethod {
@@ -1461,9 +1490,16 @@ impl Inferer {
 
         // Enum variant construction: `Ok(value)`, `Circle(5)`, `Point`.
         // If the callee name is a variant of any known enum, type it as that enum.
+        // Also try stripping module prefix (e.g. "vn__CreateBox" → "CreateBox").
         {
+            let base_callee = if let Some(dpos) = callee_name.find("__") {
+                callee_name[dpos+2..].to_string()
+            } else {
+                callee_name.clone()
+            };
             let enum_match = self.sym.enum_defs.iter().find_map(|(ename, edef)| {
-                edef.variants.iter().find(|v| v.name.name == callee_name)
+                edef.variants.iter()
+                    .find(|v| v.name.name == callee_name || v.name.name == base_callee)
                     .map(|v| (ename.clone(), v.clone()))
             });
             if let Some((enum_name, variant)) = enum_match {
@@ -1718,6 +1754,74 @@ impl Inferer {
             }
         }
 
+        // string_to_int(s) -> (int, Error?)
+        if callee_name == "string_to_int" && args.len() == 1 {
+            let typed_arg = self.infer_expr(&args[0], type_args)?;
+            let err_opt = SemTy::Optional(Box::new(SemTy::Named("Error".into())));
+            let ret = SemTy::Tuple(vec![SemTy::Int, err_opt]);
+            let callee_expr = TypedExpr {
+                kind: TypedExprKind::Ident(Ident::new("string_to_int", callee.span)),
+                ty: SemTy::Fn(vec![SemTy::String], Box::new(ret.clone())),
+                span: callee.span,
+            };
+            return Ok(TypedExpr {
+                kind: TypedExprKind::Call(Box::new(callee_expr), vec![typed_arg]),
+                ty: ret,
+                span,
+            });
+        }
+        // string_to_float(s) -> (float, Error?)
+        if callee_name == "string_to_float" && args.len() == 1 {
+            let typed_arg = self.infer_expr(&args[0], type_args)?;
+            let err_opt = SemTy::Optional(Box::new(SemTy::Named("Error".into())));
+            let ret = SemTy::Tuple(vec![SemTy::Float, err_opt]);
+            let callee_expr = TypedExpr {
+                kind: TypedExprKind::Ident(Ident::new("string_to_float", callee.span)),
+                ty: SemTy::Fn(vec![SemTy::String], Box::new(ret.clone())),
+                span: callee.span,
+            };
+            return Ok(TypedExpr {
+                kind: TypedExprKind::Call(Box::new(callee_expr), vec![typed_arg]),
+                ty: ret,
+                span,
+            });
+        }
+        // Fallback for C runtime functions (haki_* prefix) that aren't registered.
+        // String-returning: haki_*_stdout, haki_*_stderr, haki_*_name, haki_*_path etc
+        // Int-returning: haki_*_exit, haki_*_count, haki_*_size, haki_*_pid etc
+        // Bool-returning: haki_fs_path_* path checks
+        if callee_name.starts_with("haki_") {
+            let typed_args = args.iter()
+                .map(|a| self.infer_expr(a, type_args))
+                .collect::<TypeResult<Vec<_>>>()?;
+            // Infer return type from name suffix
+            let ret_ty = if callee_name.ends_with("_stdout") || callee_name.ends_with("_stderr")
+                || callee_name.ends_with("_name") || callee_name.ends_with("_path")
+                || callee_name.ends_with("_dir") || callee_name.ends_with("_string")
+                || callee_name.ends_with("_platform") || callee_name.ends_with("_arch")
+                || callee_name.ends_with("_hostname") || callee_name.ends_with("_username")
+                || callee_name.ends_with("_format") || callee_name.ends_with("_version")
+                || callee_name.ends_with("_home_dir") || callee_name.ends_with("_temp_dir")
+                || callee_name.ends_with("_cwd") {
+                SemTy::String
+            } else if callee_name.ends_with("_path_exists") || callee_name.ends_with("_path_is_dir")
+                || callee_name.ends_with("_path_is_file") {
+                SemTy::Bool
+            } else {
+                SemTy::Int
+            };
+            let typed_callee = TypedExpr {
+                kind: TypedExprKind::Ident(Ident::new(&callee_name, callee.span)),
+                ty: SemTy::Fn(vec![], Box::new(ret_ty.clone())),
+                span: callee.span,
+            };
+            return Ok(TypedExpr {
+                kind: TypedExprKind::Call(Box::new(typed_callee), typed_args),
+                ty: ret_ty,
+                span,
+            });
+        }
+
         Err(TypeError::UnknownFn { name: callee_name, span })
     }
 
@@ -1728,7 +1832,7 @@ impl Inferer {
         type_args: &HashMap<String, SemTy>,
         span: Span,
     ) -> TypeResult<TypedExpr> {
-        let callee_name = match &callee.kind {
+        let callee_name_raw = match &callee.kind {
             ExprKind::Ident(id) => id.name.clone(),
             // module.Type(field: val) -- resolve to module__Type
             ExprKind::Field(recv, field) => {
@@ -1739,6 +1843,13 @@ impl Inferer {
                 }
             }
             _ => return Err(TypeError::UnknownFn { name: "complex_callee".into(), span }),
+        };
+        // Strip generic type args from constructor name: `Box<int>` → `Box`
+        // The parser encodes them as `TypeName<Args>` for generic constructors
+        let callee_name = if let Some(lt_pos) = callee_name_raw.find('<') {
+            callee_name_raw[..lt_pos].to_string()
+        } else {
+            callee_name_raw.clone()
         };
 
         // ── F-string coercion: __fstr(val: expr) ───────────────────────────────
@@ -1781,8 +1892,30 @@ impl Inferer {
         }
 
         // Named calls are used for struct/class construction.
+        // If the raw name had generic args (e.g. `Stack<int>`), parse them out
+        // and return SemTy::Generic so the mono engine can mangle to Stack__int.
+        let generic_type_args: Vec<SemTy> = if let Some(lt_pos) = callee_name_raw.as_str().find('<') {
+            let args_str = &callee_name_raw[lt_pos+1..callee_name_raw.rfind('>').unwrap_or(callee_name_raw.len())];
+            let args_str_owned = args_str.to_string();
+            args_str_owned.split(',').map(|s| {
+                match s.trim() {
+                    "int"    => SemTy::Int,
+                    "float"  => SemTy::Float,
+                    "bool"   => SemTy::Bool,
+                    "string" => SemTy::String,
+                    other    => SemTy::Named(other.to_string()),
+                }
+            }).collect()
+        } else {
+            vec![]
+        };
+
         let ret_ty = if self.sym.lookup_type(&callee_name).is_some() {
-            SemTy::Named(callee_name.clone())
+            if generic_type_args.is_empty() {
+                SemTy::Named(callee_name.clone())
+            } else {
+                SemTy::Generic(callee_name.clone(), generic_type_args.clone())
+            }
         } else if let Some(fn_info) = self.sym.lookup_fn(&callee_name).cloned() {
             self.sym.resolve_return_ty(&fn_info.return_ty, type_args)?
         } else {

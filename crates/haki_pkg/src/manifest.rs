@@ -19,6 +19,30 @@ use crate::{PkgError, PkgResult};
 pub const MANIFEST_FILE: &str = "haki.json";
 
 /// The parsed content of a haki.json file.
+///
+/// Extended for v3.7 to include registry metadata fields.
+/// These fields are required by `hakic pkg publish` when submitting to pkg.haki-lang.org.
+///
+/// Minimal example:
+/// {
+///   "name": "myapp",
+///   "version": "1.0.0"
+/// }
+///
+/// Full registry-ready example:
+/// {
+///   "name": "haki-request",
+///   "version": "1.2.0",
+///   "description": "HTTP client library for Haki",
+///   "author": "Alice <alice@example.com>",
+///   "license": "MIT",
+///   "repository": "https://github.com/alice/haki-request",
+///   "keywords": ["http", "client", "networking"],
+///   "dependencies": {
+///     "utils": "https://github.com/user/haki-utils",
+///     "json":  "haki-json@^1.0"
+///   }
+/// }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HakiJson {
     /// Package name — lowercase, hyphens allowed.
@@ -27,7 +51,33 @@ pub struct HakiJson {
     /// Semantic version string, e.g. "1.0.0".
     pub version: String,
 
-    /// Dependencies: alias → URL (with optional #ref fragment).
+    /// Human-readable description of the package.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+
+    /// Author name and optional email, e.g. "Alice <alice@example.com>".
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub author: String,
+
+    /// SPDX license identifier, e.g. "MIT", "Apache-2.0", "GPL-3.0".
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub license: String,
+
+    /// URL of the package's source repository.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub repository: String,
+
+    /// Searchable tags for the registry.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keywords: Vec<String>,
+
+    /// Minimum Haki compiler version required, e.g. "3.7.0".
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub haki: String,
+
+    /// Dependencies: alias → URL or registry name@version.
+    /// URL format:   "https://github.com/user/repo#v1.0"
+    /// Registry fmt: "haki-json@^1.0" (resolved via pkg.haki-lang.org)
     /// BTreeMap for deterministic serialization order.
     #[serde(default)]
     pub dependencies: BTreeMap<String, String>,
@@ -39,8 +89,41 @@ impl HakiJson {
         Self {
             name: name.into(),
             version: "0.1.0".into(),
+            description: String::new(),
+            author: String::new(),
+            license: String::new(),
+            repository: String::new(),
+            keywords: Vec::new(),
+            haki: String::new(),
             dependencies: BTreeMap::new(),
         }
+    }
+
+    /// Validate that all required registry fields are present before publishing.
+    pub fn validate_for_publish(&self) -> Result<(), String> {
+        if self.name.is_empty() {
+            return Err("haki.json: 'name' is required".into());
+        }
+        if self.version.is_empty() {
+            return Err("haki.json: 'version' is required".into());
+        }
+        if self.description.is_empty() {
+            return Err("haki.json: 'description' is required for publishing".into());
+        }
+        if self.license.is_empty() {
+            return Err("haki.json: 'license' is required for publishing (e.g. \"MIT\")".into());
+        }
+        Ok(())
+    }
+
+    /// Return a dependency value as either a DepUrl (git) or registry ref.
+    /// Registry refs look like "name@version" without "https://".
+    pub fn dep_is_registry(dep_val: &str) -> bool {
+        !dep_val.starts_with("https://")
+            && !dep_val.starts_with("http://")
+            && !dep_val.starts_with("git@")
+            && !dep_val.starts_with('.')
+            && !dep_val.starts_with('/')
     }
 
     /// Read and parse haki.json from a directory.

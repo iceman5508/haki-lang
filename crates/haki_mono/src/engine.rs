@@ -651,10 +651,14 @@ impl<'src> MonoEngine<'src> {
             }
 
             TypedExprKind::Call(callee, args) => {
-                let callee_name = match &callee.kind {
+                let callee_name_raw = match &callee.kind {
                     TypedExprKind::Ident(id) => id.name.clone(),
                     _ => "?".into(),
                 };
+                // Strip generic type suffix: `Box<int>` → `Box`
+                let callee_name = if let Some(p) = callee_name_raw.find('<') {
+                    callee_name_raw[..p].to_string()
+                } else { callee_name_raw };
 
 
 
@@ -680,10 +684,14 @@ impl<'src> MonoEngine<'src> {
             }
 
             TypedExprKind::NamedCall(callee, args) => {
-                let callee_name = match &callee.kind {
+                let callee_name_raw = match &callee.kind {
                     TypedExprKind::Ident(id) => id.name.clone(),
                     _ => "?".into(),
                 };
+                // Strip generic type suffix: `Box<int>` → `Box`
+                let callee_name = if let Some(p) = callee_name_raw.find('<') {
+                    callee_name_raw[..p].to_string()
+                } else { callee_name_raw };
                 // Check if we need to specialize the callee type.
                 let constr_name = subst.apply_ty(&callee.ty);
                 let final_name = match &constr_name {
@@ -721,7 +729,38 @@ impl<'src> MonoEngine<'src> {
                         span: a.span,
                     })
                 }).collect::<MonoResult<Vec<_>>>()?;
-                MonoExprKind::Construct(final_name, mono_args)
+
+                // If the callee is a known type (struct/class), emit Construct.
+                // Otherwise emit a positional Call so cemit doesn't treat it as struct construction.
+                // For generic types, check the BASE name (before mangling, e.g. "Box" from "Box__int")
+                let base_name = if let Some(dunder) = final_name.find("__") {
+                    // Could be "Box__int" (mangled generic) or "mod__Fn" (module-qualified)
+                    // Check if the part before __ is a generic class/struct
+                    let candidate = &final_name[..dunder];
+                    if self.generic_classes.contains_key(candidate)
+                        || self.generic_structs.contains_key(candidate) {
+                        candidate
+                    } else {
+                        final_name.as_str()
+                    }
+                } else {
+                    final_name.as_str()
+                };
+                let is_type = self.program.structs.iter().any(|s| s.name == final_name)
+                    || self.program.classes.iter().any(|c| c.name == final_name)
+                    || self.generic_classes.contains_key(base_name)
+                    || self.generic_structs.contains_key(base_name);
+                if is_type {
+                    MonoExprKind::Construct(final_name, mono_args)
+                } else {
+                    // Named-arg function call: emit as positional Call.
+                    // Args are passed in declaration order (the typechecker already
+                    // matched arg names to param positions).
+                    let positional_args = mono_args.into_iter()
+                        .map(|a| a.value)
+                        .collect();
+                    MonoExprKind::Call(final_name, positional_args)
+                }
             }
 
             TypedExprKind::Index(recv, idx) => {
