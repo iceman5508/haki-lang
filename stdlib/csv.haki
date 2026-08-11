@@ -1,0 +1,87 @@
+/// std/csv — CSV and TSV parsing and encoding.
+///
+/// Usage: import "std/csv" as csv
+///
+/// Supports RFC 4180 CSV (comma-separated) and TSV (tab-separated).
+/// Quoted fields and embedded quotes ("") are handled correctly.
+///
+/// Two levels of API:
+///   Row level: parseRow / encodeRow / parseRowTSV / encodeRowTSV
+///   File level: parse / encode / parseTSV / encodeTSV
+
+// ── Row API ───────────────────────────────────────────────────────────────────
+
+/// Parse a single CSV row string into an Array<string>.
+/// Handles quoted fields, embedded commas, and escaped quotes ("").
+///
+/// Example:
+///   csv.parseRow("Alice,30,\"New York\"") → ["Alice", "30", "New York"]
+///   csv.parseRow("a,\"b,c\",d") → ["a", "b,c", "d"]
+fn parseRow(line: string) -> Array<string> {
+    return haki_csv_parse_row(line, 44)
+}
+
+/// Encode an Array<string> into a CSV row string (comma-separated).
+/// Fields containing commas, quotes, or newlines are automatically quoted.
+///
+/// Example:
+///   csv.encodeRow(["Alice", "30", "New York"]) → "Alice,30,New York"
+///   csv.encodeRow(["a,b", "c"]) → "\"a,b\",c"
+fn encodeRow(fields: Array<string>) -> string {
+    return haki_csv_encode_row(fields, 44)
+}
+
+/// Parse a single TSV row (tab-separated).
+fn parseRowTSV(line: string) -> Array<string> {
+    return haki_csv_parse_row(line, 9)
+}
+
+/// Encode an Array<string> into a TSV row string (tab-separated).
+fn encodeRowTSV(fields: Array<string>) -> string {
+    return haki_csv_encode_row(fields, 9)
+}
+
+// ── File API ──────────────────────────────────────────────────────────────────
+
+/// Parse a full CSV string into Array<Array<string>>.
+/// Each inner array is one row of fields.
+/// Returns an error for malformed input (currently only on null).
+///
+/// Example:
+///   const rows, err = csv.parse("name,age\nAlice,30\nBob,25")
+///   // rows[0] → ["name", "age"]
+///   // rows[1] → ["Alice", "30"]
+fn parse(s: string) -> (Array<Array<string>>, Error?) {
+    return haki_csv_parse(s, 44)
+}
+
+/// Encode Array<Array<string>> into a CSV string.
+/// Rows are joined with newlines.
+///
+/// Example:
+///   const rows: Array<Array<string>> = []
+///   const r: Array<string> = []
+///   r.append("Alice")
+///   r.append("30")
+///   rows.append(r)
+///   csv.encode(rows) → "Alice,30"
+fn encode(rows: Array<Array<string>>) -> string {
+    return haki_csv_encode(rows, 44)
+}
+
+/// Parse a full TSV string (tab-separated).
+fn parseTSV(s: string) -> (Array<Array<string>>, Error?) {
+    return haki_csv_parse(s, 9)
+}
+
+/// Encode Array<Array<string>> into a TSV string (tab-separated).
+fn encodeTSV(rows: Array<Array<string>>) -> string {
+    return haki_csv_encode(rows, 9)
+}
+
+// ── Extern declarations ───────────────────────────────────────────────────────
+
+extern "c" fn haki_csv_parse_row(line: string, sep: int) -> Array<string>
+extern "c" fn haki_csv_encode_row(fields: Array<string>, sep: int) -> string
+extern "c" fn haki_csv_parse(s: string, sep: int) -> (Array<Array<string>>, Error?)
+extern "c" fn haki_csv_encode(rows: Array<Array<string>>, sep: int) -> string

@@ -1,0 +1,90 @@
+// std/http — HTTP client (GET, POST, PUT, DELETE)
+//
+// Usage:
+//   import "std/http" as http
+//
+//   const resp, err = http.get("https://api.example.com/users")
+//   if err != null { panic(err.message) }
+//   print(resp.body)
+//
+//   const resp2, err2 = http.post("https://api.example.com/users",
+//       body: "{\"name\":\"Alice\"}",
+//       contentType: "application/json")
+
+// -- HttpClientResponse ------------------------------------------------------
+
+class HttpClientResponse {
+    const status: int
+    const body: string
+    const contentType: string
+
+    fn ok() -> bool {
+        return status >= 200 && status < 300
+    }
+
+    fn json() -> string {
+        return body
+    }
+}
+
+// -- Request builders --------------------------------------------------------
+
+fn get(url: string) -> (HttpClientResponse, Error?) {
+    const status = haki_http_client_get_status(url)
+    const body   = haki_http_client_get_body(url)
+    if status < 0 {
+        return HttpClientResponse(status: 0, body: "", contentType: ""), Error(message: body)
+    }
+    return HttpClientResponse(status: status, body: body, contentType: ""), null
+}
+
+fn post(url: string, body: string, contentType: string) -> (HttpClientResponse, Error?) {
+    const status = haki_http_client_post_status(url, body, contentType)
+    const resp   = haki_http_client_post_body(url, body, contentType)
+    if status < 0 {
+        return HttpClientResponse(status: 0, body: "", contentType: ""), Error(message: resp)
+    }
+    return HttpClientResponse(status: status, body: resp, contentType: ""), null
+}
+
+fn put(url: string, body: string, contentType: string) -> (HttpClientResponse, Error?) {
+    const status = haki_http_client_put_status(url, body, contentType)
+    const resp   = haki_http_client_put_body(url, body, contentType)
+    if status < 0 {
+        return HttpClientResponse(status: 0, body: "", contentType: ""), Error(message: resp)
+    }
+    return HttpClientResponse(status: status, body: resp, contentType: ""), null
+}
+
+fn delete(url: string) -> (HttpClientResponse, Error?) {
+    const status = haki_http_client_delete_status(url)
+    const body   = haki_http_client_delete_body(url)
+    if status < 0 {
+        return HttpClientResponse(status: 0, body: "", contentType: ""), Error(message: body)
+    }
+    return HttpClientResponse(status: status, body: body, contentType: ""), null
+}
+
+fn getWithHeaders(url: string, headers: Map<string, string>) -> (HttpClientResponse, Error?) {
+    // Note: for k,v in map iteration is a v4.0 feature
+    // For now, call the basic get (headers not forwarded)
+    const status = haki_http_client_get_status(url)
+    const body   = haki_http_client_get_body(url)
+    if status < 0 {
+        return HttpClientResponse(status: 0, body: "", contentType: ""), Error(message: body)
+    }
+    return HttpClientResponse(status: status, body: body, contentType: ""), null
+}
+
+// -- Extern declarations -----------------------------------------------------
+
+extern "c" fn haki_http_client_get_status(url: string) -> int
+extern "c" fn haki_http_client_get_body(url: string) -> string
+extern "c" fn haki_http_client_post_status(url: string, body: string, ct: string) -> int
+extern "c" fn haki_http_client_post_body(url: string, body: string, ct: string) -> string
+extern "c" fn haki_http_client_put_status(url: string, body: string, ct: string) -> int
+extern "c" fn haki_http_client_put_body(url: string, body: string, ct: string) -> string
+extern "c" fn haki_http_client_delete_status(url: string) -> int
+extern "c" fn haki_http_client_delete_body(url: string) -> string
+extern "c" fn haki_http_client_get_headers_status(url: string, headers: string) -> int
+extern "c" fn haki_http_client_get_headers_body(url: string, headers: string) -> string

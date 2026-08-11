@@ -1,0 +1,48 @@
+# Haki Language — winget package manifest
+# Submit to: https://github.com/microsoft/winget-pkgs
+# PackageVersion must match the GitHub release tag (without leading 'v').
+PackageIdentifier: Haki.Haki
+PackageVersion: 4.3.0
+PackageLocale: en-US
+Publisher: Haki Language Project
+PublisherUrl: https://github.com/iceman5508/haki-lang
+PublisherSupportUrl: https://github.com/iceman5508/haki-lang/issues
+Author: iceman5508
+PackageName: Haki
+PackageUrl: https://github.com/iceman5508/haki-lang
+License: MIT
+LicenseUrl: https://github.com/iceman5508/haki-lang/blob/main/LICENSE
+ShortDescription: >
+  Haki — a fast, expressive programming language with native desktop,
+  server, and WebAssembly targets.
+Description: >
+  Haki is a compiled, statically-typed programming language that targets
+  native Win32 desktop apps (haki-desktop), HTTP server modules
+  (haki-server), and WebAssembly (haki-browser).  The compiler (hakic)
+  emits C and compiles it with MSVC or Clang — no external runtime
+  dependency needed on end-user machines.
+Tags:
+  - programming-language
+  - compiler
+  - desktop
+  - wasm
+Installers:
+  - Architecture: x64
+    InstallerType: zip
+    InstallerUrl: https://github.com/iceman5508/haki-lang/releases/download/v4.3.0/haki-windows.zip
+    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+    # Replace InstallerSha256 with: sha256sum haki-windows.zip
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: haki.exe
+        PortableCommandAlias: haki
+      - RelativeFilePath: hakic.exe
+        PortableCommandAlias: hakic
+      - RelativeFilePath: haki-desktop.exe
+        PortableCommandAlias: haki-desktop
+      - RelativeFilePath: haki-server.exe
+        PortableCommandAlias: haki-server
+      - RelativeFilePath: haki-browser.exe
+        PortableCommandAlias: haki-browser
+ManifestType: singleton
+ManifestVersion: 1.6.0

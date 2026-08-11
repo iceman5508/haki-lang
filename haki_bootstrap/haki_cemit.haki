@@ -42,6 +42,8 @@ fn cTy(ty: string) -> string {
     if ty == "string" { return "const char*" }
     if ty == "void"   { return "void" }
     if ty == ""       { return "void" }
+    // Already-opaque pointer — don't double-pointer it
+    if ty == "void*"  { return "void*" }
     // Error and nullable types → void*
     if ty == "Error"  { return "void*" }
     if ty == "Error?" { return "void*" }
@@ -111,6 +113,43 @@ fn escapeStr(s: string) -> string {
     return out
 }
 
+// ── Helper: parse comma-separated field name at index ─────────────────────────
+
+fn getFieldAt(fields: string, idx: int) -> string {
+    let start = 0
+    let fi = 0
+    const n = string_length(fields)
+    while start < n {
+        let end = start
+        while end < n && fields.substring(end, end + 1) != "," {
+            end = end + 1
+        }
+        if fi == idx { return fields.substring(start, end) }
+        fi = fi + 1
+        start = end + 1
+    }
+    return "f" + int_to_string(idx)  // fallback
+}
+
+// getTypeAt: extract the idx-th semicolon-separated type from a "__vt__" string
+// e.g. getTypeAt("bool;string;Expr", 1) → "string"
+fn getTypeAt(types: string, idx: int) -> string {
+    let start = 0
+    let ti = 0
+    const n = string_length(types)
+    while start <= n {
+        let end = start
+        while end < n && types.substring(end, end + 1) != ";" {
+            end = end + 1
+        }
+        if ti == idx { return types.substring(start, end) }
+        ti = ti + 1
+        start = end + 1
+        if end >= n { return "" }
+    }
+    return ""
+}
+
 // ── Expression emission ────────────────────────────────────────────────────────
 
 fn emitExpr(e: compiler.Expr, depth: int, sc: tinfer.Scope, sym: typeck.SymTable) -> string {
@@ -148,9 +187,9 @@ fn emitExpr(e: compiler.Expr, depth: int, sc: tinfer.Scope, sym: typeck.SymTable
     if tag == "null"   { return "NULL" }
     if tag == "string" {
         // f-string: emit as haki_string_concat chain
-        if exprTag == "fstr" {
+        if tag == "fstr" {
             const segs = match e { EFStr(segs) { yield segs } _ { yield compiler.emptyExprs() } }
-            if segs.length == 0 { return """" }
+            if segs.length == 0 { return "\"\"" }
             let r = emitExpr(segs[0], depth, sc, sym)
             let i = 1
             while i < segs.length {
@@ -160,7 +199,7 @@ fn emitExpr(e: compiler.Expr, depth: int, sc: tinfer.Scope, sym: typeck.SymTable
             return r
         }
         // try desugaring: emitted as __try_val from desugar (handled by compiler driver)
-        if exprTag == "try" {
+        if tag == "try" {
             const inner = match e { ETry(inner) { yield inner } _ { yield compiler.nullExpr() } }
             return emitExpr(inner, depth, sc, sym)
         }
@@ -169,7 +208,42 @@ fn emitExpr(e: compiler.Expr, depth: int, sc: tinfer.Scope, sym: typeck.SymTable
     }
     if tag == "ident" {
         const n = match e { EIdent(n) { yield n } _ { yield "" } }
+        // Check if this is a unit enum variant (discriminant stored in meta-scope)
+        const discStr = tinfer.scopeLookup(sc, "__v__" + n)
+        if string_length(discStr) > 0 {
+            return "({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = " + discStr + "LL; ((void**)__ev)[1] = NULL; __ev; })"
+        }
         return cName(n)
+    }
+
+    if tag == "namedcall" {
+        const ncn = match e { ENamedCall(n, args) { yield n } _ { yield "" } }
+        const ncargs = match e { ENamedCall(n, args) { yield args } _ { yield compiler.emptyExprs() } }
+        const cncn = cName(ncn)
+        // Look up struct field names from meta-scope
+        const fieldsStr = tinfer.scopeLookup(sc, "__sf__" + ncn)
+        if string_length(fieldsStr) == 0 {
+            // Also try without module prefix (strip "module__" if present)
+            // Fallback: emit as malloc + field assignments using positional args
+            let ns = "({ " + cncn + "* __c_" + cncn + " = (" + cncn + "*)malloc(sizeof(" + cncn + ")); "
+            let ai = 0
+            while ai < ncargs.length {
+                ns = ns + "__c_" + cncn + "->f" + int_to_string(ai) + " = " + emitExpr(ncargs[ai], depth, sc, sym) + "; "
+                ai = ai + 1
+            }
+            ns = ns + "__c_" + cncn + "; })"
+            return ns
+        }
+        // Emit struct constructor using named fields
+        let ns = "({ " + cncn + "* __c_" + cncn + " = (" + cncn + "*)malloc(sizeof(" + cncn + ")); "
+        let ai = 0
+        while ai < ncargs.length {
+            const fname = getFieldAt(fieldsStr, ai)
+            ns = ns + "__c_" + cncn + "->" + fname + " = " + emitExpr(ncargs[ai], depth, sc, sym) + "; "
+            ai = ai + 1
+        }
+        ns = ns + "__c_" + cncn + "; })"
+        return ns
     }
     if tag == "unary" {
         const op = match e { EUnary(op, inner) { yield op } _ { yield "" } }
@@ -182,9 +256,24 @@ fn emitExpr(e: compiler.Expr, depth: int, sc: tinfer.Scope, sym: typeck.SymTable
         const rExpr = match e { EBinary(op, l, r) { yield r } _ { yield compiler.nullExpr() } }
         const le = emitExpr(lExpr, depth, sc, sym)
         const re = emitExpr(rExpr, depth, sc, sym)
+        // If either side is an integer literal, force arithmetic ops (avoids string_concat on mistyped fields)
+        const lIsEInt = match lExpr { EInt(n) { yield true } _ { yield false } }
+        const rIsEInt = match rExpr { EInt(n) { yield true } _ { yield false } }
+        if (lIsEInt || rIsEInt) && (op == "+" || op == "-" || op == "*" || op == "/" || op == "%") {
+            return "(" + le + " " + op + " " + re + ")"
+        }
+        if (lIsEInt || rIsEInt) && (op == "<" || op == ">" || op == "<=" || op == ">=" || op == "==" || op == "!=") {
+            return "(" + le + " " + op + " " + re + ")"
+        }
         // Use type inference to pick the right C operator
         const lty = tinfer.inferWithScope(lExpr, sc, sym)
-        const cop = tinfer.binaryOpC(op, lty)
+        const rty = tinfer.inferWithScope(rExpr, sc, sym)
+        // If either side is a string literal or string type, force string comparison
+        const lIsStr = match lExpr { EString(s) { yield true } _ { yield false } }
+        const rIsStr = match rExpr { EString(s) { yield true } _ { yield false } }
+        let effectiveLty = lty
+        if (lIsStr || rIsStr || rty == "string") && lty == "void*" { effectiveLty = "string" }
+        const cop = tinfer.binaryOpC(op, effectiveLty)
 
         if cop == "string_concat" {
             return "haki_string_concat(" + le + ", " + re + ")"
@@ -221,6 +310,15 @@ fn emitExpr(e: compiler.Expr, depth: int, sc: tinfer.Scope, sym: typeck.SymTable
         const recv = match e { EMethodCall(r,m,ma) { yield r } _ { yield compiler.nullExpr() } }
         const m = match e { EMethodCall(r,m,ma) { yield m } _ { yield "" } }
         const args = match e { EMethodCall(r,m,ma) { yield ma } _ { yield compiler.emptyExprs() } }
+        // Module-qualified calls: module.method(args) → module__method(args)
+        // Detect when receiver is a module alias identifier
+        const recvIsIdent = match recv { EIdent(rn) { yield true } _ { yield false } }
+        if recvIsIdent {
+            const rn = match recv { EIdent(rn) { yield rn } _ { yield "" } }
+            if rn == "compiler" || rn == "typeck" || rn == "mono" || rn == "cemit" || rn == "tinfer" || rn == "lex" {
+                return rn + "__" + cName(m) + "(" + emitExprList(args, depth, sc, sym) + ")"
+            }
+        }
         const re = emitExpr(recv, depth, sc, sym)
         if m == "append" && args.length == 1 {
             const av = emitExpr(args[0], depth, sc, sym)
@@ -230,6 +328,9 @@ fn emitExpr(e: compiler.Expr, depth: int, sc: tinfer.Scope, sym: typeck.SymTable
         if m == "has"     { return "haki_map_has(" + re + ", " + emitExprList(args, depth, sc, sym) + ")" }
         if m == "get"     { return "haki_map_get(" + re + ", " + emitExprList(args, depth, sc, sym) + ")" }
         if m == "set"     { return "haki_map_set(" + re + ", " + emitExprList(args, depth, sc, sym) + ")" }
+        if m == "getOrDefault" && args.length == 2 {
+            return "haki_map_get_or_default(" + re + ", " + emitExpr(args[0], depth, sc, sym) + ", " + emitExpr(args[1], depth, sc, sym) + ")"
+        }
         if m == "substring" {
             return "haki_string_substring(" + re + ", " + emitExprList(args, depth, sc, sym) + ")"
         }
@@ -248,11 +349,40 @@ fn emitExpr(e: compiler.Expr, depth: int, sc: tinfer.Scope, sym: typeck.SymTable
     if tag == "index" {
         const arr = match e { EIndex(a, idx) { yield a } _ { yield compiler.nullExpr() } }
         const idx = match e { EIndex(a, idx) { yield idx } _ { yield compiler.nullExpr() } }
-        return "(*((void**)haki_array_get(" + emitExpr(arr, depth, sc, sym) + ", " + emitExpr(idx, depth, sc, sym) + ")))"
+        const arrC = emitExpr(arr, depth, sc, sym)
+        const idxC = emitExpr(idx, depth, sc, sym)
+        // If we know the element type from Array<T>, emit a cast for struct elements
+        const arrTy = tinfer.inferWithScope(arr, sc, sym)
+        if string_length(arrTy) > 6 && arrTy.substring(0, 6) == "Array<" {
+            const inner = arrTy.substring(6, string_length(arrTy) - 1)
+            // Don't cast primitives — they have their own boxed unboxing
+            const innerIsStr  = inner == "string"
+            const innerIsInt  = inner == "int"
+            const innerIsBool = inner == "bool"
+            if !innerIsStr && !innerIsInt && !innerIsBool {
+                const cElemTy = cTy(inner)
+                if isSimpleCType(cElemTy) && cElemTy != "void*" {
+                    return "((" + cElemTy + ")(*((void**)haki_array_get(" + arrC + ", " + idxC + "))))"
+                }
+            }
+        }
+        return "(*((void**)haki_array_get(" + arrC + ", " + idxC + ")))"
     }
     if tag == "array" {
-        // Array literals must be pre-initialized via statements; inline use → stub
-        return "haki_array_new(sizeof(void*))"
+        // Emit inline compound statement: create array and append each element
+        const elems = match e { EArray(elems) { yield elems } _ { yield compiler.emptyExprs() } }
+        if elems.length == 0 {
+            return "haki_array_new(sizeof(void*))"
+        }
+        let s = "({ void* __ial = haki_array_new(sizeof(void*)); "
+        let ei = 0
+        while ei < elems.length {
+            const ev = emitExpr(elems[ei], depth, sc, sym)
+            s = s + "{ void* __el = (void*)(" + ev + "); haki_array_append(__ial, &__el); } "
+            ei = ei + 1
+        }
+        s = s + "__ial; })"
+        return s
     }
     if tag == "if" {
         const cond = match e { EIf(c, th, el) { yield c } _ { yield compiler.nullExpr() } }
@@ -321,13 +451,78 @@ fn emitMatchExpr(scrut: compiler.Expr, arms: Array<compiler.MatchArm>, depth: in
         if arm.pattern == "_" {
             parts = parts + "} else { "
         } else {
-            // Use discriminant = arm index as approximation (needs enum info for accuracy)
-            parts = parts + prefix + " (__mtag == " + int_to_string(i) + "LL) { "
+            // Look up actual discriminant from meta-scope; fall back to arm index
+            const discStr = tinfer.scopeLookup(sc, "__v__" + arm.pattern)
+            let disc = int_to_string(i)
+            if string_length(discStr) > 0 { disc = discStr }
+            parts = parts + prefix + " (__mtag == " + disc + "LL) { "
         }
-        // Bind payloads
+        // Bind payloads using per-slot type metadata.
+        // __vt__VarName now stores ALL payload types as semicolon-separated string,
+        // e.g. "bool;string;Expr" for SLet(bool, string, Expr).
+        // Boxing convention in emitCall:
+        //   int/bool  → boxed as int64_t*   → extract with *(int64_t*)
+        //   string    → boxed as const char** → extract with *(const char**)
+        //   struct/other → stored as void* directly → cast with (T*)
         let bi = 0
         while bi < arm.bindings.length {
-            parts = parts + "void* " + cName(arm.bindings[bi]) + " = ((void**)__mpayload)[" + int_to_string(bi) + "]; "
+            const biStr = int_to_string(bi)
+            // Get all payload types (semicolon-separated) for this variant
+            const vtAll = tinfer.scopeLookup(sc, "__vt__" + arm.pattern)
+            // Get the type for this specific slot
+            const slotTy = getTypeAt(vtAll, bi)
+
+            if slotTy == "int" || slotTy == "bool" {
+                // Boxed as int64_t* in emitCall — dereference to get the value
+                parts = parts + "int64_t " + cName(arm.bindings[bi]) + " = *(int64_t*)((void**)__mpayload)[" + biStr + "]; "
+                tinfer.scopeSet(sc, arm.bindings[bi], "int")
+            } else if slotTy == "string" {
+                // Boxed as const char** in emitCall — dereference to get the char*
+                parts = parts + "const char* " + cName(arm.bindings[bi]) + " = *(const char**)((void**)__mpayload)[" + biStr + "]; "
+                tinfer.scopeSet(sc, arm.bindings[bi], "string")
+            } else {
+                // Struct/generic/unknown: stored as void* directly in emitCall — direct cast
+                let bindCType = "void*"
+                if string_length(slotTy) > 0 {
+                    // Check generic container types (Array, Map, Task) → stay void*
+                    const isGenericTy = (string_length(slotTy) >= 5 && slotTy.substring(0, 5) == "Array")
+                        || (string_length(slotTy) >= 3 && slotTy.substring(0, 3) == "Map")
+                        || (string_length(slotTy) >= 4 && slotTy.substring(0, 4) == "Task")
+                    if !isGenericTy {
+                        // Strip module prefix (take suffix after last ".")
+                        let baseTy = slotTy
+                        let di = 0
+                        while di < string_length(slotTy) {
+                            if slotTy.substring(di, di + 1) == "." {
+                                baseTy = slotTy.substring(di + 1, string_length(slotTy))
+                            }
+                            di = di + 1
+                        }
+                        // Strip trailing "*" if present
+                        const blen = string_length(baseTy)
+                        if blen > 0 && baseTy.substring(blen - 1, blen) == "*" {
+                            baseTy = baseTy.substring(0, blen - 1)
+                        }
+                        const vtCName = cName(baseTy)
+                        const vtCTy = vtCName + "*"
+                        if isSimpleCType(vtCTy) { bindCType = vtCTy }
+                    }
+                } else if arm.bindings.length == 1 {
+                    // Fallback for single-binding arms with no slot type metadata:
+                    // check if the variant name is a known struct via __sf__ scope entry
+                    const sfVal = tinfer.scopeLookup(sc, "__sf__" + arm.pattern)
+                    if string_length(sfVal) > 0 {
+                        const patCName = cName(arm.pattern)
+                        const patCTy = patCName + "*"
+                        if isSimpleCType(patCTy) { bindCType = patCTy }
+                    }
+                }
+                parts = parts + bindCType + " " + cName(arm.bindings[bi]) + " = (" + bindCType + ")((void**)__mpayload)[" + biStr + "]; "
+                // Update scope with binding type for subsequent type inference
+                if bindCType != "void*" {
+                    tinfer.scopeSet(sc, arm.bindings[bi], slotTy)
+                }
+            }
             bi = bi + 1
         }
         const yv = yieldVal(arm.body, depth, sc, sym)
@@ -343,6 +538,38 @@ fn emitMatchExpr(scrut: compiler.Expr, arms: Array<compiler.MatchArm>, depth: in
 // ── Call emission ──────────────────────────────────────────────────────────────
 
 fn emitCall(name: string, args: Array<compiler.Expr>, depth: int, sc: tinfer.Scope, sym: typeck.SymTable) -> string {
+    // Multi-return tuple unpacking: __mr_get_N(tuple) → ((void**)tuple)[N]
+    if string_length(name) > 9 && name.substring(0, 9) == "__mr_get_" {
+        const idxStr = name.substring(9, string_length(name))
+        const av = emitExpr(args[0], depth, sc, sym)
+        return "((void**)(" + av + "))[" + idxStr + "]"
+    }
+    // Check if this is an enum variant constructor (has payload)
+    const discStr = tinfer.scopeLookup(sc, "__v__" + name)
+    if string_length(discStr) > 0 {
+        if args.length == 0 {
+            // No-payload variant
+            return "({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = " + discStr + "LL; ((void**)__ev)[1] = NULL; __ev; })"
+        }
+        // Build payload array boxing all args
+        const safeName = cName(name)
+        let payStr = "({ void** __pay_" + safeName + " = (void**)malloc(sizeof(void*) * " + int_to_string(args.length) + "); "
+        let ai = 0
+        while ai < args.length {
+            const argC = emitExpr(args[ai], depth, sc, sym)
+            const argTy = tinfer.inferWithScope(args[ai], sc, sym)
+            let boxedArg = "(void*)(" + argC + ")"
+            if argTy == "int" || argTy == "bool" {
+                boxedArg = "({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(" + argC + "); (void*)__pi; })"
+            } else if argTy == "string" {
+                boxedArg = "({ const char** __ps = malloc(sizeof(const char*)); *__ps = (" + argC + "); (void*)__ps; })"
+            }
+            payStr = payStr + "__pay_" + safeName + "[" + int_to_string(ai) + "] = " + boxedArg + "; "
+            ai = ai + 1
+        }
+        payStr = payStr + "void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = " + discStr + "LL; ((void**)__ev)[1] = (void*)__pay_" + safeName + "; __ev; })"
+        return payStr
+    }
     // Builtin intercepts
     if name == "print" && args.length == 1 {
         return "haki_print(" + emitExpr(args[0], depth, sc, sym) + ")"
@@ -365,7 +592,10 @@ fn emitCall(name: string, args: Array<compiler.Expr>, depth: int, sc: tinfer.Sco
     if name == "panic"    { return "haki_panic(" + emitExpr(args[0], depth, sc, sym) + ")" }
     if name == "argv"     { return "haki_argv()" }
     if name == "readFile" { return "haki_read_file(" + emitExpr(args[0], depth, sc, sym) + ")" }
+    if name == "writeFile" && args.length == 2 { return "haki_write_file(" + emitExpr(args[0], depth, sc, sym) + ", " + emitExpr(args[1], depth, sc, sym) + ")" }
     if name == "fileExists" { return "haki_file_exists(" + emitExpr(args[0], depth, sc, sym) + ")" }
+    if name == "Map" && args.length == 0 { return "haki_map_new(sizeof(void*))" }
+    if name == "Array" && args.length == 0 { return "haki_array_new(sizeof(void*))" }
     if name == "Error"    {
         if args.length == 1 { return "haki_error_new(" + emitExpr(args[0], depth, sc, sym) + ")" }
     }
@@ -386,7 +616,22 @@ fn emitCall(name: string, args: Array<compiler.Expr>, depth: int, sc: tinfer.Sco
     if name.contains("__getOrDefault") && args.length == 3 {
         return "haki_map_get_or_default(" + emitExpr(args[0], depth, sc, sym) + ", " + emitExpr(args[1], depth, sc, sym) + ", " + emitExpr(args[2], depth, sc, sym) + ")"
     }
-    // General call
+    // Check if this is a struct constructor (positional args parsed as ECall by bootstrap parser)
+    // e.g. Token(kind, lo, hi) where Token is a struct with fields "kind,lo,hi" in meta-scope
+    const structFieldsStr = tinfer.scopeLookup(sc, "__sf__" + name)
+    if string_length(structFieldsStr) > 0 {
+        const cn = cName(name)
+        let ns = "({ " + cn + "* __c_" + cn + " = (" + cn + "*)malloc(sizeof(" + cn + ")); "
+        let ai = 0
+        while ai < args.length {
+            const fname = getFieldAt(structFieldsStr, ai)
+            ns = ns + "__c_" + cn + "->" + fname + " = " + emitExpr(args[ai], depth, sc, sym) + "; "
+            ai = ai + 1
+        }
+        ns = ns + "__c_" + cn + "; })"
+        return ns
+    }
+    // General call — use module-qualified name if available to match forward declarations
     let argStr = ""
     let i = 0
     while i < args.length {
@@ -394,7 +639,10 @@ fn emitCall(name: string, args: Array<compiler.Expr>, depth: int, sc: tinfer.Sco
         argStr = argStr + emitExpr(args[i], depth, sc, sym)
         i = i + 1
     }
-    return cName(name) + "(" + argStr + ")"
+    let callName = cName(name)
+    const qualName = tinfer.scopeLookup(sc, "__fnqual__" + name)
+    if string_length(qualName) > 0 { callName = cName(qualName) }
+    return callName + "(" + argStr + ")"
 }
 
 // ── Statement emission ─────────────────────────────────────────────────────────
@@ -415,6 +663,7 @@ fn emitStmt(stmt: compiler.Stmt, depth: int, sc: tinfer.Scope, sym: typeck.SymTa
         SIf(c, th, el)                   { yield "if" }
         SWhile(cond, body)      { yield "while" }
         SFor(v, iter, body)     { yield "for" }
+        SBlock(blk)             { yield "block" }
     }
 
     if tag == "let" {
@@ -435,9 +684,11 @@ fn emitStmt(stmt: compiler.Stmt, depth: int, sc: tinfer.Scope, sym: typeck.SymTa
         while i < vals.length {
             const ve = emitExpr(vals[i], depth, sc, sym)
             const si = int_to_string(i)
-            if isScalarTy("int") {
-                // Wrap scalars
-                s = s + ind + "{ int64_t* __f = malloc(sizeof(int64_t)); *__f = " + ve + "; __ret->f" + si + " = __f; }\n"
+            // Always store directly as void* — __mr_get_N reads raw fields without unboxing
+            // Booleans work as (void*)(int64_t)val (0 or 1 as pointer, truthy/falsy correct)
+            const vty = tinfer.inferWithScope(vals[i], sc, sym)
+            if vty == "bool" || vty == "int" {
+                s = s + ind + "__ret->f" + si + " = (void*)(int64_t)(" + ve + ");\n"
             } else {
                 s = s + ind + "__ret->f" + si + " = (void*)(" + ve + ");\n"
             }
@@ -475,7 +726,7 @@ fn emitStmt(stmt: compiler.Stmt, depth: int, sc: tinfer.Scope, sym: typeck.SymTa
     }
 
     if tag == "annotated" {
-        const inner = match stmt { SAnnotated(attrs, s) { yield s } _ { yield SBreak } }
+        const inner = match stmt { SAnnotated(attrs, s) { yield s } _ { yield stmt } }
         return emitStmt(inner, depth, sc, sym)
     }
 
@@ -512,10 +763,41 @@ fn emitStmt(stmt: compiler.Stmt, depth: int, sc: tinfer.Scope, sym: typeck.SymTa
         let s = ind + "{ void* " + arrVar + " = " + emitExpr(iter, depth, sc, sym) + ";\n"
         s = s + ind + "  int64_t __len_" + cName(varName) + " = haki_array_length(" + arrVar + ");\n"
         s = s + ind + "  for (int64_t " + idxVar + " = 0; " + idxVar + " < __len_" + cName(varName) + "; " + idxVar + "++) {\n"
-        s = s + indent(depth + 2) + "void* " + cName(varName) + " = *(void**)haki_array_get(" + arrVar + ", " + idxVar + ");\n"
+        // Determine element type from the array's element type if known
+        const iterTy = tinfer.inferWithScope(iter, sc, sym)
+        let elemCType = "void*"
+        let elemHakiTy = ""
+        if string_length(iterTy) > 6 && iterTy.substring(0, 6) == "Array<" {
+            const inner = iterTy.substring(6, string_length(iterTy) - 1)
+            elemHakiTy = inner
+            const innerC = cTy(inner)
+            if innerC != "void*" && isSimpleCType(innerC) { elemCType = innerC }
+            else {
+                // Named struct type: get pointer type via cTy which handles module.Type → module__Type*
+                if isSimpleCType(innerC) { elemCType = innerC }
+                else {
+                    const innerName = cName(inner)
+                    if string_length(innerName) > 0 && isSimpleCType(innerName + "*") {
+                        elemCType = innerName + "*"
+                    }
+                }
+            }
+        }
+        // Update scope with element Haki type so field access on the loop variable resolves correctly
+        if string_length(elemHakiTy) > 0 {
+            tinfer.scopeSet(sc, varName, elemHakiTy)
+        }
+        s = s + indent(depth + 2) + elemCType + " " + cName(varName) + " = (" + elemCType + ")*(void**)haki_array_get(" + arrVar + ", " + idxVar + ");\n"
         for st in body { s = s + emitStmt(st, depth + 2, sc, sym) }
         s = s + ind + "  }\n"
         s = s + ind + "}\n"
+        return s
+    }
+
+    if tag == "block" {
+        const blk = match stmt { SBlock(blk) { yield blk } _ { yield compiler.emptyStmts() } }
+        let s = ""
+        for st in blk { s = s + emitStmt(st, depth, sc, sym) }
         return s
     }
 
@@ -565,6 +847,11 @@ fn emitLet(name: string, init: compiler.Expr, depth: int, sc: tinfer.Scope, sym:
     if ctype == "double"  { return ind + "double " + nm + " = " + initStr + ";\n" }
     if ctype == "int8_t"  { return ind + "int8_t " + nm + " = " + initStr + ";\n" }
     if ctype == "const char*" { return ind + "const char* " + nm + " = " + initStr + ";\n" }
+    if ctype == "void*"   { return ind + "void* " + nm + " = (void*)(" + initStr + ");\n" }
+    // Use the inferred struct pointer type only when it is a valid simple C type
+    // (no tuple types, no generic params, no '?' etc. which produce invalid C).
+    if isSimpleCType(ctype) { return ind + ctype + " " + nm + " = (" + ctype + ")(" + initStr + ");\n" }
+    // Fall back to void* for complex/tuple Haki return types
     return ind + "void* " + nm + " = (void*)(" + initStr + ");\n"
 }
 
@@ -586,10 +873,92 @@ fn emitFnProto(f: mono.MonoFn) -> string {
     return ret + " " + cName(f.name) + "(" + params + ")"
 }
 
-fn emitFn(f: mono.MonoFn, sym: typeck.SymTable) -> string {
+fn emitFn(f: mono.MonoFn, sym: typeck.SymTable, enums: Array<mono.EnumDef>, structs: Array<compiler.StructDef>, fns: Array<mono.MonoFn>) -> string {
     // Build type inference scope for this function.
     const fnDef = compiler__makeFnDef(f.name, f.params, f.retTy, f.body)
     const sc = tinfer.buildFnScope(fnDef, sym)
+    // Inject enum variant discriminants into scope as meta-entries "__v__VarName" → index
+    // Variants may be stored as "VarName:PayloadType" — split on first ":" to extract both.
+    for edef in enums {
+        let vi = 0
+        while vi < edef.variants.length {
+            const combined = edef.variants[vi]
+            // Split on first ":"
+            let vname = combined
+            let vpayTy = ""
+            let ci = 0
+            while ci < string_length(combined) {
+                if combined.substring(ci, ci + 1) == ":" {
+                    vname = combined.substring(0, ci)
+                    vpayTy = combined.substring(ci + 1, string_length(combined))
+                    ci = string_length(combined)  // break
+                }
+                ci = ci + 1
+            }
+            tinfer.scopeSet(sc, "__v__" + vname, int_to_string(vi))
+            if string_length(vpayTy) > 0 {
+                tinfer.scopeSet(sc, "__vt__" + vname, vpayTy)
+            }
+            vi = vi + 1
+        }
+    }
+    // Inject struct field lists and field types into scope
+    // "__sf__StructName" → "f1,f2,..." and "__sft__StructName__fieldName" → type
+    // Also inject unqualified names (strip module prefix) for cross-module field access.
+    for s in structs {
+        let fieldStr = ""
+        let fi = 0
+        // Compute unqualified struct name (strip "module__" prefix)
+        let unqualSname = s.name
+        let lastSepS = 0
+        let sni = 0
+        const snlen = string_length(s.name)
+        while sni < snlen - 1 {
+            if s.name.substring(sni, sni + 2) == "__" {
+                lastSepS = sni + 2
+            }
+            sni = sni + 1
+        }
+        if lastSepS > 0 { unqualSname = s.name.substring(lastSepS, snlen) }
+        while fi < s.fields.length {
+            if fi > 0 { fieldStr = fieldStr + "," }
+            fieldStr = fieldStr + s.fields[fi].name
+            tinfer.scopeSet(sc, "__sft__" + s.name + "__" + s.fields[fi].name, s.fields[fi].ty)
+            // Also inject with unqualified struct name for cross-module lookups
+            if unqualSname != s.name {
+                tinfer.scopeSet(sc, "__sft__" + unqualSname + "__" + s.fields[fi].name, s.fields[fi].ty)
+            }
+            fi = fi + 1
+        }
+        tinfer.scopeSet(sc, "__sf__" + s.name, fieldStr)
+        if unqualSname != s.name {
+            tinfer.scopeSet(sc, "__sf__" + unqualSname, fieldStr)
+        }
+    }
+    // Inject function return types as meta-entries "__fn__name" → retTy
+    // This enables inferWithScope to return proper struct types for function calls.
+    // We inject both the full name (e.g. "compiler__lexerNew") and the unqualified
+    // suffix after the last "__" (e.g. "lexerNew") so same-module calls resolve too.
+    for mf in fns {
+        tinfer.scopeSet(sc, "__fn__" + mf.name, mf.retTy)
+        // Extract unqualified name: find last __ and take suffix
+        let lastSep = 0
+        let fni = 0
+        const fnlen = string_length(mf.name)
+        while fni < fnlen - 1 {
+            if mf.name.substring(fni, fni + 2) == "__" {
+                lastSep = fni + 2
+            }
+            fni = fni + 1
+        }
+        if lastSep > 0 {
+            const unqualName = mf.name.substring(lastSep, fnlen)
+            tinfer.scopeSet(sc, "__fn__" + unqualName, mf.retTy)
+            // Also inject qualified name mapping so emitCall can use the correct C name
+            // "__fnqual__unqualName" → "module__unqualName" (the C function's real name)
+            tinfer.scopeSet(sc, "__fnqual__" + unqualName, mf.name)
+        }
+    }
 
     let s = emitFnProto(f) + " {\n"
     if f.name == "main" {
@@ -605,13 +974,58 @@ fn emitFn(f: mono.MonoFn, sym: typeck.SymTable) -> string {
     return s
 }
 
+// ── Struct field type for definitions ─────────────────────────────────────────
+// Check if a ctype string is a valid, simple C type that can be used in variable
+// declarations. Complex Haki types like "(Array<Item>, Error?)" produce invalid C.
+// A valid simple type is: all chars are alphanumeric, '_', '*', or matches
+// "const char*". Returns true if safe to use directly in C, false if should fall
+// back to void*.
+fn isSimpleCType(ct: string) -> bool {
+    const n = string_length(ct)
+    if n == 0 { return false }
+    // Allow known primitives
+    if ct == "int64_t" { return true }
+    if ct == "double"  { return true }
+    if ct == "int8_t"  { return true }
+    if ct == "const char*" { return true }
+    if ct == "void*"   { return true }
+    if ct == "void"    { return true }
+    // For pointer types like "Lexer*", "MonoFn*", etc.: must be ident + '*'
+    // with no spaces, parens, angle brackets, commas, or '?'
+    let i = 0
+    while i < n {
+        const ch = ct.substring(i, i + 1)
+        if ch == "(" { return false }
+        if ch == ")" { return false }
+        if ch == "<" { return false }
+        if ch == ">" { return false }
+        if ch == "," { return false }
+        if ch == "?" { return false }
+        if ch == " " { return false }
+        i = i + 1
+    }
+    return true
+}
+
+// Use void* for anything that isn't a C primitive — this covers enum types
+// (which are void* tagged unions) and nested struct types. Using the precise
+// struct pointer type causes "unknown type name" errors for enum types.
+fn cStructFieldTy(ty: string) -> string {
+    if ty == "int"    { return "int64_t" }
+    if ty == "float"  { return "double" }
+    if ty == "bool"   { return "int8_t" }
+    if ty == "string" { return "const char*" }
+    // Arrays, maps, enums, structs, nullable types → opaque void*
+    return "void*"
+}
+
 // ── Struct emission ────────────────────────────────────────────────────────────
 
 fn emitStructDef(s: compiler.StructDef) -> string {
     if string_length(s.name) == 0 { return "" }
     let out = "struct " + cName(s.name) + " {\n"
     for f in s.fields {
-        out = out + "    " + cTy(f.ty) + " " + cName(f.name) + ";\n"
+        out = out + "    " + cStructFieldTy(f.ty) + " " + cName(f.name) + ";\n"
     }
     if s.fields.length == 0 { out = out + "    int _dummy;\n" }
     out = out + "};\n"
@@ -652,6 +1066,34 @@ fn emitProgram(prog: mono.MonoProgram, runtimeSrc: string) -> string {
     // Tuple struct pre-declarations
     out = out + tupleStructs()
 
+    // Enum typedefs: enums are void* tagged unions in C.
+    // We emit BOTH a qualified alias (module__EnumName → void*) and
+    // an unqualified alias (EnumName → void) so that code using the bare
+    // name can write EnumName* and have it resolve to void*.
+    // "typedef void EnumName;" means EnumName*  ==  void*  in C.
+    out = out + "/* Enum typedefs (tagged unions represented as void*) */\n"
+    for edef in prog.enums {
+        if string_length(edef.name) > 0 {
+            const qualName = cName(edef.name)
+            out = out + "typedef void* " + qualName + ";\n"
+            // Extract unqualified suffix after last "__" for the bare typedef
+            let lastUs = 0
+            let eni = 0
+            const enlen = string_length(edef.name)
+            while eni < enlen - 1 {
+                if edef.name.substring(eni, eni + 2) == "__" {
+                    lastUs = eni + 2
+                }
+                eni = eni + 1
+            }
+            const unqualEnumName = if lastUs > 0 { yield edef.name.substring(lastUs, enlen) } else { yield edef.name }
+            if unqualEnumName != qualName {
+                out = out + "typedef void " + unqualEnumName + ";\n"
+            }
+        }
+    }
+    out = out + "\n"
+
     // Struct forward declarations
     out = out + "/* Forward declarations */\n"
     // Emit forward declarations for all merged struct types.
@@ -661,28 +1103,22 @@ fn emitProgram(prog: mono.MonoProgram, runtimeSrc: string) -> string {
             out = out + "typedef struct " + cName(s.name) + " " + cName(s.name) + ";\n"
         }
     }
-    // Unconditional forward declarations for types referenced in function prototypes
-    // but whose definitions come from imported modules not yet fully emitted.
-    // These are the bootstrap compiler's own module types.
-    out = out + "typedef struct mono__MonoProgram mono__MonoProgram;\n"
-    out = out + "typedef struct mono__MonoFn mono__MonoFn;\n"
-    out = out + "typedef struct compiler__FnDef compiler__FnDef;\n"
-    out = out + "typedef struct compiler__StructDef compiler__StructDef;\n"
-    out = out + "typedef struct compiler__Param compiler__Param;\n"
-    out = out + "typedef struct compiler__Item compiler__Item;\n"
-    out = out + "typedef struct compiler__Expr compiler__Expr;\n"
-    out = out + "typedef struct compiler__Stmt compiler__Stmt;\n"
-    out = out + "typedef struct compiler__MatchArm compiler__MatchArm;\n"
-    out = out + "typedef struct compiler__Token compiler__Token;\n"
-    out = out + "typedef struct typeck__SymTable typeck__SymTable;\n"
-    out = out + "typedef struct typeck__FnInfo typeck__FnInfo;\n"
-    out = out + "typedef struct tinfer__Scope tinfer__Scope;\n"
-    out = out + "typedef struct tinfer__TypedExpr tinfer__TypedExpr;\n"
-    out = out + "typedef struct mono__MonoFn mono__MonoFn;\n"
-    out = out + "typedef struct compiler__FnDef compiler__FnDef;\n"
-    out = out + "typedef struct compiler__StructDef compiler__StructDef;\n"
-    out = out + "typedef struct typeck__SymTable typeck__SymTable;\n"
-    out = out + "typedef struct tinfer__Scope tinfer__Scope;\n"
+    // Module-qualified typedef aliases — map module__Type → the unqualified struct Type.
+    // This resolves "invalid use of incomplete typedef 'mono__MonoFn'" errors because
+    // struct definitions are emitted unqualified (e.g. "struct MonoFn") but function
+    // prototypes reference the qualified name (e.g. "mono__MonoFn*").
+    out = out + "typedef struct MonoProgram mono__MonoProgram;\n"
+    out = out + "typedef struct MonoFn mono__MonoFn;\n"
+    out = out + "typedef struct EnumDef mono__EnumDef;\n"
+    out = out + "typedef struct FnDef compiler__FnDef;\n"
+    out = out + "typedef struct StructDef compiler__StructDef;\n"
+    out = out + "typedef struct Param compiler__Param;\n"
+    out = out + "typedef struct MatchArm compiler__MatchArm;\n"
+    out = out + "typedef struct Token compiler__Token;\n"
+    out = out + "typedef struct SymTable typeck__SymTable;\n"
+    out = out + "typedef struct FnInfo typeck__FnInfo;\n"
+    out = out + "typedef struct Scope tinfer__Scope;\n"
+    out = out + "typedef struct TypedExpr tinfer__TypedExpr;\n"
     out = out + "\n"
 
     // Function prototypes
@@ -702,7 +1138,7 @@ fn emitProgram(prog: mono.MonoProgram, runtimeSrc: string) -> string {
     // Function definitions
     out = out + "/* Functions */\n"
     for f in prog.fns {
-        out = out + emitFn(f, sym)
+        out = out + emitFn(f, sym, prog.enums, prog.structs, prog.fns)
     }
 
     return out

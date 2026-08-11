@@ -1,0 +1,192 @@
+// std/test — Assertion framework for hakic test
+//
+// Usage:
+//   import "std/test" as t
+//
+//   fn test_addition() {
+//       t.assertEq(1 + 1, 2)
+//       t.assertEq("hello" + " world", "hello world")
+//   }
+//
+//   fn test_division_by_zero() {
+//       t.assertPanic(fn() { let x = 1 / 0 })
+//   }
+//
+// Run with: hakic test myfile.haki
+// Tests are any fn test_*() with no parameters.
+// A test passes if it returns without calling panic().
+// A test fails if it calls panic() or t.fail().
+
+// ── Core assertions ─────────────────────────────────────────────────────────
+
+// Fail immediately with a custom message.
+fn fail(message: string) {
+    panic("[FAIL] " + message)
+}
+
+// Assert that a condition is true.
+fn assert(cond: bool, message: string) {
+    if !cond {
+        panic("[FAIL] assertion failed: " + message)
+    }
+}
+
+// Assert with no message — uses a default.
+fn assertTrue(cond: bool) {
+    if !cond {
+        panic("[FAIL] expected true, got false")
+    }
+}
+
+fn assertFalse(cond: bool) {
+    if cond {
+        panic("[FAIL] expected false, got true")
+    }
+}
+
+// ── Equality assertions ──────────────────────────────────────────────────────
+
+fn assertEqInt(actual: int, expected: int) {
+    if actual != expected {
+        panic("[FAIL] expected " + int_to_string(expected) +
+              ", got " + int_to_string(actual))
+    }
+}
+
+fn assertEqFloat(actual: float, expected: float) {
+    if actual != expected {
+        panic("[FAIL] expected " + float_to_string(expected) +
+              ", got " + float_to_string(actual))
+    }
+}
+
+fn assertEqStr(actual: string, expected: string) {
+    if actual != expected {
+        panic("[FAIL] expected \"" + expected + "\", got \"" + actual + "\"")
+    }
+}
+
+fn assertEqBool(actual: bool, expected: bool) {
+    if actual != expected {
+        panic("[FAIL] expected " + bool_to_string(expected) +
+              ", got " + bool_to_string(actual))
+    }
+}
+
+// Generic assertEq — uses string comparison of string-coerced values.
+// For numeric types prefer assertEqInt / assertEqFloat.
+fn assertEq(actual: string, expected: string) {
+    if actual != expected {
+        panic("[FAIL] expected \"" + expected + "\", got \"" + actual + "\"")
+    }
+}
+
+// ── Inequality assertions ─────────────────────────────────────────────────────
+
+fn assertNeInt(actual: int, notExpected: int) {
+    if actual == notExpected {
+        panic("[FAIL] expected value to not equal " + int_to_string(notExpected))
+    }
+}
+
+fn assertNeStr(actual: string, notExpected: string) {
+    if actual == notExpected {
+        panic("[FAIL] expected value to not equal \"" + notExpected + "\"")
+    }
+}
+
+// ── Numeric range assertions ─────────────────────────────────────────────────
+
+fn assertGt(actual: int, threshold: int) {
+    if actual <= threshold {
+        panic("[FAIL] expected " + int_to_string(actual) +
+              " > " + int_to_string(threshold))
+    }
+}
+
+fn assertGte(actual: int, threshold: int) {
+    if actual < threshold {
+        panic("[FAIL] expected " + int_to_string(actual) +
+              " >= " + int_to_string(threshold))
+    }
+}
+
+fn assertLt(actual: int, threshold: int) {
+    if actual >= threshold {
+        panic("[FAIL] expected " + int_to_string(actual) +
+              " < " + int_to_string(threshold))
+    }
+}
+
+fn assertLte(actual: int, threshold: int) {
+    if actual > threshold {
+        panic("[FAIL] expected " + int_to_string(actual) +
+              " <= " + int_to_string(threshold))
+    }
+}
+
+fn assertInRange(actual: int, lo: int, hi: int) {
+    if actual < lo || actual > hi {
+        panic("[FAIL] expected " + int_to_string(actual) +
+              " in [" + int_to_string(lo) + ", " + int_to_string(hi) + "]")
+    }
+}
+
+// ── Null / optional assertions ───────────────────────────────────────────────
+
+fn assertNull(actual: string) {
+    if actual != "" {
+        panic("[FAIL] expected null, got \"" + actual + "\"")
+    }
+}
+
+fn assertNotNull(actual: string) {
+    if actual == "" {
+        panic("[FAIL] expected non-null value, got null/empty")
+    }
+}
+
+// ── String content assertions ────────────────────────────────────────────────
+
+fn assertContains(haystack: string, needle: string) {
+    const found = haystack.contains(needle)
+    if !found {
+        panic("[FAIL] expected \"" + haystack + "\" to contain \"" + needle + "\"")
+    }
+}
+
+fn assertStartsWith(s: string, prefix: string) {
+    if string_length(s) < string_length(prefix) ||
+       s.substring(0, string_length(prefix)) != prefix {
+        panic("[FAIL] expected \"" + s + "\" to start with \"" + prefix + "\"")
+    }
+}
+
+fn assertEndsWith(s: string, suffix: string) {
+    const slen = string_length(s)
+    const suflen = string_length(suffix)
+    if slen < suflen || s.substring(slen - suflen, slen) != suffix {
+        panic("[FAIL] expected \"" + s + "\" to end with \"" + suffix + "\"")
+    }
+}
+
+// ── Array assertions ─────────────────────────────────────────────────────────
+
+fn assertLen(length: int, expected: int) {
+    if length != expected {
+        panic("[FAIL] expected length " + int_to_string(expected) +
+              ", got " + int_to_string(length))
+    }
+}
+
+fn assertEmpty(length: int) {
+    if length != 0 {
+        panic("[FAIL] expected empty collection, got length " + int_to_string(length))
+    }
+}
+
+fn assertNotEmpty(length: int) {
+    if length == 0 {
+        panic("[FAIL] expected non-empty collection")
+    }
+}

@@ -1,0 +1,351 @@
+// std/sys — System interface: process execution, environment, signals,
+//            file permissions, and system information.
+//
+// Usage:
+//   import "std/sys" as sys
+//
+//   const out, err = sys.run("ls", ["-la", "/tmp"])
+//   if err != null { panic(err.message) }
+//   print(out.stdout)
+//
+//   const path = sys.env("PATH")
+//   print(sys.platform())   // "linux" | "macos" | "windows"
+
+// ── Result types ─────────────────────────────────────────────────────────────
+
+class RunResult {
+    const stdout:   string
+    const stderr:   string
+    const exitCode: int
+
+    fn ok() -> bool { return exitCode == 0 }
+    fn output() -> string { return stdout }
+}
+
+class ProcessInfo {
+    const pid:     int
+    const name:    string
+    const ppid:    int
+    const status:  string   // "running" | "sleeping" | "stopped" | "zombie"
+}
+
+class StatResult {
+    const path:        string
+    const size:        int
+    const mtime:       int    // unix timestamp
+    const mode:        int    // unix octal permissions
+    const uid:         int
+    const gid:         int
+    const isDirectory: bool
+    const isSymlink:   bool
+}
+
+// ── Process execution ────────────────────────────────────────────────────────
+
+/// Run a command and wait for it to complete.
+/// Returns (RunResult, Error?) — error if the command cannot be started.
+fn run(cmd: string, args: Array<string>) -> (RunResult, Error?) {
+    const stdout = haki_sys_run_stdout(cmd, args.join("\x00"))
+    const stderr = haki_sys_run_stderr(cmd, args.join("\x00"))
+    const code   = haki_sys_run_exit(cmd, args.join("\x00"))
+    if code < -1 {
+        return RunResult(stdout: "", stderr: "", exitCode: -1),
+               Error(message: "cannot execute: " + cmd)
+    }
+    return RunResult(stdout: stdout, stderr: stderr, exitCode: code), null
+}
+
+/// Run a command through the system shell.
+/// Unix: /bin/sh -c "cmd"    Windows: cmd.exe /C "cmd"
+fn shell(cmd: string) -> (RunResult, Error?) {
+    const stdout = haki_sys_shell_stdout(cmd)
+    const stderr = haki_sys_shell_stderr(cmd)
+    const code   = haki_sys_shell_exit(cmd)
+    if code < -1 {
+        return RunResult(stdout: "", stderr: "", exitCode: -1),
+               Error(message: "shell error: " + cmd)
+    }
+    return RunResult(stdout: stdout, stderr: stderr, exitCode: code), null
+}
+
+/// Run a command and return its stdout as a string (trimmed).
+fn runOutput(cmd: string, args: Array<string>) -> (string, Error?) {
+    const r, e = run(cmd, args)
+    if e != null { return "", e }
+    return r.stdout.trim(), null
+}
+
+/// Spawn a command without waiting. Returns PID or error.
+fn spawn(cmd: string, args: Array<string>) -> (int, Error?) {
+    const spawnPid = haki_sys_spawn(cmd, args.join("\x00"))
+    if spawnPid < 0 {
+        return -1, Error(message: "cannot spawn: " + cmd)
+    }
+    return spawnPid, null
+}
+
+/// Pipe multiple commands together: output of each becomes input of next.
+/// Returns the final command's result.
+fn pipe(cmds: Array<string>) -> (RunResult, Error?) {
+    if cmds.length == 0 {
+        return RunResult(stdout: "", stderr: "", exitCode: 0), null
+    }
+    const stdout = haki_sys_pipe_stdout(cmds.join("\x01"))
+    const stderr = haki_sys_pipe_stderr(cmds.join("\x01"))
+    const code   = haki_sys_pipe_exit(cmds.join("\x01"))
+    if code < -1 {
+        return RunResult(stdout: "", stderr: "", exitCode: -1),
+               Error(message: "pipe error")
+    }
+    return RunResult(stdout: stdout, stderr: stderr, exitCode: code), null
+}
+
+// ── Environment ───────────────────────────────────────────────────────────────
+
+/// Get an environment variable. Returns empty string if not set.
+fn env(key: string) -> string {
+    return haki_sys_getenv(key)
+}
+
+/// Get an environment variable with a fallback default.
+fn envOr(key: string, default: string) -> string {
+    const v = haki_sys_getenv(key)
+    if string_length(v) == 0 { return default }
+    return v
+}
+
+/// Set an environment variable.
+fn setEnv(key: string, value: string) -> Error? {
+    const r = haki_sys_setenv(key, value)
+    if r < 0 { return Error(message: "cannot set env: " + key) }
+    return null
+}
+
+/// Unset an environment variable.
+fn unsetEnv(key: string) -> Error? {
+    const r = haki_sys_unsetenv(key)
+    if r < 0 { return Error(message: "cannot unset env: " + key) }
+    return null
+}
+
+/// Current working directory.
+fn cwd() -> string { return haki_sys_cwd() }
+
+/// Change working directory.
+fn chdir(path: string) -> Error? {
+    const r = haki_sys_chdir(path)
+    if r < 0 { return Error(message: "cannot chdir: " + path) }
+    return null
+}
+
+/// Current user's home directory.
+fn homeDir() -> string { return haki_sys_home_dir() }
+
+/// System temporary directory.
+fn tempDir() -> string { return haki_sys_temp_dir() }
+
+// ── Signals ───────────────────────────────────────────────────────────────────
+
+// Signal number constants (use as: sys.sigint(), sys.sigterm(), etc.)
+fn sigint()  -> int { return 2 }
+fn sigterm() -> int { return 15 }
+fn sigkill() -> int { return 9 }
+fn sighup()  -> int { return 1 }
+fn sigusr1() -> int { return 10 }
+fn sigusr2() -> int { return 12 }
+fn sigpipe() -> int { return 13 }
+fn sigalrm() -> int { return 14 }
+fn sigchld() -> int { return 17 }
+
+/// Register a handler for a signal.
+/// On Windows: only SIGINT and SIGTERM are supported.
+fn onSignal(sig: int, handler: fn() -> void) -> Error? {
+    const r = haki_sys_signal(sig, handler)
+    if r < 0 { return Error(message: "cannot register signal handler") }
+    return null
+}
+
+/// Send a signal to a process by PID.
+/// On Windows: maps to TerminateProcess for SIGKILL/SIGTERM, no-op for others.
+fn kill(killPid: int, killSig: int) -> Error? {
+    const r = haki_sys_kill(killPid, killSig)
+    if r < 0 { return Error(message: "cannot send signal " + int_to_string(killSig) + " to pid " + int_to_string(killPid)) }
+    return null
+}
+
+/// Send a signal to the current process.
+fn raise(sig: int) -> Error? {
+    const r = haki_sys_raise(sig)
+    if r < 0 { return Error(message: "raise failed") }
+    return null
+}
+
+/// Exit the process with an exit code.
+fn exit(exitCode: int) {
+    haki_sys_exit(exitCode)
+}
+
+// ── System information ────────────────────────────────────────────────────────
+
+/// Platform identifier: "linux" | "macos" | "windows"
+fn platform() -> string { return haki_sys_platform() }
+
+/// CPU architecture: "arm64" | "x86_64" | "x86" | "riscv64"
+fn arch() -> string { return haki_sys_arch() }
+
+/// Machine hostname.
+fn hostname() -> string { return haki_sys_hostname() }
+
+/// Current user's username.
+fn username() -> string { return haki_sys_username() }
+
+/// Number of logical CPUs.
+fn cpuCount() -> int { return haki_sys_cpu_count() }
+
+/// Total physical memory in bytes.
+fn memTotal() -> int { return haki_sys_mem_total() }
+
+/// Available memory in bytes.
+fn memAvailable() -> int { return haki_sys_mem_available() }
+
+/// Current process ID.
+fn pid() -> int { return haki_sys_getpid() }
+
+/// Parent process ID.
+fn ppid() -> int { return haki_sys_getppid() }
+
+/// System uptime in seconds.
+fn uptime() -> int { return haki_sys_uptime() }
+
+/// Haki compiler version string.
+fn hakiVersion() -> string { return haki_sys_haki_version() }
+
+// ── File permissions ──────────────────────────────────────────────────────────
+
+/// Change file permissions (Unix octal mode, e.g. 0o755 = 493).
+/// On Windows: returns UnsupportedPlatform error.
+fn chmod(path: string, mode: int) -> Error? {
+    const r = haki_sys_chmod(path, mode)
+    if r == -2 { return Error(message: "chmod: unsupported on Windows") }
+    if r < 0 { return Error(message: "chmod failed: " + path) }
+    return null
+}
+
+/// Change file owner and group (Unix UID/GID).
+/// On Windows: returns UnsupportedPlatform error.
+fn chown(path: string, uid: int, gid: int) -> Error? {
+    const r = haki_sys_chown(path, uid, gid)
+    if r == -2 { return Error(message: "chown: unsupported on Windows") }
+    if r < 0 { return Error(message: "chown failed: " + path) }
+    return null
+}
+
+/// Get file metadata (size, permissions, timestamps).
+fn stat(path: string) -> (StatResult, Error?) {
+    const ok = haki_sys_stat_ok(path)
+    if ok == 0 {
+        return StatResult(path: path, size: 0, mtime: 0, mode: 0,
+                          uid: 0, gid: 0, isDirectory: false, isSymlink: false),
+               Error(message: "stat failed: " + path)
+    }
+    return StatResult(
+        path:        path,
+        size:        haki_sys_stat_size(path),
+        mtime:       haki_sys_stat_mtime(path),
+        mode:        haki_sys_stat_mode(path),
+        uid:         haki_sys_stat_uid(path),
+        gid:         haki_sys_stat_gid(path),
+        isDirectory: haki_sys_stat_isdir(path) == 1,
+        isSymlink:   haki_sys_stat_islink(path) == 1
+    ), null
+}
+
+/// Create a symbolic link.
+/// On Windows: requires Developer Mode or admin privileges.
+fn symlink(src: string, dst: string) -> Error? {
+    const r = haki_sys_symlink(src, dst)
+    if r == -2 { return Error(message: "symlink: requires elevated privileges on Windows") }
+    if r < 0 { return Error(message: "symlink failed: " + dst) }
+    return null
+}
+
+/// Resolve a symbolic link to its target path.
+fn readlink(path: string) -> (string, Error?) {
+    const target = haki_sys_readlink(path)
+    if string_length(target) == 0 { return "", Error(message: "readlink failed: " + path) }
+    return target, null
+}
+
+// ── Process listing ───────────────────────────────────────────────────────────
+
+/// List all running processes.
+/// Returns array of ProcessInfo sorted by PID.
+fn listProcesses() -> (Array<ProcessInfo>, Error?) {
+    const count = haki_sys_process_count()
+    if count < 0 { return [], Error(message: "cannot list processes") }
+    let procs: Array<ProcessInfo> = []
+    let i = 0
+    while i < count {
+        const p = ProcessInfo(
+            pid:    haki_sys_process_pid(i),
+            name:   haki_sys_process_name(i),
+            ppid:   haki_sys_process_ppid(i),
+            status: haki_sys_process_status(i)
+        )
+        procs.append(p)
+        i = i + 1
+    }
+    return procs, null
+}
+
+// ── Extern declarations ───────────────────────────────────────────────────────
+
+extern "c" fn haki_sys_run_stdout(cmd: string, args: string) -> string
+extern "c" fn haki_sys_run_stderr(cmd: string, args: string) -> string
+extern "c" fn haki_sys_run_exit(cmd: string, args: string) -> int
+extern "c" fn haki_sys_shell_stdout(cmd: string) -> string
+extern "c" fn haki_sys_shell_stderr(cmd: string) -> string
+extern "c" fn haki_sys_shell_exit(cmd: string) -> int
+extern "c" fn haki_sys_spawn(cmd: string, args: string) -> int
+extern "c" fn haki_sys_pipe_stdout(cmds: string) -> string
+extern "c" fn haki_sys_pipe_stderr(cmds: string) -> string
+extern "c" fn haki_sys_pipe_exit(cmds: string) -> int
+extern "c" fn haki_sys_getenv(key: string) -> string
+extern "c" fn haki_sys_setenv(key: string, value: string) -> int
+extern "c" fn haki_sys_unsetenv(key: string) -> int
+extern "c" fn haki_sys_cwd() -> string
+extern "c" fn haki_sys_chdir(path: string) -> int
+extern "c" fn haki_sys_home_dir() -> string
+extern "c" fn haki_sys_temp_dir() -> string
+extern "c" fn haki_sys_signal(sig: int, handler: fn() -> void) -> int
+extern "c" fn haki_sys_kill(pid: int, sig: int) -> int
+extern "c" fn haki_sys_raise(sig: int) -> int
+extern "c" fn haki_sys_exit(code: int)
+extern "c" fn haki_sys_platform() -> string
+extern "c" fn haki_sys_arch() -> string
+extern "c" fn haki_sys_hostname() -> string
+extern "c" fn haki_sys_username() -> string
+extern "c" fn haki_sys_cpu_count() -> int
+extern "c" fn haki_sys_mem_total() -> int
+extern "c" fn haki_sys_mem_available() -> int
+extern "c" fn haki_sys_getpid() -> int
+extern "c" fn haki_sys_getppid() -> int
+extern "c" fn haki_sys_uptime() -> int
+extern "c" fn haki_sys_haki_version() -> string
+extern "c" fn haki_sys_chmod(path: string, mode: int) -> int
+extern "c" fn haki_sys_chown(path: string, uid: int, gid: int) -> int
+extern "c" fn haki_sys_stat_ok(path: string) -> int
+extern "c" fn haki_sys_stat_size(path: string) -> int
+extern "c" fn haki_sys_stat_mtime(path: string) -> int
+extern "c" fn haki_sys_stat_mode(path: string) -> int
+extern "c" fn haki_sys_stat_uid(path: string) -> int
+extern "c" fn haki_sys_stat_gid(path: string) -> int
+extern "c" fn haki_sys_stat_isdir(path: string) -> int
+extern "c" fn haki_sys_stat_islink(path: string) -> int
+extern "c" fn haki_sys_symlink(src: string, dst: string) -> int
+extern "c" fn haki_sys_readlink(path: string) -> string
+extern "c" fn haki_sys_process_count() -> int
+extern "c" fn haki_sys_process_pid(i: int) -> int
+extern "c" fn haki_sys_process_name(i: int) -> string
+extern "c" fn haki_sys_process_ppid(i: int) -> int
+extern "c" fn haki_sys_process_status(i: int) -> string

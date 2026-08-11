@@ -1,0 +1,84 @@
+// std/haki_ui/app.haki — App entry point with VNode diff engine
+//
+// Architecture: Virtual Tree + Diff + Surgical FFI Mutations
+//   body() → Element tree
+//   buildVtree(elem, nextId) → (VNode, nextId)
+//   diff(old, new, mutations) → mutations list
+//   applyMutation(m) → haki_gtk_* calls (integer node_ids only)
+
+import "std/haki_ui/element" as ui
+import "std/haki_ui/vnode" as vn
+
+class App {
+    const title:  string
+    const width:  int
+    const height: int
+
+    fn runStatic(elem: ui.Element) {
+        haki_gtk_create_window(title, width, height)
+        const vtree, _ = vn.buildVtree(elem, 1)
+        mountVtree(vtree, 0)
+        haki_platform_run()
+    }
+}
+
+// -- mountVtree --------------------------------------------------------------
+
+fn mountVtree(node: vn.VNode, parentId: int) {
+    if node.kind == "text" || node.kind == "paragraph" {
+        const id = haki_gtk_create_label(parentId, node.text)
+        haki_gtk_register_node(node.id, id)
+    } else if node.kind == "button" {
+        const id = haki_gtk_create_button(parentId, node.text, node.id)
+        haki_gtk_register_node(node.id, id)
+    } else if node.kind == "textfield" {
+        const id = haki_gtk_create_text_field(parentId, node.text, node.id)
+        haki_gtk_register_node(node.id, id)
+    } else if node.kind == "checkbox" {
+        const checked = node.text == "true"
+        const id = haki_gtk_create_checkbox(parentId, node.label, checked, node.id)
+        haki_gtk_register_node(node.id, id)
+    } else if node.kind == "dropdown" {
+        const id = haki_gtk_create_dropdown(parentId, node.text, node.id)
+        haki_gtk_register_node(node.id, id)
+    } else if node.kind == "column" {
+        const id = haki_gtk_create_box(parentId, 0)
+        haki_gtk_register_node(node.id, id)
+        for child in node.children { mountVtree(child, id) }
+    } else if node.kind == "row" {
+        const id = haki_gtk_create_box(parentId, 1)
+        haki_gtk_register_node(node.id, id)
+        for child in node.children { mountVtree(child, id) }
+    } else if node.kind == "stack" {
+        const id = haki_gtk_create_box(parentId, 0)
+        haki_gtk_register_node(node.id, id)
+        for child in node.children { mountVtree(child, id) }
+    } else if node.kind == "image" {
+        const id = haki_gtk_create_image(parentId, node.text, 0, 0)
+        haki_gtk_register_node(node.id, id)
+    }
+}
+
+// -- applyMutation -----------------------------------------------------------
+
+fn applyMutation(m: vn.Mutation) {
+    match m {
+        SetText(nodeId, text)             { haki_gtk_set_text(nodeId, text) }
+        SetVisible(nodeId, visible)       { haki_gtk_set_visible(nodeId, visible) }
+        InsertChild(parentId, i, childId) { haki_gtk_insert_child(parentId, i, childId) }
+        RemoveChild(nodeId)               { haki_gtk_remove_child(nodeId) }
+        SetCallback(nodeId, cbId)         { haki_gtk_set_callback(nodeId, cbId) }
+        CreateLabel(parentId, nodeId, text) {
+            const id = haki_gtk_create_label(parentId, text)
+            haki_gtk_register_node(nodeId, id)
+        }
+        CreateButton(parentId, nodeId, label, cbId) {
+            const id = haki_gtk_create_button(parentId, label, nodeId)
+            haki_gtk_register_node(nodeId, id)
+        }
+        CreateBox(parentId, nodeId, horizontal) {
+            const id = haki_gtk_create_box(parentId, horizontal)
+            haki_gtk_register_node(nodeId, id)
+        }
+    }
+}

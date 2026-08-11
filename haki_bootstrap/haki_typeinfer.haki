@@ -75,6 +75,18 @@ fn scopeGet(sc: Scope, name: string) -> string {
     return "void*"   // unknown → opaque pointer
 }
 
+// Like scopeGet but returns "" (not "void*") when the name is not found.
+// Used for meta-scope lookups like enum discriminants ("__v__VarName") and
+// struct field lists ("__sf__StructName").
+fn scopeLookup(sc: Scope, name: string) -> string {
+    let i = 0
+    while i < sc.names.length {
+        if sc.names[i] == name { return sc.types[i] }
+        i = i + 1
+    }
+    return ""
+}
+
 fn scopeCopy(sc: Scope) -> Scope {
     let copy = scopeNew()
     let i = 0
@@ -138,7 +150,8 @@ fn binaryOpC(op: string, ty: string) -> string {
     // Pointer equality (null checks, named types)
     if op == "==" { return "ptr_eq" }
     if op == "!=" { return "ptr_neq" }
-    // Fallback
+    // Fallback: + on any non-numeric type is string concat (void* from failed inference)
+    if op == "+"  { return "string_concat" }
     return op
 }
 
@@ -170,8 +183,8 @@ fn builtinReturnTy(name: string) -> string {
     if name == "writeFile"  { return "void*" }
     // Array ops → int or element or void*
     if name == "haki_array_length" { return "int" }
-    // argv → Array → void*
-    if name == "argv" { return "void*" }
+    // argv → Array<string>
+    if name == "argv" { return "Array<string>" }
     // Panic
     if name == "panic" { return "void" }
     return "void*"
@@ -241,36 +254,123 @@ fn inferExprTy(e: compiler.Expr, sc: Scope, sym: typeck.SymTable) -> string {
 
     if tag == "call" {
         const name = match e { ECall(n, args) { yield n } _ { yield "" } }
+        const args = match e { ECall(n, args) { yield args } _ { yield compiler.emptyExprs() } }
+
+        // Multi-return tuple unpacking: __mr_get_N(tupleVar) → Nth element type.
+        // The tupleVar was previously stored in scope with the full tuple type string
+        // "(T0, T1, ...)" so we can extract the Nth element's type.
+        if string_length(name) > 9 && name.substring(0, 9) == "__mr_get_" {
+            const idxStr = name.substring(9, string_length(name))
+            let idx = 0
+            let si = 0
+            while si < string_length(idxStr) {
+                const ch = idxStr.substring(si, si + 1)
+                if ch == "0" { idx = idx * 10 + 0 }
+                else if ch == "1" { idx = idx * 10 + 1 }
+                else if ch == "2" { idx = idx * 10 + 2 }
+                else if ch == "3" { idx = idx * 10 + 3 }
+                else if ch == "4" { idx = idx * 10 + 4 }
+                else if ch == "5" { idx = idx * 10 + 5 }
+                else if ch == "6" { idx = idx * 10 + 6 }
+                else if ch == "7" { idx = idx * 10 + 7 }
+                else if ch == "8" { idx = idx * 10 + 8 }
+                else if ch == "9" { idx = idx * 10 + 9 }
+                si = si + 1
+            }
+            if args.length > 0 {
+                const tupleVarName = match args[0] { EIdent(n) { yield n } _ { yield "" } }
+                if string_length(tupleVarName) > 0 {
+                    const tupleTy = scopeLookup(sc, tupleVarName)
+                    // Parse "(T0, T1, T2)" to get element at idx
+                    // tupleTy starts with "(" and ends with ")"
+                    const tn = string_length(tupleTy)
+                    if tn > 2 && tupleTy.substring(0, 1) == "(" {
+                        // Strip outer parens → "T0, T1, T2"
+                        const inner = tupleTy.substring(1, tn - 1)
+                        // Split by ", " to get elements (simple split: find commas at depth 0)
+                        let count = 0
+                        let elemStart = 0
+                        let depth = 0
+                        let ci = 0
+                        while ci < string_length(inner) {
+                            const ch2 = inner.substring(ci, ci + 1)
+                            if ch2 == "<" || ch2 == "(" { depth = depth + 1 }
+                            else if ch2 == ">" || ch2 == ")" { depth = depth - 1 }
+                            else if ch2 == "," && depth == 0 {
+                                if count == idx {
+                                    return inner.substring(elemStart, ci)
+                                }
+                                count = count + 1
+                                elemStart = ci + 2  // skip ", "
+                            }
+                            ci = ci + 1
+                        }
+                        // Last element
+                        if count == idx {
+                            return inner.substring(elemStart, string_length(inner))
+                        }
+                    }
+                }
+            }
+        }
+
         // Check builtin first
         const bty = builtinReturnTy(name)
         if bty != "void*" { return bty }
-        // Check sym table
-        const info, found = typeck.symLookupFn(sym, name)
-        if found {
-            // Map SemTy to string via the typeck helper
-            const retTyStr = typeck.semTyToStr(info.retTy)
-            if retTyStr == "int"    { return "int" }
-            if retTyStr == "float"  { return "float" }
-            if retTyStr == "bool"   { return "bool" }
-            if retTyStr == "string" { return "string" }
-            if retTyStr == "void"   { return "void" }
-        }
+        // Check meta-scope for injected function return types (set by emitter via "__fn__" prefix)
+        const metaTy = scopeLookup(sc, "__fn__" + name)
+        if string_length(metaTy) > 0 { return metaTy }
+        // Check sym table via helper that avoids multi-return void* binding issue
+        const retTyStr = typeck.symLookupFnRetTyStr(sym, name)
+        if retTyStr == "int"    { return "int" }
+        if retTyStr == "float"  { return "float" }
+        if retTyStr == "bool"   { return "bool" }
+        if retTyStr == "string" { return "string" }
+        if retTyStr == "void"   { return "void" }
         return "void*"
     }
 
     if tag == "field" {
-        // Conservative: return void* unless we know the specific field
         const recv = match e { EField(recv, f) { yield recv } _ { yield compiler.nullExpr() } }
         const f    = match e { EField(recv, f) { yield f }    _ { yield "" } }
         // .length on arrays → int
         if f == "length" { return "int" }
         // .message on errors → string
         if f == "message" { return "string" }
+        // Look up struct field type from meta-scope using receiver type
+        const recvTy = inferExprTy(recv, sc, sym)
+        let baseTy = recvTy
+        // Strip module prefix (take suffix after last ".")
+        let di = 0
+        while di < string_length(recvTy) {
+            if recvTy.substring(di, di + 1) == "." {
+                baseTy = recvTy.substring(di + 1, string_length(recvTy))
+            }
+            di = di + 1
+        }
+        // Strip trailing "*" if present
+        const blen = string_length(baseTy)
+        if blen > 0 && baseTy.substring(blen - 1, blen) == "*" {
+            baseTy = baseTy.substring(0, blen - 1)
+        }
+        const fieldTy = scopeLookup(sc, "__sft__" + baseTy + "__" + f)
+        if string_length(fieldTy) > 0 { return fieldTy }
         return "void*"
     }
 
     if tag == "method" {
-        const m = match e { EMethodCall(r,m,ma) { yield m } _ { yield "" } }
+        const recv = match e { EMethodCall(r,m,ma) { yield r } _ { yield compiler.nullExpr() } }
+        const m    = match e { EMethodCall(r,m,ma) { yield m } _ { yield "" } }
+        // Check if receiver is a module alias → module-qualified function call type inference
+        const recvStr = match recv { EIdent(n) { yield n } _ { yield "" } }
+        if string_length(recvStr) > 0 {
+            const modName = scopeLookup(sc, "__mod__" + recvStr)
+            if string_length(modName) > 0 {
+                const qualName = modName + "__" + m
+                const retTy = scopeLookup(sc, "__fn__" + qualName)
+                if string_length(retTy) > 0 { return retTy }
+            }
+        }
         // Known methods that return non-void*
         if m == "length"    { return "int" }
         if m == "substring" { return "string" }
@@ -281,8 +381,26 @@ fn inferExprTy(e: compiler.Expr, sc: Scope, sym: typeck.SymTable) -> string {
         return "void*"
     }
 
-    if tag == "index" { return "void*" }
-    if tag == "array" { return "void*" }  // Array<T> → opaque
+    if tag == "index" {
+        // Try to infer element type from array type
+        const arrExpr = match e { EIndex(a, idx) { yield a } _ { yield compiler.nullExpr() } }
+        const arrTy = inferExprTy(arrExpr, sc, sym)
+        if string_length(arrTy) > 6 && arrTy.substring(0, 6) == "Array<" {
+            return arrTy.substring(6, string_length(arrTy) - 1)
+        }
+        return "void*"
+    }
+    if tag == "array" {
+        // Try to infer element type from first element of array literal
+        const elems = match e { EArray(elems) { yield elems } _ { yield compiler.emptyExprs() } }
+        if elems.length > 0 {
+            const elemTy = inferExprTy(elems[0], sc, sym)
+            if string_length(elemTy) > 0 && elemTy != "void*" {
+                return "Array<" + elemTy + ">"
+            }
+        }
+        return "void*"
+    }
     if tag == "async" { return "void*" }
 
     if tag == "if" {
@@ -370,14 +488,15 @@ fn simplifyTy(ty: string) -> string {
     if ty == "bool"   { return "bool" }
     if ty == "string" { return "string" }
     if ty == "void"   { return "void" }
-    // Array types → void*
-    if string_length(ty) > 5 && ty.substring(0, 5) == "Array" { return "void*" }
-    if string_length(ty) > 3 && ty.substring(0, 3) == "Map"   { return "void*" }
+    // Array and Map types: preserve the full type string so element types can be extracted later.
+    // (cTy will still map these to void* for C emission purposes.)
+    if string_length(ty) > 5 && ty.substring(0, 5) == "Array" { return ty }
+    if string_length(ty) > 3 && ty.substring(0, 3) == "Map"   { return ty }
     // Optional types → void*
     const n = string_length(ty)
     if n > 1 && ty.substring(n - 1, n) == "?" { return "void*" }
-    // Named types (structs, etc.) → void*
-    return "void*"
+    // Named types (structs, etc.) → preserve for struct type inference
+    return ty
 }
 
 // ── Walk a function body and annotate let bindings in scope ───────────────────
@@ -389,6 +508,7 @@ fn inferFnScope(stmts: Array<compiler.Stmt>, sc: Scope, sym: typeck.SymTable) {
             SIf(c, th, el)          { yield "if" }
             SWhile(cond, body)      { yield "while" }
             SFor(v, iter, body)     { yield "for" }
+            SBlock(blk)             { yield "block" }
             _                       { yield "other" }
         }
         if tag == "let" {
@@ -409,9 +529,21 @@ fn inferFnScope(stmts: Array<compiler.Stmt>, sc: Scope, sym: typeck.SymTable) {
         }
         if tag == "for" {
             const v    = match stmt { SFor(v, iter, body) { yield v }    _ { yield "" } }
+            const iter = match stmt { SFor(v, iter, body) { yield iter } _ { yield compiler.nullExpr() } }
             const body = match stmt { SFor(v, iter, body) { yield body } _ { yield compiler.emptyStmts() } }
-            scopeSet(sc, v, "void*")   // conservative: for loop var type unknown
+            // Try to infer element type from the iterator's array type
+            const iterTy = inferExprTy(iter, sc, sym)
+            let elemTy = "void*"
+            if string_length(iterTy) > 6 && iterTy.substring(0, 6) == "Array<" {
+                const inner = iterTy.substring(6, string_length(iterTy) - 1)
+                if string_length(inner) > 0 { elemTy = inner }
+            }
+            scopeSet(sc, v, elemTy)
             inferFnScope(body, sc, sym)
+        }
+        if tag == "block" {
+            const blk = match stmt { SBlock(blk) { yield blk } _ { yield compiler.emptyStmts() } }
+            inferFnScope(blk, sc, sym)
         }
     }
 }

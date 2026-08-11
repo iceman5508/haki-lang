@@ -1,0 +1,55 @@
+// std/io — Terminal input/output
+//
+// Usage: import "std/io" as io
+//
+// Examples:
+//   const name = io.readLine()
+//   io.print("Enter your name: ")
+//   const line = io.prompt("Age: ")
+//   const n = io.readInt()
+
+/// Read a line from stdin. Blocks until the user presses Enter.
+/// Returns the line without the trailing newline.
+fn readLine() -> string {
+    return haki_read_line()
+}
+
+/// Print a prompt string without a trailing newline, then read a line.
+/// Equivalent to: io.print(prompt)  +  io.readLine()
+fn prompt(message: string) -> string {
+    haki_print_no_newline(message)
+    return haki_read_line()
+}
+
+/// Print text to stdout without a trailing newline.
+fn print(text: string) {
+    haki_print_no_newline(text)
+}
+
+/// Print text to stdout with a trailing newline.
+fn println(text: string) {
+    haki_print_no_newline(text + "\n")
+}
+
+/// Read a line and parse it as an integer.
+/// Returns (value, Error?) where Error? is non-null if the input isn't a valid integer.
+fn readInt() -> (int, Error?) {
+    const line = haki_read_line()
+    return string_to_int(line)
+}
+
+/// Read a line and parse it as a float.
+fn readFloat() -> (float, Error?) {
+    const line = haki_read_line()
+    return string_to_float(line)
+}
+
+/// Read a single character from stdin (as an integer codepoint).
+fn readChar() -> int {
+    return haki_read_char()
+}
+
+// ── C extern declarations ─────────────────────────────────────────────────────
+extern "c" fn haki_read_line() -> string
+extern "c" fn haki_print_no_newline(s: string)
+extern "c" fn haki_read_char() -> int

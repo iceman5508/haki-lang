@@ -32,3 +32,73 @@ fn pow(base: int, exp: int) -> int {
     }
     return result
 }
+
+// ── Float math ────────────────────────────────────────────────────────────────
+
+/// Square root of x (float).
+fn sqrt(x: f64) -> f64 {
+    return haki_math_sqrt(x)
+}
+
+/// Floor of x: largest integer ≤ x, returned as f64.
+fn floor(x: f64) -> f64 {
+    return haki_math_floor(x)
+}
+
+/// Ceiling of x: smallest integer ≥ x, returned as f64.
+fn ceil(x: f64) -> f64 {
+    return haki_math_ceil(x)
+}
+
+/// Raise base to exp (both f64).
+fn powf(base: f64, exp: f64) -> f64 {
+    return haki_math_pow_f(base, exp)
+}
+
+/// Natural log of x.
+fn log(x: f64) -> f64 {
+    return haki_math_log(x)
+}
+
+/// Sine of x (radians).
+fn sin(x: f64) -> f64 {
+    return haki_math_sin(x)
+}
+
+/// Cosine of x (radians).
+fn cos(x: f64) -> f64 {
+    return haki_math_cos(x)
+}
+
+/// Absolute value of a float.
+fn absf(x: f64) -> f64 {
+    return haki_math_abs_f(x)
+}
+
+/// Floor of x, converted to int.
+fn floorInt(x: f64) -> int {
+    return haki_math_floor_to_int(x)
+}
+
+/// Ceiling of x, converted to int.
+fn ceilInt(x: f64) -> int {
+    return haki_math_ceil_to_int(x)
+}
+
+/// Round x to nearest int.
+fn roundInt(x: f64) -> int {
+    return haki_math_round_to_int(x)
+}
+
+// ── Extern declarations ───────────────────────────────────────────────────────
+extern "c" fn haki_math_sqrt(x: f64) -> f64
+extern "c" fn haki_math_floor(x: f64) -> f64
+extern "c" fn haki_math_ceil(x: f64) -> f64
+extern "c" fn haki_math_pow_f(base: f64, exp: f64) -> f64
+extern "c" fn haki_math_log(x: f64) -> f64
+extern "c" fn haki_math_sin(x: f64) -> f64
+extern "c" fn haki_math_cos(x: f64) -> f64
+extern "c" fn haki_math_abs_f(x: f64) -> f64
+extern "c" fn haki_math_floor_to_int(x: f64) -> int
+extern "c" fn haki_math_ceil_to_int(x: f64) -> int
+extern "c" fn haki_math_round_to_int(x: f64) -> int

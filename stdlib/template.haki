@@ -1,0 +1,44 @@
+/// std/template — HTML and text templating engine.
+///
+/// Usage: import "std/template" as template
+///
+/// Supports:
+///   {{var}}                       — variable substitution
+///   {{#if var}}...{{/if}}         — conditional blocks (truthy: non-empty, non-"false", non-"0")
+///   {{#for item in list}}...{{/for}} — iteration (list = newline-separated values)
+///   {{#else}}                     — optional else branch inside {{#if}}
+
+/// Render a template string with variable substitution.
+/// Handles {{var}}, {{#if}}, {{/if}}, {{#else}}, {{#for}}, {{/for}}.
+///
+/// @param tmpl  The template string.
+/// @param data  Map of variable names to string values.
+/// @returns     The rendered output string.
+fn render(tmpl: string, data: Map<string, string>) -> string {
+    return haki_template_render_full(tmpl, data)
+}
+
+/// Escape HTML special characters in a string.
+/// Replaces & < > " ' with their HTML entities.
+///
+/// @param s  The input string.
+/// @returns  The escaped string.
+fn escape(s: string) -> string {
+    return haki_template_html_escape(s)
+}
+
+/// Create an empty variable map for use with render().
+/// Call .set() on the returned map to add key-value pairs.
+///
+/// Example:
+///   const data = template.vars()
+///   data.set("title", "Hello")
+///   const html = template.render("<h1>{{title}}</h1>", data)
+fn vars() -> Map<string, string> {
+    const m: Map<string, string> = Map()
+    return m
+}
+
+// ── C functions registered in builtins.rs (no extern "c" needed) ─────────────
+// haki_template_render_full(tmpl: string, data: Map<string,string>) -> string
+// haki_template_html_escape(s: string) -> string

@@ -1,0 +1,87 @@
+/// std/xml — Lightweight XML reading and writing utilities.
+///
+/// Usage: import "std/xml" as xml
+///
+/// Not a full XML parser — designed for simple document exchange and
+/// config-file use cases. Handles well-formed single-level elements
+/// and attribute strings. For complex XML, use the raw functions and
+/// recurse manually.
+
+// ── Reading ──────────────────────────────────────────────────────────────────
+
+/// Extract the text content of the first occurrence of <tag>...</tag>.
+/// Returns the inner text (tags stripped). Returns "" if tag is not found.
+///
+/// @param xmlStr  The XML or HTML string to search.
+/// @param tag     Element name (e.g. "title", "body").
+/// @returns       The text content between the opening and closing tags.
+///
+/// Example:
+///   xml.getElement("<title>Hello</title>", "title") → "Hello"
+fn getElement(xmlStr: string, tag: string) -> string {
+    return haki_xml_get_element(xmlStr, tag)
+}
+
+/// Parse an attribute string into a Map<string, string>.
+/// Handles key="value" and key='value' pairs (single or double quotes).
+///
+/// @param attrStr  The attribute portion of a tag, e.g. `id="main" class="foo"`.
+/// @returns        Map of attribute name → value.
+///
+/// Example:
+///   const attrs = xml.parseAttrs(`href="http://example.com" rel="nofollow"`)
+///   // attrs["href"] → "http://example.com"
+///   // attrs["rel"]  → "nofollow"
+fn parseAttrs(attrStr: string) -> Map<string, string> {
+    return haki_xml_parse_attrs(attrStr)
+}
+
+/// Get a single named attribute from a raw tag string.
+/// Pass the full opening tag (including angle brackets) or just the attrs portion.
+///
+/// @param tagStr   The raw opening tag, e.g. `<a href="http://x.com" id="link1">`.
+/// @param attrName The attribute to look up, e.g. "href".
+/// @returns        The attribute value, or "" if not found.
+///
+/// Example:
+///   xml.getAttr(`<img src="photo.jpg" alt="A photo">`, "src") → "photo.jpg"
+fn getAttr(tagStr: string, attrName: string) -> string {
+    return haki_xml_get_attr(tagStr, attrName)
+}
+
+// ── Writing ───────────────────────────────────────────────────────────────────
+
+/// Wrap content in an XML element: <tag>content</tag>.
+/// Content is NOT automatically escaped — call escape() first if needed.
+///
+/// @param tag      Element name.
+/// @param content  Inner content (already escaped if it contains special chars).
+/// @returns        The full element string.
+///
+/// Example:
+///   xml.emitElement("p", "Hello &amp; world") → "<p>Hello &amp; world</p>"
+fn emitElement(tag: string, content: string) -> string {
+    return haki_xml_emit_element(tag, content)
+}
+
+/// Escape XML/HTML special characters: & < > " '
+///
+/// @param s  Raw string to escape.
+/// @returns  String safe for embedding in XML/HTML content or attributes.
+///
+/// Example:
+///   xml.escape("5 < 10 && x > 0") → "5 &lt; 10 &amp;&amp; x &gt; 0"
+fn escape(s: string) -> string {
+    return haki_xml_escape(s)
+}
+
+/// Build a self-closing element with attributes from a map.
+/// Example: xml.emitTag("input", Map["type": "text", "name": "q"])
+///   → <input type="text" name="q"/>
+fn emitTag(tag: string, attrs: Map<string, string>) -> string {
+    return haki_xml_emit_tag(tag, attrs)
+}
+
+// ── C functions registered in builtins.rs (no extern "c" needed) ─────────────
+// haki_xml_get_element, haki_xml_parse_attrs, haki_xml_get_attr,
+// haki_xml_emit_element, haki_xml_escape, haki_xml_emit_tag

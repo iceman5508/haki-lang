@@ -1,0 +1,18 @@
+// std/haki_ui/state.haki — Reactive state cell
+
+class State<T> {
+    let value:   T
+    let __dirty: bool
+
+    fn set(newValue: T) {
+        value   = newValue
+        __dirty = true
+    }
+
+    fn isDirty() -> bool  { return __dirty }
+    fn clearDirty()       { __dirty = false }
+}
+
+fn makeState<T>(initial: T) -> State<T> {
+    return State(value: initial, __dirty: false)
+}

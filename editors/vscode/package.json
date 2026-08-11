@@ -1,8 +1,8 @@
 {
   "name": "haki-language",
   "displayName": "Haki",
-  "description": "Haki language support \u2014 v3.5 (f-strings, @annotations, channels, try, Map iteration)",
-  "version": "0.3.0",
+  "description": "Haki language support \u2014 v0.4.0 (hakic test, @timeout, chan<T>, haki-desktop, @param docs)",
+  "version": "0.4.0",
   "publisher": "haki-lang",
   "license": "MIT",
   "repository": {

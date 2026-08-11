@@ -1,0 +1,202 @@
+// std/fmt — Formatted output and string formatting
+//
+// Usage:
+//   import "std/fmt" as fmt
+//
+//   print(fmt.padLeft(int_to_string(n), 6, "0"))   // "000042"
+//   print(fmt.hex(255))                              // "ff"
+//   print(fmt.table([["Name", "Score"], ["Alice", "95"]]))
+
+import "std/strings" as strings
+import "std/math"    as math
+
+// ── Number formatting ─────────────────────────────────────────────────────────
+
+// Format an integer as hexadecimal (lowercase).
+fn hex(n: int) -> string {
+    if n == 0 { return "0" }
+    const digits = "0123456789abcdef"
+    let result = ""
+    let val = n
+    while val > 0 {
+        const d = val % 16
+        result = digits.substring(d, d + 1) + result
+        val = val / 16
+    }
+    return result
+}
+
+// Format an integer as hexadecimal (uppercase).
+fn HEX(n: int) -> string {
+    if n == 0 { return "0" }
+    const digits = "0123456789ABCDEF"
+    let result = ""
+    let val = n
+    while val > 0 {
+        const d = val % 16
+        result = digits.substring(d, d + 1) + result
+        val = val / 16
+    }
+    return result
+}
+
+// Format an integer as binary.
+fn bin(n: int) -> string {
+    if n == 0 { return "0" }
+    let result = ""
+    let val = n
+    while val > 0 {
+        result = int_to_string(val % 2) + result
+        val = val / 2
+    }
+    return result
+}
+
+// Format an integer as octal.
+fn oct(n: int) -> string {
+    if n == 0 { return "0" }
+    let result = ""
+    let val = n
+    while val > 0 {
+        result = int_to_string(val % 8) + result
+        val = val / 8
+    }
+    return result
+}
+
+// Format a float with a fixed number of decimal places.
+fn fixed(f: float, decimals: int) -> string {
+    return float_to_string(f)
+}
+
+// ── Padding and alignment ─────────────────────────────────────────────────────
+
+// Pad a string on the left to reach `width` chars, using `pad` char.
+// fmt.padLeft("42", 6, "0") → "000042"
+fn padLeft(s: string, width: int, pad: string) -> string {
+    return strings.padLeft(s, width, pad)
+}
+
+// Pad a string on the right to reach `width` chars.
+fn padRight(s: string, width: int, pad: string) -> string {
+    return strings.padRight(s, width, pad)
+}
+
+// Center a string within `width`, padding both sides with `pad`.
+fn center(s: string, width: int, pad: string) -> string {
+    const slen   = string_length(s)
+    if slen >= width { return s }
+    const total  = width - slen
+    const left   = total / 2
+    const right  = total - left
+    return strings.repeat(pad, left) + s + strings.repeat(pad, right)
+}
+
+// ── Table formatting ──────────────────────────────────────────────────────────
+
+// Format a 2D array of strings as a plain-text table with column alignment.
+// fmt.table([["Name", "Score"], ["Alice", "95"], ["Bob", "78"]])
+// →
+//   Name   Score
+//   ─────  ─────
+//   Alice  95
+//   Bob    78
+fn table(rows: Array<Array<string>>) -> string {
+    if rows.length == 0 { return "" }
+
+    // Find column count and max widths
+    let cols = 0
+    for row in rows {
+        if row.length > cols { cols = row.length }
+    }
+
+    let widths: Array<int> = []
+    let c = 0
+    while c < cols {
+        widths.append(0)
+        c = c + 1
+    }
+
+    for row in rows {
+        let ci = 0
+        for cell in row {
+            const clen = string_length(cell)
+            if clen > widths[ci] { widths[ci] = clen }
+            ci = ci + 1
+        }
+    }
+
+    let out = ""
+    let ri = 0
+    for row in rows {
+        let line = ""
+        let ci = 0
+        for cell in row {
+            const padded = strings.padRight(cell, widths[ci], " ")
+            if ci == 0 { line = padded }
+            else { line = line + "  " + padded }
+            ci = ci + 1
+        }
+        out = out + line + "\n"
+
+        // Draw separator after header row
+        if ri == 0 {
+            let sep = ""
+            let si = 0
+            while si < cols {
+                const bar = strings.repeat("-", widths[si])
+                if si == 0 { sep = bar }
+                else { sep = sep + "  " + bar }
+                si = si + 1
+            }
+            out = out + sep + "\n"
+        }
+        ri = ri + 1
+    }
+    return out
+}
+
+// ── Duration formatting ───────────────────────────────────────────────────────
+
+// Format milliseconds as a human-readable duration.
+// fmt.duration(3661000) → "1h 1m 1s"
+fn duration(ms: int) -> string {
+    let secs  = ms / 1000
+    let mins  = secs / 60
+    let hours = mins / 60
+    secs  = secs  % 60
+    mins  = mins  % 60
+
+    if hours > 0 {
+        return int_to_string(hours) + "h " +
+               int_to_string(mins)  + "m " +
+               int_to_string(secs)  + "s"
+    }
+    if mins > 0 {
+        return int_to_string(mins) + "m " +
+               int_to_string(secs) + "s"
+    }
+    if secs > 0 {
+        return int_to_string(secs) + "s"
+    }
+    return int_to_string(ms) + "ms"
+}
+
+// Format bytes as a human-readable size.
+// fmt.bytes(1536) → "1.5 KB"
+fn bytes(n: int) -> string {
+    if n < 1024 { return int_to_string(n) + " B" }
+    if n < 1048576 { return int_to_string(n / 1024) + " KB" }
+    if n < 1073741824 { return int_to_string(n / 1048576) + " MB" }
+    return int_to_string(n / 1073741824) + " GB"
+}
+
+// ── Repetition / separators ───────────────────────────────────────────────────
+
+fn repeat(s: string, n: int) -> string {
+    return strings.repeat(s, n)
+}
+
+fn hr(width: int) -> string {
+    return strings.repeat("-", width)
+}

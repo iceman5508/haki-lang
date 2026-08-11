@@ -829,7 +829,7 @@ fn parseItem(p: Parser) -> (Item, Error?) {
     // v3.x: extern fn
     if kind == "extern" {
         const _ = advance(p)  // consume 'extern'
-        if peekKind(p) == "Str(" + ""c"" + ")" || peekKind(p) == "Str(c)" || string_length(peekKind(p)) > 4 {
+        if string_length(peekKind(p)) > 2 {
             const _ = advance(p)  // consume abi string
         }
         const f, fe = parseFn(p)
@@ -869,12 +869,12 @@ fn showExpr(e: Expr) -> string {
         EBinary(op, l, r)   { yield "(" + showExpr(l) + " " + op + " " + showExpr(r) + ")" }
         ECall(n, args)      { yield n + "(...)" }
         EField(recv, f)     { yield showExpr(recv) + "." + f }
-        EMethodCall(r,m,_)  { yield showExpr(r) + "." + m + "(...)" }
+        EMethodCall(r,m,mcargs)  { yield showExpr(r) + "." + m + "(...)" }
         EIndex(a, i)        { yield showExpr(a) + "[" + showExpr(i) + "]" }
         EArray(elems)       { yield "[...]" }
-        EIf(c, _, _)        { yield "if " + showExpr(c) + " {...}" }
-        EMatch(s, _)        { yield "match " + showExpr(s) + " {...}" }
-        EBlock(_)           { yield "{...}" }
+        EIf(c, ifthen, ifel) { yield "if " + showExpr(c) + " {...}" }
+        EMatch(s, marms)     { yield "match " + showExpr(s) + " {...}" }
+        EBlock(blkstmts)     { yield "{...}" }
         EAsync(inner)       { yield "async " + showExpr(inner) }
     }
     return s

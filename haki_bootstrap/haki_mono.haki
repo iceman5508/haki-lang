@@ -26,15 +26,21 @@ struct MonoFn {
     const body:    Array<compiler.Stmt>
 }
 
+struct EnumDef {
+    const name:     string
+    const variants: Array<string>   // variant names in declaration order
+}
+
 struct MonoProgram {
     let fns:     Array<MonoFn>
     let structs: Array<compiler.StructDef>
+    let enums:   Array<EnumDef>    // enum definitions for discriminant lookup
     let items:   int     // total input items
     let fnCount: int     // top-level functions
 }
 
 fn monoNew() -> MonoProgram {
-    return MonoProgram(fns: [], structs: [], items: 0, fnCount: 0)
+    return MonoProgram(fns: [], structs: [], enums: [], items: 0, fnCount: 0)
 }
 
 // ── Name mangling ─────────────────────────────────────────────────────────────
@@ -109,12 +115,29 @@ fn extractStruct(item: compiler.Item) -> compiler.StructDef {
     return result
 }
 
+fn extractEnumName(item: compiler.Item) -> string {
+    const result = match item {
+        IEnum(en, ev) { yield en }
+        _ { yield "" }
+    }
+    return result
+}
+
+fn extractEnumVariants(item: compiler.Item) -> Array<string> {
+    const result = match item {
+        IEnum(en, ev) { yield ev }
+        _ { yield compiler.emptyStrings() }
+    }
+    return result
+}
+
 fn lowerItem(prog: MonoProgram, item: compiler.Item) {
     prog.items = prog.items + 1
     const tag = match item {
         IFn(f) { yield "fn" }
         IStruct(s) { yield "struct" }
         IImport(p, a) { yield "import" }
+        IEnum(en, ev) { yield "enum" }
     }
 
     if tag == "fn" {
@@ -127,6 +150,12 @@ fn lowerItem(prog: MonoProgram, item: compiler.Item) {
     if tag == "struct" {
         const s = extractStruct(item)
         prog.structs.append(s)
+    }
+
+    if tag == "enum" {
+        const en = extractEnumName(item)
+        const ev = extractEnumVariants(item)
+        prog.enums.append(EnumDef(name: en, variants: ev))
     }
     // imports: skip
 }
@@ -155,6 +184,7 @@ fn showMonoProgram(prog: MonoProgram) {
     print("MonoProgram:")
     print("  " + int_to_string(prog.fnCount) + " concrete function(s)")
     print("  " + int_to_string(prog.structs.length) + " struct(s)")
+    print("  " + int_to_string(prog.enums.length) + " enum(s)")
     for f in prog.fns {
         print("  fn " + f.name + "(" + int_to_string(f.params.length) + " params) -> " + f.retTy)
     }
@@ -225,5 +255,8 @@ fn mergeProgramWithAlias(dst: MonoProgram, src: MonoProgram, alias: string) {
     }
     for s in src.structs {
         dst.structs.append(s)
+    }
+    for e in src.enums {
+        dst.enums.append(EnumDef(name: alias + "__" + e.name, variants: e.variants))
     }
 }

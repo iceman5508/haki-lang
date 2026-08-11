@@ -2,59 +2,111 @@
 ///
 /// Usage: import "std/json" as json
 ///
-/// Encoding: Haki values → JSON strings
-/// Decoding: JSON strings → Map<string, string> (flat objects)
-///
-/// v1.3 scope: flat JSON objects. Nested objects and arrays are v1.4.
+/// Two APIs:
+///   Flat: json.decode() / json.encode() — Map<string,string> (fast, simple)
+///   Nested: json.parse() / json.stringify() — nested Map, raw JSON values
+
+// ── Flat JSON API ─────────────────────────────────────────────────────────────
 
 /// Encode a string value as a JSON string (with quotes and escaping).
 fn str(value: string) -> string {
-    return jsonString(value)
+    return haki_json_str(value)
 }
 
 /// Encode an integer as a JSON number.
 fn num(value: int) -> string {
-    return jsonInt(value)
+    return haki_json_num(value)
 }
 
 /// Encode a boolean as JSON true/false.
 fn flag(value: bool) -> string {
-    return jsonBool(value)
+    return haki_json_flag(value)
 }
 
-/// Encode null as JSON string.
-fn jsonNull() -> string {
+/// Encode null as JSON null.
+fn nullValue() -> string {
     return "null"
 }
 
 /// Build a JSON object from a Map<string, string>.
-/// Each value is treated as a pre-encoded JSON value.
-/// Example: json.object(Map("name": json.string("Isaac"), "age": json.int(30)))
-/// → {"name":"Isaac","age":30}
+/// Each value is treated as a pre-encoded JSON value (number, string, nested object, etc.).
+///
+/// Example:
+///   const fields: Map<string, string> = Map()
+///   fields.set("name", json.str("Alice"))
+///   fields.set("age", json.num(30))
+///   const obj = json.object(fields)
+///   // obj = {"name":"Alice","age":30}
 fn object(fields: Map<string, string>) -> string {
-    return jsonEncodeObject(fields)
+    return haki_json_encode_object(fields)
 }
 
 /// Build a JSON array from an Array<string>.
-/// Each element is treated as a pre-encoded JSON value.
+/// Each element is a pre-encoded JSON value.
+///
+/// Example:
+///   const items: Array<string> = []
+///   items.append(json.num(1))
+///   items.append(json.num(2))
+///   items.append(json.str("three"))
+///   const arr = json.array(items)
+///   // arr = [1,2,"three"]
 fn array(items: Array<string>) -> string {
-    return jsonEncodeArray(items)
+    return haki_json_encode_array(items)
 }
 
 /// Decode a flat JSON object string into Map<string, string>.
-/// All values are returned as strings regardless of their JSON type.
+/// All values are returned as strings. Nested objects are their raw JSON text.
 /// Returns an error for malformed JSON or non-object input.
 fn decode(s: string) -> (Map<string, string>, Error?) {
-    return jsonDecode(s)
+    return haki_json_decode(s)
 }
 
 /// Convenience: decode a JSON string and get one field.
 fn decodeGet(s: string, key: string) -> string {
-    return jsonDecodeGet(s, key)
+    return haki_json_decode_get(s, key)
 }
 
-/// Encode a map as a proper JSON object with string values.
-/// Note: use json.object() for encoding; this is an alias.
+/// Alias for object() — encode a map as a JSON object.
 fn encode(fields: Map<string, string>) -> string {
-    return jsonEncodeObject(fields)
+    return haki_json_encode_object(fields)
 }
+
+// ── Nested JSON API ───────────────────────────────────────────────────────────
+
+/// Parse a JSON object string into Map<string, string>.
+/// String values are decoded (quotes removed, escapes processed).
+/// Nested objects/arrays are kept as their raw JSON text.
+///
+/// Example:
+///   const user = json.parse("{\"name\":\"Bob\",\"age\":42}")
+///   const name = user.getOrDefault("name", "")  // "Bob"
+///   const age  = user.getOrDefault("age",  "")  // "42"
+fn parse(s: string) -> Map<string, string> {
+    return haki_json_parse_nested(s)
+}
+
+/// Encode a Map<string, string> as a JSON object.
+/// Values that look like JSON (start with { [ or are numeric/boolean/null)
+/// are embedded as-is (raw). All other values are quoted as strings.
+///
+/// Example:
+///   const m: Map<string, string> = Map()
+///   m.set("name", "Alice")
+///   m.set("score", "99")
+///   json.stringify(m) => {"name":"Alice","score":99}
+fn stringify(fields: Map<string, string>) -> string {
+    return haki_json_encode_nested(fields)
+}
+
+// ── Extern declarations ───────────────────────────────────────────────────────
+
+extern "c" fn haki_json_str(value: string) -> string
+extern "c" fn haki_json_num(value: int) -> string
+extern "c" fn haki_json_flag(value: bool) -> string
+extern "c" fn haki_json_encode_object(fields: Map<string, string>) -> string
+extern "c" fn haki_json_encode_array(items: Array<string>) -> string
+extern "c" fn haki_json_decode(s: string) -> (Map<string, string>, Error?)
+extern "c" fn haki_json_decode_get(s: string, key: string) -> string
+extern "c" fn haki_json_parse_nested(s: string) -> Map<string, string>
+extern "c" fn haki_json_encode_nested(fields: Map<string, string>) -> string

@@ -377,6 +377,9 @@ enum Expr {
     EBool(bool)
     ENull
     EString(string)
+    EFStr(Array<Expr>)
+    ETry(Expr)
+    ENamedCall(string, Array<Expr>)
     EIdent(string)
     EUnary(string, Expr)
     EBinary(string, Expr, Expr)
@@ -403,6 +406,9 @@ enum Stmt {
     SWhile(Expr, Array<Stmt>)
     SFor(string, Expr, Array<Stmt>)
     SAssign(Expr, Expr)
+    SCompoundAssign(Expr, string, Expr)   // target, op ("+=" etc.), value
+    SAnnotated(Array<string>, Stmt)       // attributes, inner stmt
+    SBlock(Array<Stmt>)                   // multi-statement block (for multi-return destructuring)
 }
 
 struct Param {
@@ -432,6 +438,7 @@ enum Item {
     IFn(FnDef)
     IStruct(StructDef)
     IImport(string, string)   // path, alias
+    IEnum(string, Array<string>)   // enum name, variant names in declaration order
 }
 
 // ── Parser state ──────────────────────────────────────────────────────────────
@@ -1010,37 +1017,104 @@ fn parseStmt(p: Parser) -> (Stmt, Error?) {
     if kind == "const" || kind == "let" {
         const isMut = kind == "let"
         const _ = advance(p)
-        // Support multi-binding: const a, b, c = expr  OR  const a = expr
         const firstK = peekKind(p)
         if string_length(firstK) > 6 && firstK.substring(0, 6) == "Ident(" {
-            const name = firstK.substring(6, string_length(firstK) - 1)
+            const firstName = firstK.substring(6, string_length(firstK) - 1)
             const _ = advance(p)
-            // Check for multi-binding: const a, b = expr
-            if peekKind(p) == "," {
-                // Consume all remaining binding names
+            // Check for type annotation (single binding only)
+            if peekKind(p) == ":" {
+                const _ = advance(p)
+                const _, te = parseSimpleTyStr(p)
+                if te != null { return SLet(isMut, firstName, ENull), te }
+            } else if peekKind(p) == "," {
+                // Multi-binding: const a, b, c = expr
+                let names: Array<string> = [firstName]
                 while peekKind(p) == "," {
                     const _ = advance(p)  // consume ','
                     if peekKind(p) == "_" {
-                        const _ = advance(p)  // underscore sink
+                        names.append("__sink__")
+                        const _ = advance(p)
                     } else if string_length(peekKind(p)) > 6 && peekKind(p).substring(0, 6) == "Ident(" {
-                        const _ = advance(p)  // consume extra binding name
+                        const nk = peekKind(p)
+                        names.append(nk.substring(6, string_length(nk) - 1))
+                        const _ = advance(p)
                     }
                 }
-            } else if peekKind(p) == ":" {
-                // Type annotation — skip it
-                const _ = advance(p)
-                const _, te = parseSimpleTyStr(p)
-                if te != null { return SLet(isMut, name, ENull), te }
+                const _, eqe = expect(p, "=")
+                if eqe != null { return SLet(isMut, firstName, ENull), eqe }
+                const init, ie = parseExpr(p)
+                if ie != null { return SLet(isMut, firstName, ENull), ie }
+                // Generate: __mr_firstName = init; a = __mr_get_0(__mr); b = __mr_get_1(__mr); ...
+                // If firstName is "_" (sink), find first real name from the list to avoid __mr__ collisions.
+                let tempBase = firstName
+                if tempBase == "_" {
+                    let tni = 0
+                    while tni < names.length {
+                        if names[tni] != "_" && names[tni] != "__sink__" {
+                            if tempBase == "_" { tempBase = names[tni] }
+                        }
+                        tni = tni + 1
+                    }
+                }
+                const tempName = "__mr_" + tempBase
+                let stmts: Array<Stmt> = []
+                stmts.append(SLet(false, tempName, init))
+                let bi = 0
+                while bi < names.length {
+                    if names[bi] != "_" && names[bi] != "__sink__" {
+                        stmts.append(SLet(false, names[bi], ECall("__mr_get_" + int_to_string(bi), [EIdent(tempName)])))
+                    }
+                    bi = bi + 1
+                }
+                return SBlock(stmts), null
             }
             const _, eqe = expect(p, "=")
-            if eqe != null { return SLet(isMut, name, ENull), eqe }
+            if eqe != null { return SLet(isMut, firstName, ENull), eqe }
             const init, ie = parseExpr(p)
-            if ie != null { return SLet(isMut, name, ENull), ie }
-            return SLet(isMut, name, init), null
+            if ie != null { return SLet(isMut, firstName, ENull), ie }
+            return SLet(isMut, firstName, init), null
         }
-        // Underscore sink: const _ = expr
+        // Underscore sink: const _ = expr  OR  const _, rbe = expr (multi-binding starting with _)
         if peekKind(p) == "_" {
             const _ = advance(p)
+            if peekKind(p) == "," {
+                // Multi-binding starting with underscore: const _, name2, ... = expr
+                let names: Array<string> = ["__sink__"]
+                while peekKind(p) == "," {
+                    const _ = advance(p)  // consume ','
+                    if peekKind(p) == "_" {
+                        names.append("__sink__")
+                        const _ = advance(p)
+                    } else if string_length(peekKind(p)) > 6 && peekKind(p).substring(0, 6) == "Ident(" {
+                        const nk = peekKind(p)
+                        names.append(nk.substring(6, string_length(nk) - 1))
+                        const _ = advance(p)
+                    }
+                }
+                const _, eqe2 = expect(p, "=")
+                if eqe2 != null { return SLet(false, "_", ENull), eqe2 }
+                const init2, ie2 = parseExpr(p)
+                if ie2 != null { return SLet(false, "_", ENull), ie2 }
+                // Find first non-sink name for temp var
+                let tempName2 = "__mr_discard__"
+                let ni2 = 0
+                while ni2 < names.length {
+                    if names[ni2] != "__sink__" {
+                        if tempName2 == "__mr_discard__" { tempName2 = "__mr_" + names[ni2] }
+                    }
+                    ni2 = ni2 + 1
+                }
+                let stmts2: Array<Stmt> = []
+                stmts2.append(SLet(false, tempName2, init2))
+                let bi2 = 0
+                while bi2 < names.length {
+                    if names[bi2] != "__sink__" {
+                        stmts2.append(SLet(false, names[bi2], ECall("__mr_get_" + int_to_string(bi2), [EIdent(tempName2)])))
+                    }
+                    bi2 = bi2 + 1
+                }
+                return SBlock(stmts2), null
+            }
             const _, eqe = expect(p, "=")
             if eqe != null { return SLet(isMut, "_", ENull), eqe }
             const init, ie = parseExpr(p)
@@ -1238,8 +1312,7 @@ fn parseItem(p: Parser) -> (Item, Error?) {
         return IStruct(StructDef(name: sname, fields: fields)), null
     }
 
-    // enum: parse name and skip the body (we don't need to inspect enum variants
-    // in the bootstrap typechecker — we just need to count items correctly)
+    // enum: parse name and collect variant names
     if kind == "enum" {
         const _ = advance(p)
         const nk = peekKind(p)
@@ -1248,26 +1321,71 @@ fn parseItem(p: Parser) -> (Item, Error?) {
             ename = nk.substring(6, string_length(nk) - 1)
             const _ = advance(p)
         }
-        // Skip optional type params
+        // Skip optional type params <T, U, ...>
         if peekKind(p) == "<" {
-            while peekKind(p) != ">" && peekKind(p) != "EOF" {
-                const _ = advance(p)
-            }
+            while peekKind(p) != ">" && peekKind(p) != "EOF" { const _ = advance(p) }
             if peekKind(p) == ">" { const _ = advance(p) }
         }
         const _, lbe = expect(p, "{")
-        if lbe != null { return IStruct(StructDef(name: ename, fields: [])), lbe }
-        // Skip variant declarations — just count brace depth
-        let depth = 1
-        while depth > 0 && peekKind(p) != "EOF" {
-            const tok = peekKind(p)
-            if tok == "{" { depth = depth + 1 }
-            if tok == "}" { depth = depth - 1 }
-            if depth > 0 { const _ = advance(p) }
+        if lbe != null { return IEnum(ename, []), lbe }
+        let variants: Array<string> = []
+        while peekKind(p) != "}" && peekKind(p) != "EOF" {
+            const vk = peekKind(p)
+            if string_length(vk) > 6 && vk.substring(0, 6) == "Ident(" {
+                variants.append(vk.substring(6, string_length(vk) - 1))
+                const _ = advance(p)
+                // Skip optional payload: (T1, T2...) or { fields }
+                if peekKind(p) == "(" {
+                    let pd = 0
+                    let payloadTy = ""
+                    let expectTy = false
+                    while peekKind(p) != "EOF" {
+                        const tk = peekKind(p)
+                        const _ = advance(p)
+                        if tk == "(" {
+                            pd = pd + 1
+                            if pd == 1 { expectTy = true }
+                        }
+                        if tk == ")" { pd = pd - 1 }
+                        // After ',' at depth 1, the next ident token is a type name
+                        if tk == "," && pd == 1 { expectTy = true }
+                        // Capture type name immediately after '(' or ','
+                        if expectTy && pd == 1 {
+                            const ptk = peekKind(p)
+                            if string_length(ptk) > 6 && ptk.substring(0, 6) == "Ident(" {
+                                const typeName = ptk.substring(6, string_length(ptk) - 1)
+                                if string_length(payloadTy) == 0 {
+                                    payloadTy = typeName
+                                } else {
+                                    payloadTy = payloadTy + ";" + typeName
+                                }
+                            }
+                            expectTy = false
+                        }
+                        if pd == 0 { break }
+                    }
+                    // Store variant as "Name:PayloadType" if we captured a type
+                    if string_length(payloadTy) > 0 && variants.length > 0 {
+                        const lastIdx = variants.length - 1
+                        variants[lastIdx] = variants[lastIdx] + ":" + payloadTy
+                    }
+                } else if peekKind(p) == "{" {
+                    let pd = 0
+                    while peekKind(p) != "EOF" {
+                        const tk = peekKind(p)
+                        const _ = advance(p)
+                        if tk == "{" { pd = pd + 1 }
+                        if tk == "}" { pd = pd - 1 }
+                        if pd == 0 { break }
+                    }
+                }
+            } else {
+                const _ = advance(p)  // skip unexpected tokens
+            }
         }
         const _, rbe = expect(p, "}")
-        if rbe != null { return IStruct(StructDef(name: ename, fields: [])), rbe }
-        return IStruct(StructDef(name: ename, fields: [])), null
+        if rbe != null { return IEnum(ename, variants), rbe }
+        return IEnum(ename, variants), null
     }
 
     // class: parse like struct but also has methods — skip the whole body
@@ -1348,6 +1466,9 @@ fn showExpr(e: Expr) -> string {
         EBool(b)            { yield if b { yield "true" } else { yield "false" } }
         ENull               { yield "null" }
         EString(s)          { yield "\"" + s + "\"" }
+        EFStr(fsegs)        { yield "f\"...\"" }
+        ETry(tryinner)      { yield "try " + showExpr(tryinner) }
+        ENamedCall(ncn, ncargs) { yield ncn + "(...)" }
         EIdent(s)           { yield s }
         EUnary(op, operand) { yield op + showExpr(operand) }
         EBinary(op, l, r)   { yield "(" + showExpr(l) + " " + op + " " + showExpr(r) + ")" }
@@ -1379,6 +1500,7 @@ fn main() {
             IFn(f)         { yield "fn " + f.name }
             IStruct(s)     { yield "struct " + s.name }
             IImport(p, a)  { yield "import " + p }
+            IEnum(en, ev)  { yield "enum " + en }
         }
         print(desc)
     }
@@ -1391,9 +1513,10 @@ fn test_parse_fn() {
     if err != null { panic("parse error: " + err.message) }
     if items.length != 1 { panic("expected 1 item") }
     const desc = match items[0] {
-        IFn(f)     { yield "fn:" + f.name }
-        IStruct(s) { yield "struct:" + s.name }
+        IFn(f)        { yield "fn:" + f.name }
+        IStruct(s)    { yield "struct:" + s.name }
         IImport(p, a) { yield "import:" + p }
+        IEnum(en, ev) { yield "enum:" + en }
     }
     if desc != "fn:add" { panic("expected fn:add, got: " + desc) }
 }
@@ -1491,5 +1614,10 @@ fn emptyExprs() -> Array<Expr> {
 
 fn emptyArms() -> Array<MatchArm> {
     let s: Array<MatchArm> = []
+    return s
+}
+
+fn emptyStrings() -> Array<string> {
+    let s: Array<string> = []
     return s
 }

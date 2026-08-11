@@ -1,0 +1,114 @@
+// std/net — TCP and UDP socket primitives
+//
+// Usage:
+//   import "std/net" as net
+//
+//   // TCP client
+//   const conn = net.tcpConnect("example.com", 80)
+//   conn.send("GET / HTTP/1.0\r\n\r\n")
+//   const response = conn.recv(4096)
+//   conn.close()
+//
+//   // TCP server
+//   const server = net.tcpListen(8080)
+//   const client = server.accept()
+//   const request = client.recv(1024)
+//   client.send("HTTP/1.0 200 OK\r\nContent-Length: 5\r\n\r\nHello")
+//   client.close()
+//   server.close()
+
+// -- TcpStream ---------------------------------------------------------------
+
+class TcpStream {
+    const fd: int
+
+    fn send(data: string) -> (int, Error?) {
+        const n = haki_net_send(fd, data, string_length(data))
+        if n < 0 {
+            return 0, Error(message: haki_net_last_error())
+        }
+        return n, null
+    }
+
+    fn recv(maxBytes: int) -> (string, Error?) {
+        const data = haki_net_recv(fd, maxBytes)
+        if string_length(data) == 0 {
+            return "", Error(message: "connection closed")
+        }
+        return data, null
+    }
+
+    fn close() {
+        haki_net_close(fd)
+    }
+
+    fn peerAddr() -> string {
+        return haki_net_peer_addr(fd)
+    }
+
+    fn setNonBlocking() -> Error? {
+        const r = haki_net_set_nonblocking(fd)
+        if r < 0 { return Error(message: haki_net_last_error()) }
+        return null
+    }
+}
+
+// -- TcpListener -------------------------------------------------------------
+
+class TcpListener {
+    const fd: int
+
+    fn accept() -> (TcpStream, Error?) {
+        const clientFd = haki_net_accept(fd)
+        if clientFd < 0 {
+            return TcpStream(fd: 0), Error(message: haki_net_last_error())
+        }
+        return TcpStream(fd: clientFd), null
+    }
+
+    fn close() {
+        haki_net_close(fd)
+    }
+}
+
+// -- Constructors ------------------------------------------------------------
+
+fn tcpConnect(host: string, port: int) -> (TcpStream, Error?) {
+    const fd = haki_tcp_socket()
+    if fd < 0 { return TcpStream(fd: 0), Error(message: haki_net_last_error()) }
+    const r = haki_net_connect(fd, host, port)
+    if r < 0 {
+        haki_net_close(fd)
+        return TcpStream(fd: 0), Error(message: haki_net_last_error())
+    }
+    return TcpStream(fd: fd), null
+}
+
+fn tcpListen(port: int) -> (TcpListener, Error?) {
+    const fd = haki_tcp_socket()
+    if fd < 0 { return TcpListener(fd: 0), Error(message: haki_net_last_error()) }
+    if haki_net_bind(fd, port) < 0 {
+        haki_net_close(fd)
+        return TcpListener(fd: 0), Error(message: haki_net_last_error())
+    }
+    if haki_net_listen(fd) < 0 {
+        haki_net_close(fd)
+        return TcpListener(fd: 0), Error(message: haki_net_last_error())
+    }
+    return TcpListener(fd: fd), null
+}
+
+// -- Extern declarations (resolved at link time from runtime) ----------------
+
+extern "c" fn haki_tcp_socket() -> int
+extern "c" fn haki_udp_socket() -> int
+extern "c" fn haki_net_connect(fd: int, host: string, port: int) -> int
+extern "c" fn haki_net_bind(fd: int, port: int) -> int
+extern "c" fn haki_net_listen(fd: int) -> int
+extern "c" fn haki_net_accept(fd: int) -> int
+extern "c" fn haki_net_send(fd: int, data: string, len: int) -> int
+extern "c" fn haki_net_recv(fd: int, maxBytes: int) -> string
+extern "c" fn haki_net_close(fd: int)
+extern "c" fn haki_net_set_nonblocking(fd: int) -> int
+extern "c" fn haki_net_peer_addr(fd: int) -> string
+extern "c" fn haki_net_last_error() -> string

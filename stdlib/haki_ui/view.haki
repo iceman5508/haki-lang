@@ -1,0 +1,7 @@
+// std/haki_ui/view.haki — View protocol
+
+import "std/haki_ui/element" as ui
+
+protocol View {
+    fn body() -> ui.Element
+}

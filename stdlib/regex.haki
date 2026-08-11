@@ -1,9 +1,9 @@
-/// std/regex — Basic pattern matching.
+/// std/regex — Pattern matching via POSIX extended regular expressions.
 ///
 /// Usage: import "std/regex" as regex
 ///
-/// v1.3 scope: POSIX extended regular expressions via C regcomp/regexec.
-/// Full PCRE support deferred to v1.4.
+/// Backed by the system's regcomp/regexec (POSIX ERE).
+/// Capture groups supported via findGroups().
 
 /// Test if a string matches a pattern.
 /// Returns true if pattern matches anywhere in the string.
@@ -32,3 +32,18 @@ fn replaceAll(s: string, pattern: string, replacement: string) -> string {
 fn split(s: string, pattern: string) -> Array<string> {
     return haki_regex_split(s, pattern)
 }
+
+/// Find all capture groups in the first match of pattern in s.
+/// Index 0 is the full match; indices 1..N are capture groups.
+/// Returns an empty array if there is no match.
+///
+/// Example:
+///   regex.findGroups("2024-01-15", "([0-9]{4})-([0-9]{2})-([0-9]{2})")
+///   → ["2024-01-15", "2024", "01", "15"]
+fn findGroups(s: string, pattern: string) -> Array<string> {
+    return haki_regex_find_groups(s, pattern)
+}
+
+// ── C functions registered in builtins.rs (no extern "c" needed) ─────────────
+// haki_regex_matches, haki_regex_find, haki_regex_replace_all,
+// haki_regex_split, haki_regex_find_groups

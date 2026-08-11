@@ -79,6 +79,18 @@ fn symLookupFn(sym: SymTable, name: string) -> (FnInfo, bool) {
     return FnInfo(name: "", retTy: TyError, nParams: 0), false
 }
 
+fn fnInfoRetTyStr(info: FnInfo) -> string {
+    return semTyToStr(info.retTy)
+}
+
+fn symLookupFnRetTyStr(sym: SymTable, name: string) -> string {
+    if sym.fns.has(name) {
+        const info = sym.fns.getOrDefault(name, FnInfo(name: "", retTy: TyError, nParams: 0))
+        return fnInfoRetTyStr(info)
+    }
+    return ""
+}
+
 // ── Type resolution (from string representation) ───────────────────────────────
 
 fn resolveSimpleTy(s: string) -> SemTy {

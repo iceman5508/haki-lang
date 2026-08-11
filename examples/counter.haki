@@ -1,0 +1,59 @@
+/// examples/counter.haki — haki_ui counter app.
+///
+/// Demonstrates the complete haki_ui stack:
+///   - State<int> reactive state with set()
+///   - View protocol implementation
+///   - Element tree composition
+///   - Event handler closures that mutate state
+///
+/// Compile for desktop (GTK):
+///   hakic --target gtk counter.haki -o counter
+///   ./counter
+///
+/// Compile for browser (Wasm/DOM):
+///   hakic --target dom counter.haki -o counter.wasm
+///   <!-- serve counter.html which imports haki_ui_dom.js -->
+
+import "haki_ui/state"   as st
+import "haki_ui/element" as el
+import "haki_ui/app"     as ui
+
+struct CounterApp {
+    count:   State<int>
+    message: State<string>
+}
+
+impl View for CounterApp {
+    fn body() -> Element {
+        const count_text = "Count: " + int_to_string(self.count.value)
+        const btn_color  = if self.count.value > 0 { "green" } else { "gray" }
+
+        return el.column(children: [
+            el.heading("Haki Counter"),
+            el.text(count_text),
+            el.text(self.message.value),
+            el.row(children: [
+                el.button(label: "-1", onClick: fn() {
+                    self.count.set(self.count.value - 1)
+                    self.message.set("Decremented!")
+                }),
+                el.button(label: "Reset", onClick: fn() {
+                    self.count.set(0)
+                    self.message.set("Reset to zero.")
+                }),
+                el.button(label: "+1", onClick: fn() {
+                    self.count.set(self.count.value + 1)
+                    self.message.set("Incremented!")
+                }),
+            ]),
+        ])
+    }
+}
+
+fn main() {
+    const app = CounterApp(
+        count:   st.makeState(0),
+        message: st.makeState("Press a button.")
+    )
+    ui.App(root: app, title: "Haki Counter", width: 400, height: 300).run()
+}

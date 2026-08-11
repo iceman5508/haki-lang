@@ -1,0 +1,74 @@
+// std/crypto — Hashing, HMAC, and Base64 encoding
+//
+// Self-contained — no external library required.
+// SHA-256 and HMAC-SHA256 implementations are embedded in the Haki runtime.
+//
+// Usage:
+//   import "std/crypto" as crypto
+//
+//   const digest = crypto.sha256("hello world")
+//   // "b94d27b9934d3e08a52e52d7da7dabfac484efe04294e576e6b05e43e3ea4a62"
+//
+//   const token = crypto.hmacSha256("secret-key", "message")
+//   const encoded = crypto.base64Encode("Hello, World!")
+//   // "SGVsbG8sIFdvcmxkIQ=="
+//   const decoded = crypto.base64Decode("SGVsbG8sIFdvcmxkIQ==")
+//   // "Hello, World!"
+
+// -- SHA-256 -----------------------------------------------------------------
+
+// Hash a string and return the 64-character lowercase hex digest.
+fn sha256(input: string) -> string {
+    return haki_crypto_sha256(input)
+}
+
+// -- HMAC-SHA256 -------------------------------------------------------------
+
+// Compute HMAC-SHA256(key, message) and return hex digest.
+// Used for API request signing and JWT verification.
+fn hmacSha256(key: string, message: string) -> string {
+    return haki_crypto_hmac_sha256(key, message)
+}
+
+// -- Base64 ------------------------------------------------------------------
+
+// Encode a string to standard Base64 (with + / and = padding).
+fn base64Encode(input: string) -> string {
+    return haki_crypto_base64_encode(input)
+}
+
+// Decode a standard Base64 string.
+fn base64Decode(input: string) -> string {
+    return haki_crypto_base64_decode(input)
+}
+
+// Encode to URL-safe Base64 (- _ instead of + /, no padding).
+// Used in JWTs and URL parameters.
+fn base64UrlEncode(input: string) -> string {
+    return haki_crypto_base64url_encode(input)
+}
+
+// -- Hex utilities -----------------------------------------------------------
+
+// Check if two digests are equal (constant-time comparison to prevent timing attacks).
+// Use this instead of == when comparing HMAC values.
+fn digestsEqual(a: string, b: string) -> bool {
+    if string_length(a) != string_length(b) { return false }
+    let diff = 0
+    let i = 0
+    while i < string_length(a) {
+        const ca = a.substring(i, i + 1)
+        const cb = b.substring(i, i + 1)
+        if ca != cb { diff = diff + 1 }
+        i = i + 1
+    }
+    return diff == 0
+}
+
+// -- Extern declarations -----------------------------------------------------
+
+extern "c" fn haki_crypto_sha256(input: string) -> string
+extern "c" fn haki_crypto_hmac_sha256(key: string, msg: string) -> string
+extern "c" fn haki_crypto_base64_encode(input: string) -> string
+extern "c" fn haki_crypto_base64_decode(input: string) -> string
+extern "c" fn haki_crypto_base64url_encode(input: string) -> string

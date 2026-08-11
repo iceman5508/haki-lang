@@ -1,0 +1,78 @@
+// std/sync — Channels and structured concurrency for Haki v2.3
+//
+// Import:
+//   import "std/sync" as sync
+//
+// Usage:
+//   const ch = sync.chan<int>(10)          // bounded channel, capacity 10
+//   const ch = sync.chan<string>()         // unbounded channel
+//   ch.send("hello")
+//   const msg = ch.receive()              // string? — null if closed+empty
+//   ch.close()
+//
+//   for msg in ch { print(msg) }          // blocks until channel closed
+//
+//   g.spawn(async fn() -> int { return 42 })
+//   const results = g.awaitAll()          // Array<int>
+//   g.cancel()
+//
+//   select {
+//       msg = ch1.receive() { print(msg) }
+//       val = ch2.receive() { print_int(val) }
+//       timeout(5000)       { print("timed out") }
+//   }
+
+// -- Chan<T> -----------------------------------------------------------------
+
+// Create a bounded channel with the given capacity.
+// Sends block when the channel is full.
+// Typed channel constructors for use without module-qualified generic calls
+fn chanInt(capacity: int) -> Chan<int> { return Chan<int>(capacity: capacity) }
+fn chanStr(capacity: int) -> Chan<string> { return Chan<string>(capacity: capacity) }
+
+fn chan<T>(capacity: int) -> Chan<T> {
+    return Chan<T>(capacity: capacity)
+}
+
+// Create an unbounded channel.
+// Sends never block (allocates on the heap per item).
+fn unbounded<T>() -> Chan<T> {
+    return Chan<T>(capacity: 0)
+}
+
+
+// -- Mutex<T> (re-exported from runtime) ------------------------------------
+// Mutex is a builtin — use directly without import:
+//   const mu = Mutex(initialValue)
+//   const guard = mu.lock()
+//   guard.value = newValue
+//   // guard released when it goes out of scope (ARC)
+
+// -- Helpers -----------------------------------------------------------------
+
+// Drain a channel into an array.
+// Blocks until the channel is closed.
+
+// Send all items from an array into a channel, then close it.
+// Create an unbounded channel.
+// Sends never block (allocates on the heap per item).
+fn unbounded<T>() -> Chan<T> {
+    return Chan<T>(capacity: 0)
+}
+
+
+// -- Mutex<T> (re-exported from runtime) ------------------------------------
+// Mutex is a builtin — use directly without import:
+//   const mu = Mutex(initialValue)
+//   const guard = mu.lock()
+//   guard.value = newValue
+//   // guard released when it goes out of scope (ARC)
+
+// -- Helpers -----------------------------------------------------------------
+
+// Drain a channel into an array.
+// Blocks until the channel is closed.
+
+// Send all items from an array into a channel, then close it.
+// Useful for feeding a pipeline stage.
+

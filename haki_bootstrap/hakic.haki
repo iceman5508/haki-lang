@@ -63,10 +63,11 @@ fn doEmitC(srcPath: string, outPath: string) {
     const items, _pe3 = compiler__parse(src)
     const rtSrc, _rtErr = readFile("./haki_runtime_core.c")
 
-    // Standard path: emit user program with runtime embedded.
-    // The bootstrap cemit handles this correctly for programs without
-    // complex imported types (lexers, parsers, type checkers).
+    // Resolve all imports into the monomorphized program before emitting.
     const prog = mono__monomorphize(items)
+    let visited = [srcPath]
+    resolveImports(prog, items, visited)
+
     const cSrc = cemit__emitProgram(prog, rtSrc)
 
     const _wErr = writeFile(outPath, cSrc)

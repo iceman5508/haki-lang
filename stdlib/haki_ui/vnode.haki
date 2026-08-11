@@ -1,0 +1,196 @@
+// std/haki_ui/vnode.haki — Virtual Tree node and diff engine
+//
+// buildVtree takes a plain int nextId, returns (VNode, int).
+// Start with nextId = 1.
+
+import "std/haki_ui/element" as ui
+
+// -- VNode -------------------------------------------------------------------
+
+class VNode {
+    const id:       int
+    const kind:     string
+    const text:     string
+    let   children: Array<VNode>
+    const onClick:  int
+    const label:    string
+}
+
+// -- Mutation ----------------------------------------------------------------
+
+enum Mutation {
+    SetText(int, string)
+    SetVisible(int, bool)
+    InsertChild(int, int, int)
+    RemoveChild(int)
+    SetCallback(int, int)
+    CreateLabel(int, int, string)
+    CreateButton(int, int, string, int)
+    CreateBox(int, int, bool)
+}
+
+// -- buildVtree --------------------------------------------------------------
+// Convert an Element tree into a VNode tree, assigning stable node_ids.
+// Returns (VNode, nextId) — pass the returned nextId to the next buildVtree call.
+
+fn buildVtree(elem: ui.Element, nextId: int) -> (VNode, int) {
+    let outKind:  string = "empty"
+    let outText:  string = ""
+    let outLabel: string = ""
+    let outClick: int    = 0
+    let outKids:  Array<VNode> = []
+    let n = nextId
+
+    const tag = match elem {
+        Empty       { yield "empty" }
+        Spacer      { yield "spacer" }
+        Text(v)     { outText = v  yield "text" }
+        Paragraph(v){ outText = v  yield "paragraph" }
+        Button(lbl, f) {
+            outText  = lbl
+            outClick = n + 1
+            yield "button"
+        }
+        Column(cs) {
+            n = n + 1
+            for c in cs {
+                const child, n2 = buildVtree(c, n)
+                outKids.append(child)
+                n = n2
+            }
+            yield "column"
+        }
+        Row(cs) {
+            n = n + 1
+            for c in cs {
+                const child, n2 = buildVtree(c, n)
+                outKids.append(child)
+                n = n2
+            }
+            yield "row"
+        }
+        Stack(cs) {
+            n = n + 1
+            for c in cs {
+                const child, n2 = buildVtree(c, n)
+                outKids.append(child)
+                n = n2
+            }
+            yield "stack"
+        }
+        ScrollView(child) {
+            const inner, n2 = buildVtree(child, n + 1)
+            outKids.append(inner)
+            n = n2
+            yield "scroll"
+        }
+        Image(src, w, h) {
+            outText = src
+            yield "image"
+        }
+        TextField(placeholder, onChange) {
+            outText  = placeholder
+            outClick = n + 1
+            yield "textfield"
+        }
+        Checkbox(lbl, checked, onChange) {
+            outLabel = lbl
+            const checkedStr = if checked { yield "true" } else { yield "false" }
+            outText  = checkedStr
+            outClick = n + 1
+            yield "checkbox"
+        }
+        Dropdown(options, selectedIndex, onChange) {
+            outText  = options.join(",")
+            outClick = n + 1
+            yield "dropdown"
+        }
+        Padding(px, child) {
+            outText = int_to_string(px)
+            const inner, n2 = buildVtree(child, n + 1)
+            outKids.append(inner)
+            n = n2
+            yield "padding"
+        }
+        Spacing(px) {
+            outText = int_to_string(px)
+            yield "spacing"
+        }
+        Aligned(align, child) {
+            outText = align
+            const inner, n2 = buildVtree(child, n + 1)
+            outKids.append(inner)
+            n = n2
+            yield "aligned"
+        }
+        _ { yield "empty" }
+    }
+
+    outKind = tag
+
+    // Advance counter: container types already updated n in their arms
+    // Leaf types just consume one id
+    if tag == "button" || tag == "textfield" || tag == "checkbox" || tag == "dropdown" {
+        return VNode(id: nextId, kind: outKind, text: outText, children: outKids, onClick: outClick, label: outLabel), nextId + 2
+    }
+    if tag == "column" || tag == "row" || tag == "stack" || tag == "scroll" || tag == "padding" || tag == "aligned" {
+        return VNode(id: nextId, kind: outKind, text: outText, children: outKids, onClick: outClick, label: outLabel), n
+    }
+    return VNode(id: nextId, kind: outKind, text: outText, children: outKids, onClick: outClick, label: outLabel), nextId + 1
+}
+
+// -- diff --------------------------------------------------------------------
+
+fn diff(oldNode: VNode, newNode: VNode, mutations: Array<Mutation>) {
+    if oldNode.text != newNode.text {
+        mutations.append(SetText(oldNode.id, newNode.text))
+    }
+    if oldNode.onClick != newNode.onClick {
+        mutations.append(SetCallback(oldNode.id, newNode.onClick))
+    }
+
+    const oldLen = oldNode.children.length
+    const newLen = newNode.children.length
+    const minLen = if oldLen < newLen { yield oldLen } else { yield newLen }
+
+    let i = 0
+    while i < minLen {
+        const oldChild = oldNode.children[i]
+        const newChild = newNode.children[i]
+        if oldChild.kind == newChild.kind {
+            diff(oldChild, newChild, mutations)
+        } else {
+            mutations.append(RemoveChild(oldChild.id))
+            appendCreateMutations(newChild, oldNode.id, i, mutations)
+        }
+        i = i + 1
+    }
+    while i < newLen {
+        appendCreateMutations(newNode.children[i], oldNode.id, i, mutations)
+        i = i + 1
+    }
+    let j = newLen
+    while j < oldLen {
+        mutations.append(RemoveChild(oldNode.children[j].id))
+        j = j + 1
+    }
+}
+
+fn appendCreateMutations(node: VNode, parentId: int, index: int, mutations: Array<Mutation>) {
+    if node.kind == "text" || node.kind == "paragraph" {
+        mutations.append(CreateLabel(parentId, node.id, node.text))
+    } else if node.kind == "button" {
+        mutations.append(CreateButton(parentId, node.id, node.text, node.onClick))
+    } else if node.kind == "column" {
+        mutations.append(CreateBox(parentId, node.id, false))
+        for child in node.children {
+            appendCreateMutations(child, node.id, 0, mutations)
+        }
+    } else if node.kind == "row" {
+        mutations.append(CreateBox(parentId, node.id, true))
+        for child in node.children {
+            appendCreateMutations(child, node.id, 0, mutations)
+        }
+    }
+    mutations.append(InsertChild(parentId, index, node.id))
+}

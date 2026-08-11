@@ -1,0 +1,56 @@
+// std/haki_ui/element.haki — Element tree (developer-facing API)
+//
+// Developers write body() returning Element.
+// The runtime converts Element → VNode → GTK widgets.
+
+enum Element {
+    Empty
+    Text(string)
+    Paragraph(string)
+    Button(string, fn() -> void)
+    Column(Array<Element>)
+    Row(Array<Element>)
+    Stack(Array<Element>)
+    ScrollView(Element)
+    Spacer
+    Image(string, int, int)     // src, width, height
+
+    // v3.4 new widgets
+    TextField(string, fn(string) -> void)     // placeholder, onChange
+    Checkbox(string, bool, fn(bool) -> void)  // label, checked, onChange
+    Dropdown(Array<string>, int, fn(int) -> void)  // options, selectedIndex, onChange
+
+    // v3.4 layout primitives
+    Padding(int, Element)                      // padding px, child
+    Spacing(int)                               // spacer with fixed px height/width
+    Aligned(string, Element)                  // alignment: "start"|"center"|"end", child
+}
+
+// -- Constructors (sugar) ----------------------------------------------------
+
+fn empty()                                      -> Element { return Empty }
+fn spacer()                                     -> Element { return Spacer }
+fn text(value: string)                          -> Element { return Text(value) }
+fn paragraph(value: string)                     -> Element { return Paragraph(value) }
+fn button(label: string, onClick: fn()->void)   -> Element { return Button(label, onClick) }
+fn column(children: Array<Element>)             -> Element { return Column(children) }
+fn row(children: Array<Element>)                -> Element { return Row(children) }
+fn stack(children: Array<Element>)              -> Element { return Stack(children) }
+fn scrollView(child: Element)                   -> Element { return ScrollView(child) }
+fn image(src: string, w: int, h: int)           -> Element { return Image(src, w, h) }
+
+// v3.4 widget constructors
+fn textField(placeholder: string, onChange: fn(string)->void) -> Element {
+    return TextField(placeholder, onChange)
+}
+fn checkbox(label: string, checked: bool, onChange: fn(bool)->void) -> Element {
+    return Checkbox(label, checked, onChange)
+}
+fn dropdown(options: Array<string>, selectedIndex: int, onChange: fn(int)->void) -> Element {
+    return Dropdown(options, selectedIndex, onChange)
+}
+
+// v3.4 layout constructors
+fn padding(px: int, child: Element)      -> Element { return Padding(px, child) }
+fn spacing(px: int)                      -> Element { return Spacing(px) }
+fn aligned(align: string, child: Element)-> Element { return Aligned(align, child) }

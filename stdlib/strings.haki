@@ -36,3 +36,35 @@ fn padRight(s: string, width: int, padChar: string) -> string {
 fn join(parts: Array<string>, sep: string) -> string {
     return parts.join(sep)
 }
+
+/// Count non-overlapping occurrences of sub in s.
+fn count(s: string, sub: string) -> int {
+    if string_length(sub) == 0 { return 0 }
+    const parts = s.split(sub)
+    return parts.length - 1
+}
+
+/// Remove leading whitespace from s.
+fn trimLeft(s: string) -> string {
+    return s.trimStart()
+}
+
+/// Remove trailing whitespace from s.
+fn trimRight(s: string) -> string {
+    return s.trimEnd()
+}
+
+/// Replace all occurrences of from with to in s.
+fn replaceAll(s: string, from: string, to: string) -> string {
+    return s.replace(from, to)
+}
+
+/// Return the index of the first occurrence of sub in s, or -1 if not found.
+fn indexOf(s: string, sub: string) -> int {
+    return s.indexOf(sub)
+}
+
+/// Extract the substring of s from start (inclusive) to end (exclusive).
+fn substring(s: string, start: int, end: int) -> string {
+    return s.substring(start, end)
+}

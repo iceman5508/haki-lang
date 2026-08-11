@@ -1,0 +1,169 @@
+// std/fs — filesystem operations
+//
+// Usage:
+//   import "std/fs" as fs
+//
+//   // File I/O (high-level)
+//   const content, err = fs.readFile("data.txt")
+//   const err2 = fs.writeFile("out.txt", content)
+//
+//   // Directory operations
+//   const entries, err3 = fs.readDir("./src")
+//   for entry in entries { print(entry.name) }
+//
+//   // Path checks
+//   if fs.exists("config.json") { ... }
+//   if fs.isDir("./build") { ... }
+
+// -- DirEntry ----------------------------------------------------------------
+
+class DirEntry {
+    const name: string
+    const path: string
+    const isDirectory: bool
+    const size: int
+}
+
+// -- File operations ---------------------------------------------------------
+
+fn readFile(path: string) -> (string, Error?) {
+    const content = haki_fs_read_file(path)
+    if string_length(content) == 0 && !exists(path) {
+        return "", Error(message: "file not found: " + path)
+    }
+    return content, null
+}
+
+fn writeFile(path: string, content: string) -> Error? {
+    const r = haki_fs_write_file(path, content)
+    if r < 0 { return Error(message: "cannot write file: " + path) }
+    return null
+}
+
+fn appendFile(path: string, content: string) -> Error? {
+    const r = haki_fs_append_file(path, content)
+    if r < 0 { return Error(message: "cannot append to file: " + path) }
+    return null
+}
+
+fn deleteFile(path: string) -> Error? {
+    const r = haki_fs_delete_file(path)
+    if r < 0 { return Error(message: "cannot delete file: " + path) }
+    return null
+}
+
+/// Read a file and return its lines as an Array<string>.
+/// Each element is one line (newline character stripped).
+/// Returns an error if the file cannot be read.
+fn readLines(path: string) -> (Array<string>, Error?) {
+    const content, err = readFile(path)
+    if err != null {
+        const empty: Array<string> = []
+        return empty, err
+    }
+    return content.split("\n"), null
+}
+
+fn copyFile(src: string, dst: string) -> Error? {
+    const r = haki_fs_copy_file(src, dst)
+    if r < 0 { return Error(message: "cannot copy " + src + " to " + dst) }
+    return null
+}
+
+// -- Directory operations ----------------------------------------------------
+
+fn readDir(path: string) -> (Array<DirEntry>, Error?) {
+    const count = haki_fs_readdir_count(path)
+    if count < 0 {
+        return [], Error(message: "cannot read directory: " + path)
+    }
+    let entries: Array<DirEntry> = []
+    let i = 0
+    while i < count {
+        const name  = haki_fs_readdir_name(path, i)
+        const fpath = haki_fs_readdir_path(path, i)
+        const isDirFlag = haki_fs_readdir_isdir(path, i)
+        const entrySize = haki_fs_readdir_size(path, i)
+        entries.append(DirEntry(name: name, path: fpath, isDirectory: isDirFlag == 1, size: entrySize))
+        i = i + 1
+    }
+    return entries, null
+}
+
+fn mkdir(path: string) -> Error? {
+    const r = haki_fs_mkdir(path)
+    if r < 0 { return Error(message: "cannot create directory: " + path) }
+    return null
+}
+
+fn mkdirAll(path: string) -> Error? {
+    const r = haki_fs_mkdir_all(path)
+    if r < 0 { return Error(message: "cannot create directory tree: " + path) }
+    return null
+}
+
+fn rmdir(path: string) -> Error? {
+    const r = haki_fs_rmdir(path)
+    if r < 0 { return Error(message: "cannot remove directory: " + path) }
+    return null
+}
+
+// -- Path checks -------------------------------------------------------------
+
+fn exists(path: string) -> bool {
+    return haki_fs_path_exists(path)
+}
+
+fn isDir(path: string) -> bool {
+    return haki_fs_path_is_dir(path)
+}
+
+fn isFile(path: string) -> bool {
+    return haki_fs_path_is_file(path)
+}
+
+fn size(path: string) -> int {
+    return haki_fs_size(path)
+}
+
+fn ext(path: string) -> string {
+    return haki_fs_ext(path)
+}
+
+fn basename(path: string) -> string {
+    return haki_fs_basename(path)
+}
+
+fn dirname(path: string) -> string {
+    return haki_fs_dirname(path)
+}
+
+// -- Extern declarations -----------------------------------------------------
+
+extern "c" fn haki_fs_read_file(path: string) -> string
+extern "c" fn haki_fs_write_file(path: string, content: string) -> int
+extern "c" fn haki_fs_append_file(path: string, content: string) -> int
+extern "c" fn haki_fs_delete_file(path: string) -> int
+extern "c" fn haki_fs_copy_file(src: string, dst: string) -> int
+extern "c" fn haki_fs_readdir_count(path: string) -> int
+extern "c" fn haki_fs_readdir_name(path: string, i: int) -> string
+extern "c" fn haki_fs_readdir_path(path: string, i: int) -> string
+extern "c" fn haki_fs_readdir_isdir(path: string, i: int) -> int
+extern "c" fn haki_fs_readdir_size(path: string, i: int) -> int
+extern "c" fn haki_fs_mkdir(path: string) -> int
+extern "c" fn haki_fs_mkdir_all(path: string) -> int
+extern "c" fn haki_fs_rmdir(path: string) -> int
+extern "c" fn haki_fs_exists(path: string) -> int
+extern "c" fn haki_fs_is_dir(path: string) -> int
+extern "c" fn haki_fs_is_file(path: string) -> int
+extern "c" fn haki_fs_size(path: string) -> int
+extern "c" fn haki_fs_path_exists(path: string) -> bool
+extern "c" fn haki_fs_path_is_dir(path: string) -> bool
+extern "c" fn haki_fs_path_is_file(path: string) -> bool
+extern "c" fn haki_fs_readdir_isdir(path: string, i: int) -> int
+extern "c" fn haki_fs_readdir_size(path: string, i: int) -> int
+extern "c" fn haki_fs_readdir_name(path: string, i: int) -> string
+extern "c" fn haki_fs_readdir_path(path: string, i: int) -> string
+extern "c" fn haki_fs_ext(path: string) -> string
+extern "c" fn haki_fs_basename(path: string) -> string
+extern "c" fn haki_fs_dirname(path: string) -> string

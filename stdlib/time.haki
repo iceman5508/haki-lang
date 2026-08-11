@@ -1,6 +1,11 @@
-/// std/time — Time and duration utilities.
+/// std/time — Time, duration, and timezone utilities.
 ///
 /// Usage: import "std/time" as time
+///
+/// All timestamps are Unix time (seconds since 1970-01-01T00:00:00Z).
+/// Millisecond-resolution functions use integer arithmetic.
+
+// ── Current time ────────────────────────────────────────────────────────────
 
 /// Current Unix timestamp in milliseconds.
 fn nowMs() -> int {
@@ -12,6 +17,8 @@ fn nowSec() -> int {
     return haki_time_now_ms() / 1000
 }
 
+// ── Sleep ────────────────────────────────────────────────────────────────────
+
 /// Sleep for the given number of milliseconds.
 fn sleepMs(ms: int) {
     haki_time_sleep_ms(ms)
@@ -22,9 +29,130 @@ fn sleep(seconds: int) {
     haki_time_sleep_ms(seconds * 1000)
 }
 
-/// Format a Unix timestamp (seconds) as an ISO 8601 string.
+// ── Formatting ───────────────────────────────────────────────────────────────
+
+/// Format a Unix timestamp (seconds) as an ISO 8601 UTC string.
 /// Example: time.format(1700000000) → "2023-11-14T22:13:20Z"
 fn format(unixSec: int) -> string {
     return haki_time_format(unixSec)
 }
 
+/// Format a Unix timestamp with a custom strftime pattern.
+/// Example: time.formatPattern(1700000000, "%Y/%m/%d") → "2023/11/14"
+/// Common patterns: %Y year, %m month, %d day, %H hour, %M minute, %S second,
+///   %A weekday name, %B month name, %p AM/PM, %Z timezone abbreviation.
+fn formatPattern(unixSec: int, pattern: string) -> string {
+    return haki_time_format_pattern(unixSec, pattern)
+}
+
+/// Format a Unix timestamp adjusted for a timezone offset.
+/// offset is in minutes east of UTC (e.g. 330 = UTC+5:30, -300 = UTC-5).
+/// Returns ISO 8601 with offset: "2023-11-14T17:43:20+05:30"
+fn formatTz(unixSec: int, offsetMinutes: int) -> string {
+    return haki_time_format_tz(unixSec, offsetMinutes)
+}
+
+// ── Parsing ──────────────────────────────────────────────────────────────────
+
+/// Parse an ISO 8601 string into a Unix timestamp (seconds).
+/// Accepts "YYYY-MM-DD" and "YYYY-MM-DDTHH:MM:SSZ".
+/// Returns -1 on parse error.
+///
+/// Example:
+///   time.parse("2024-01-15")             → 1705276800
+///   time.parse("2024-01-15T09:30:00Z")   → 1705311000
+fn parse(s: string) -> int {
+    return haki_time_parse(s)
+}
+
+// ── Arithmetic ───────────────────────────────────────────────────────────────
+
+/// Add seconds to a timestamp and return a new timestamp.
+fn addSeconds(unixSec: int, seconds: int) -> int {
+    return unixSec + seconds
+}
+
+/// Add milliseconds to a ms timestamp.
+fn addMs(unixMs: int, ms: int) -> int {
+    return unixMs + ms
+}
+
+/// Difference between two timestamps in seconds (a - b).
+fn diffSec(a: int, b: int) -> int {
+    return haki_time_diff_sec(a, b)
+}
+
+/// Difference between two timestamps in minutes.
+fn diffMinutes(a: int, b: int) -> int {
+    return haki_time_diff_sec(a, b) / 60
+}
+
+/// Difference between two timestamps in hours.
+fn diffHours(a: int, b: int) -> int {
+    return haki_time_diff_sec(a, b) / 3600
+}
+
+/// Difference between two timestamps in days.
+fn diffDays(a: int, b: int) -> int {
+    return haki_time_diff_sec(a, b) / 86400
+}
+
+// ── Calendar helpers ─────────────────────────────────────────────────────────
+
+/// Day of week for a Unix timestamp (0 = Sunday, 6 = Saturday).
+fn dayOfWeek(unixSec: int) -> int {
+    return haki_time_day_of_week(unixSec)
+}
+
+/// English weekday name (0 = "Sunday" .. 6 = "Saturday").
+fn dayName(wday: int) -> string {
+    return haki_time_day_name(wday)
+}
+
+/// English month name (1 = "January" .. 12 = "December").
+fn monthName(month: int) -> string {
+    return haki_time_month_name(month)
+}
+
+/// Truncate a timestamp to the start of the UTC day (00:00:00).
+fn startOfDay(unixSec: int) -> int {
+    return haki_time_start_of_day(unixSec)
+}
+
+/// Start of the next UTC day.
+fn startOfNextDay(unixSec: int) -> int {
+    return haki_time_start_of_day(unixSec) + 86400
+}
+
+/// Check if two timestamps are on the same UTC day.
+fn sameDay(a: int, b: int) -> bool {
+    return haki_time_start_of_day(a) == haki_time_start_of_day(b)
+}
+
+// ── Duration constants ───────────────────────────────────────────────────────
+
+/// Seconds in a minute.
+fn minuteSec() -> int { return 60 }
+
+/// Seconds in an hour.
+fn hourSec() -> int { return 3600 }
+
+/// Seconds in a day.
+fn daySec() -> int { return 86400 }
+
+/// Seconds in a week.
+fn weekSec() -> int { return 604800 }
+
+// ── Extern declarations ──────────────────────────────────────────────────────
+
+extern "c" fn haki_time_now_ms() -> int
+extern "c" fn haki_time_sleep_ms(ms: int)
+extern "c" fn haki_time_format(unixSec: int) -> string
+extern "c" fn haki_time_format_pattern(unixSec: int, pattern: string) -> string
+extern "c" fn haki_time_format_tz(unixSec: int, offsetMinutes: int) -> string
+extern "c" fn haki_time_parse(s: string) -> int
+extern "c" fn haki_time_diff_sec(a: int, b: int) -> int
+extern "c" fn haki_time_day_of_week(unixSec: int) -> int
+extern "c" fn haki_time_day_name(wday: int) -> string
+extern "c" fn haki_time_month_name(month: int) -> string
+extern "c" fn haki_time_start_of_day(unixSec: int) -> int
