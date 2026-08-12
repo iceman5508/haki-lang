@@ -442,7 +442,9 @@ fn yieldVal(stmts: Array<compiler.Stmt>, depth: int, sc: tinfer.Scope, sym: type
 fn emitMatchExpr(scrut: compiler.Expr, arms: Array<compiler.MatchArm>, depth: int, sc: tinfer.Scope, sym: typeck.SymTable) -> string {
     const se = emitExpr(scrut, depth, sc, sym)
     let parts = "void* __msc = (void*)(" + se + "); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; "
-    parts = parts + "int64_t __mr; "
+    // Use void* as universal match result holder so pointer yields don't require
+    // int64_t↔pointer casts that clang 15+ rejects as errors.
+    parts = parts + "void* __mr; "
     let i = 0
     while i < arms.length {
         const arm = arms[i]
@@ -527,7 +529,7 @@ fn emitMatchExpr(scrut: compiler.Expr, arms: Array<compiler.MatchArm>, depth: in
         }
         const yv = yieldVal(arm.body, depth, sc, sym)
         if string_length(yv) > 0 {
-            parts = parts + "__mr = (int64_t)(" + yv + "); "
+            parts = parts + "__mr = (void*)(" + yv + "); "
         }
         i = i + 1
     }
@@ -538,11 +540,13 @@ fn emitMatchExpr(scrut: compiler.Expr, arms: Array<compiler.MatchArm>, depth: in
 // ── Call emission ──────────────────────────────────────────────────────────────
 
 fn emitCall(name: string, args: Array<compiler.Expr>, depth: int, sc: tinfer.Scope, sym: typeck.SymTable) -> string {
-    // Multi-return tuple unpacking: __mr_get_N(tuple) → ((void**)tuple)[N]
+    // Multi-return tuple unpacking: __mr_get_N(tuple) → (intptr_t)((void**)tuple)[N]
+    // Cast through intptr_t (not int64_t) so that assigning to int8_t/int64_t/const char*
+    // is an integer narrowing rather than a pointer-to-integer conversion error in clang 15+.
     if string_length(name) > 9 && name.substring(0, 9) == "__mr_get_" {
         const idxStr = name.substring(9, string_length(name))
         const av = emitExpr(args[0], depth, sc, sym)
-        return "((void**)(" + av + "))[" + idxStr + "]"
+        return "(intptr_t)((void**)(" + av + "))[" + idxStr + "]"
     }
     // Check if this is an enum variant constructor (has payload)
     const discStr = tinfer.scopeLookup(sc, "__v__" + name)
@@ -647,7 +651,7 @@ fn emitCall(name: string, args: Array<compiler.Expr>, depth: int, sc: tinfer.Sco
 
 // ── Statement emission ─────────────────────────────────────────────────────────
 
-fn emitStmt(stmt: compiler.Stmt, depth: int, sc: tinfer.Scope, sym: typeck.SymTable) -> string {
+fn emitStmt(stmt: compiler.Stmt, depth: int, sc: tinfer.Scope, sym: typeck.SymTable, inMain: bool) -> string {
     const ind = indent(depth)
     const tag = match stmt {
         SLet(isMut, name, init) { yield "let" }
@@ -675,7 +679,12 @@ fn emitStmt(stmt: compiler.Stmt, depth: int, sc: tinfer.Scope, sym: typeck.SymTa
 
     if tag == "return" {
         const vals = match stmt { SReturn(vals) { yield vals } _ { yield compiler.emptyExprs() } }
-        if vals.length == 0 { return ind + "return;\n" }
+        if vals.length == 0 {
+            // In main() the C prototype is `int main(...)`, so bare `return;`
+            // is rejected by clang (-Wreturn-mismatch). Emit `return 0;` instead.
+            if inMain { return ind + "return 0;\n" }
+            return ind + "return;\n"
+        }
         if vals.length == 1 { return ind + "return " + emitExpr(vals[0], depth, sc, sym) + ";\n" }
         // Multi-return: pack into __TupleN
         let n = int_to_string(vals.length)
@@ -727,7 +736,7 @@ fn emitStmt(stmt: compiler.Stmt, depth: int, sc: tinfer.Scope, sym: typeck.SymTa
 
     if tag == "annotated" {
         const inner = match stmt { SAnnotated(attrs, s) { yield s } _ { yield stmt } }
-        return emitStmt(inner, depth, sc, sym)
+        return emitStmt(inner, depth, sc, sym, inMain)
     }
 
     if tag == "if" {
@@ -735,11 +744,11 @@ fn emitStmt(stmt: compiler.Stmt, depth: int, sc: tinfer.Scope, sym: typeck.SymTa
         const then = match stmt { SIf(c, th, el) { yield th } _ { yield compiler.emptyStmts() } }
         const els  = match stmt { SIf(c, th, el) { yield el } _ { yield compiler.emptyStmts() } }
         let s = ind + "if (" + emitExpr(cond, depth, sc, sym) + ") {\n"
-        for st in then { s = s + emitStmt(st, depth + 1, sc, sym) }
+        for st in then { s = s + emitStmt(st, depth + 1, sc, sym, inMain) }
         s = s + ind + "}\n"
         if els.length > 0 {
             s = s + ind + "else {\n"
-            for st in els { s = s + emitStmt(st, depth + 1, sc, sym) }
+            for st in els { s = s + emitStmt(st, depth + 1, sc, sym, inMain) }
             s = s + ind + "}\n"
         }
         return s
@@ -749,7 +758,7 @@ fn emitStmt(stmt: compiler.Stmt, depth: int, sc: tinfer.Scope, sym: typeck.SymTa
         const cond = match stmt { SWhile(c, body) { yield c }    _ { yield compiler.nullExpr() } }
         const body = match stmt { SWhile(c, body) { yield body } _ { yield compiler.emptyStmts() } }
         let s = ind + "while (" + emitExpr(cond, depth, sc, sym) + ") {\n"
-        for st in body { s = s + emitStmt(st, depth + 1, sc, sym) }
+        for st in body { s = s + emitStmt(st, depth + 1, sc, sym, inMain) }
         s = s + ind + "}\n"
         return s
     }
@@ -788,7 +797,7 @@ fn emitStmt(stmt: compiler.Stmt, depth: int, sc: tinfer.Scope, sym: typeck.SymTa
             tinfer.scopeSet(sc, varName, elemHakiTy)
         }
         s = s + indent(depth + 2) + elemCType + " " + cName(varName) + " = (" + elemCType + ")*(void**)haki_array_get(" + arrVar + ", " + idxVar + ");\n"
-        for st in body { s = s + emitStmt(st, depth + 2, sc, sym) }
+        for st in body { s = s + emitStmt(st, depth + 2, sc, sym, inMain) }
         s = s + ind + "  }\n"
         s = s + ind + "}\n"
         return s
@@ -797,7 +806,7 @@ fn emitStmt(stmt: compiler.Stmt, depth: int, sc: tinfer.Scope, sym: typeck.SymTa
     if tag == "block" {
         const blk = match stmt { SBlock(blk) { yield blk } _ { yield compiler.emptyStmts() } }
         let s = ""
-        for st in blk { s = s + emitStmt(st, depth, sc, sym) }
+        for st in blk { s = s + emitStmt(st, depth, sc, sym, inMain) }
         return s
     }
 
@@ -964,8 +973,9 @@ fn emitFn(f: mono.MonoFn, sym: typeck.SymTable, enums: Array<mono.EnumDef>, stru
     if f.name == "main" {
         s = s + "    haki_runtime_init(argc, argv);\n"
     }
+    const isMain = f.name == "main"
     for stmt in f.body {
-        s = s + emitStmt(stmt, 1, sc, sym)
+        s = s + emitStmt(stmt, 1, sc, sym, isMain)
     }
     if f.retTy == "void" || f.retTy == "" {
         if f.name == "main" { s = s + "    return 0;\n" }
