@@ -206,6 +206,18 @@ pub enum ItemKind {
     /// `annotation @retry(times: int, delay: int) { ... }`
     /// User-defined annotation that wraps target function bodies.
     AnnotationDef(AnnotationDef),
+    /// `const NAME = value` or `const NAME: Type = value` at file scope.
+    GlobalConst {
+        name:  Ident,
+        ty:    Option<Ty>,  // optional type annotation
+        value: Expr,
+    },
+    /// `type Alias = ExistingType` — transparent type alias.
+    TypeAlias {
+        name:   Ident,
+        ty:     Ty,
+        span:   Span,
+    },
 }
 
 /// A user-defined annotation declaration.
@@ -517,6 +529,12 @@ pub enum ExprKind {
     /// `expr.field`
     Field(Box<Expr>, Ident),
 
+    // ── Optional chaining ─────────────────────────────────────
+    /// `expr?.field` — yields null if expr is null, otherwise expr.field
+    OptionalField(Box<Expr>, Ident),
+    /// `expr?.method(args)` — yields null if expr is null, otherwise expr.method(args)
+    OptionalMethodCall(Box<Expr>, Ident, Vec<Expr>),
+
     // ── Method call ────────────────────────────────────────────
     /// `expr.method(args)`
     MethodCall(Box<Expr>, Ident, Vec<Expr>),
@@ -581,7 +599,8 @@ pub enum ExprKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Capture {
     pub name: Ident,
-    pub weak: bool,
+    pub weak:    bool,
+    pub mutable: bool,   // true when the outer binding is `let` (v4.0 cross-scope mutation)
     pub span: Span,
 }
 
@@ -642,6 +661,8 @@ pub struct MatchArm {
     /// For enum payload: `[value]` or `[x, y]` etc.
     /// For literal/wildcard: always `[]`.
     pub bindings: Vec<Ident>,
+    /// Optional `if condition` guard — arm only fires when this is true.
+    pub guard: Option<Expr>,
     pub body: Block,
     pub span: Span,
 }

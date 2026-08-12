@@ -363,10 +363,11 @@ void haki_map_set(HakiMap* m, const char* key, void* val_ptr) {
     if (!m || !key) return;
     if (m->length * 4 >= m->capacity * 3) haki_map_grow(m);
     char* k = strdup(key);
-    void* v = malloc((size_t)m->val_size);
-    if (!k || !v) abort();
-    memcpy(v, val_ptr, (size_t)m->val_size);
-    haki_map_insert_entry(m, k, v);
+    if (!k) abort();
+    // Store val_ptr directly — values are either pointer-sized primitives
+    // (int/float/bool stored as (void*)(intptr_t)value) or pointer-to-heap-object.
+    // No malloc/memcpy needed; the pointer IS the value.
+    haki_map_insert_entry(m, k, val_ptr);
 }
 
 /* Returns pointer to value, or NULL if not found. */
@@ -865,7 +866,8 @@ static int haki_select_arm_ready(int i, HakiChan** chans, int* ops) {
         return !ch->closed && (ch->cap == 0 || ch->count < ch->cap);
 }
 
-int haki_select(int n, HakiChan** chans, int* ops, void** vals) {
+/* timeout_ms: -1 = block forever; >= 0 = return -1 after that many milliseconds */
+int haki_select(int n, HakiChan** chans, int* ops, void** vals, int64_t timeout_ms) {
     if (n <= 0 || n > HAKI_SELECT_MAX) return -1;
 
     int order[HAKI_SELECT_MAX];
@@ -881,6 +883,16 @@ int haki_select(int n, HakiChan** chans, int* ops, void** vals) {
         waiters[i].mu   = &sel_mu;
         waiters[i].cond = &sel_cond;
         waiters[i].next = NULL;
+    }
+
+    /* Compute absolute deadline once (CLOCK_REALTIME for pthread_cond_timedwait) */
+    struct timespec deadline = {0, 0};
+    int has_timeout = (timeout_ms >= 0);
+    if (has_timeout) {
+        clock_gettime(CLOCK_REALTIME, &deadline);
+        int64_t ns = deadline.tv_nsec + (timeout_ms % 1000LL) * 1000000LL;
+        deadline.tv_sec  += (time_t)(timeout_ms / 1000LL) + (time_t)(ns / 1000000000LL);
+        deadline.tv_nsec  = (long)(ns % 1000000000LL);
     }
 
     int result = -1;
@@ -960,11 +972,17 @@ int haki_select(int n, HakiChan** chans, int* ops, void** vals) {
         for (int i = 0; i < n; i++)
             haki_chan_add_waiter(chans[i], &waiters[i]);
 
-        /* Unlock all and wait for a signal */
+        /* Unlock all and wait for a signal (or timeout) */
         pthread_mutex_lock(&sel_mu);
         for (int i = n-1; i >= 0; i--)
             pthread_mutex_unlock(&chans[order[i]]->mu);
-        pthread_cond_wait(&sel_cond, &sel_mu);
+
+        int wait_rc = 0;
+        if (has_timeout) {
+            wait_rc = pthread_cond_timedwait(&sel_cond, &sel_mu, &deadline);
+        } else {
+            pthread_cond_wait(&sel_cond, &sel_mu);
+        }
         pthread_mutex_unlock(&sel_mu);
 
         /* Remove waiters before re-locking channels */
@@ -974,6 +992,11 @@ int haki_select(int n, HakiChan** chans, int* ops, void** vals) {
             haki_chan_remove_waiter(chans[i], &waiters[i]);
         for (int i = n-1; i >= 0; i--)
             pthread_mutex_unlock(&chans[order[i]]->mu);
+
+        if (wait_rc == ETIMEDOUT) {
+            result = -1;
+            break;
+        }
     }
 
     pthread_mutex_destroy(&sel_mu);
@@ -1008,6 +1031,17 @@ HakiTaskGroup* haki_taskgroup_new(void) {
     return g;
 }
 
+/* Add an already-spawned task to a TaskGroup (for `group.add(async fn(...))`) */
+void haki_taskgroup_add(HakiTaskGroup* g, HakiTask* t) {
+    if (!g || !t) return;
+    pthread_mutex_lock(&g->mu);
+    if (g->count >= g->cap) {
+        g->cap = g->cap ? g->cap * 2 : 8;
+        g->tasks = (HakiTask**)realloc(g->tasks, g->cap * sizeof(HakiTask*));
+    }
+    g->tasks[g->count++] = t;
+    pthread_mutex_unlock(&g->mu);
+}
 void haki_taskgroup_spawn(HakiTaskGroup* g, HakiTaskFn fn, void* arg) {
     if (!g) abort();
     HakiTask* t = haki_task_spawn(fn, arg);
@@ -1550,6 +1584,27 @@ char* haki_string_substring(const char* s, int64_t start, int64_t end) {
     r[sub_len] = '\0';
     return r;
 }
+#ifndef HAKI_STRING_EXTRAS_DEFINED
+#define HAKI_STRING_EXTRAS_DEFINED
+int8_t haki_string_is_empty(const char* s) {
+    return (!s || s[0] == '\0') ? 1 : 0;
+}
+char* haki_string_char_at(const char* s, int64_t idx) {
+    if (!s) return strdup("");
+    int64_t len = (int64_t)strlen(s);
+    if (idx < 0 || idx >= len) return strdup("");
+    char* r = (char*)malloc(2);
+    r[0] = s[idx]; r[1] = '\0';
+    return r;
+}
+int64_t haki_string_char_code_at(const char* s, int64_t idx) {
+    if (!s) return -1;
+    int64_t len = (int64_t)strlen(s);
+    if (idx < 0 || idx >= len) return -1;
+    return (int64_t)(unsigned char)s[idx];
+}
+#endif /* HAKI_STRING_EXTRAS_DEFINED */
+
 
 /* ── File I/O ────────────────────────────────────────────────────
    Simple blocking file operations for scripting use.             */
@@ -1953,6 +2008,779 @@ void* haki_regex_split(const char* s, const char* pattern) {
     return arr;
 }
 
+
+/* haki_regex_find_groups: return Array<string> of capture groups (groups[0] = first capture).
+   Returns empty array if no match or invalid pattern.
+   Uses POSIX ERE — patterns should use [0-9] not \d, [a-z] not \w, etc. */
+void* haki_regex_find_groups(const char* s, const char* pattern) {
+    void* farr = haki_array_new(sizeof(void*));
+    regex_t fre;
+    /* count capture groups (unescaped '(') */
+    int fngroups = 0;
+    for (const char* fp = pattern; *fp; fp++) {
+        if (*fp == '\\') { fp++; continue; }
+        if (*fp == '(')  fngroups++;
+    }
+    if (fngroups == 0) return farr;  /* no capture groups */
+    if (fngroups > 32) fngroups = 32;
+    /* need fngroups+1 slots: slot 0 = full match, slots 1..fngroups = captures */
+    int fntotal = fngroups + 1;
+    if (regcomp(&fre, pattern, REG_EXTENDED) != 0) return farr;
+    regmatch_t fgrp[33];
+    if (regexec(&fre, s, (size_t)fntotal, fgrp, 0) == 0) {
+        /* skip fgrp[0] (full match), return only capture groups */
+        for (int fi = 1; fi < fntotal; fi++) {
+            if (fgrp[fi].rm_so < 0) {
+                char* fe = strdup(""); haki_array_append(farr, &fe);
+            } else {
+                int fgl = fgrp[fi].rm_eo - fgrp[fi].rm_so;
+                char* fp2 = (char*)malloc(fgl + 1);
+                strncpy(fp2, s + fgrp[fi].rm_so, fgl); fp2[fgl] = '\0';
+                haki_array_append(farr, &fp2);
+            }
+        }
+    }
+    regfree(&fre);
+    return farr;
+}
+
+/* ── std/time extensions ─────────────────────────────────────────────────── */
+
+int64_t haki_time_parse(const char* s) {
+    struct tm ttm; memset(&ttm, 0, sizeof(ttm));
+    int tn = sscanf(s, "%d-%d-%dT%d:%d:%d",
+        &ttm.tm_year, &ttm.tm_mon, &ttm.tm_mday,
+        &ttm.tm_hour, &ttm.tm_min, &ttm.tm_sec);
+    if (tn < 3) return -1;
+    ttm.tm_year -= 1900; ttm.tm_mon -= 1; ttm.tm_isdst = 0;
+#ifdef _WIN32
+    return (int64_t)_mkgmtime(&ttm);
+#else
+    return (int64_t)timegm(&ttm);
+#endif
+}
+
+const char* haki_time_format_pattern(int64_t unix_sec, const char* pattern) {
+    time_t tt = (time_t)unix_sec;
+    struct tm* tmi = gmtime(&tt);
+    char* tbuf = (char*)malloc(256);
+    strftime(tbuf, 256, pattern, tmi);
+    return tbuf;
+}
+
+int64_t haki_time_diff_sec(int64_t a, int64_t b) { return a - b; }
+
+const char* haki_time_format_tz(int64_t unix_sec, int64_t offset_minutes) {
+    time_t tt2 = (time_t)(unix_sec + offset_minutes * 60);
+    struct tm* tmi2 = gmtime(&tt2);
+    char* tbuf2 = (char*)malloc(32);
+    strftime(tbuf2, 32, "%Y-%m-%dT%H:%M:%S", tmi2);
+    int tabs = (int)(offset_minutes < 0 ? -offset_minutes : offset_minutes);
+    char tsign = offset_minutes >= 0 ? '+' : '-';
+    char ttz[8]; snprintf(ttz, sizeof(ttz), "%c%02d:%02d", tsign, tabs/60, tabs%60);
+    strncat(tbuf2, ttz, 31 - strlen(tbuf2));
+    return tbuf2;
+}
+
+int64_t haki_time_day_of_week(int64_t unix_sec) {
+    time_t tt3 = (time_t)unix_sec;
+    return (int64_t)gmtime(&tt3)->tm_wday;
+}
+
+int64_t haki_time_start_of_day(int64_t unix_sec) {
+    return unix_sec - (unix_sec % 86400);
+}
+
+const char* haki_time_day_name(int64_t wday) {
+    const char* tdays[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+    if (wday < 0 || wday > 6) return strdup("Unknown");
+    return strdup(tdays[wday]);
+}
+
+const char* haki_time_month_name(int64_t month) {
+    const char* tmonths[] = {"","January","February","March","April","May","June",
+                              "July","August","September","October","November","December"};
+    if (month < 1 || month > 12) return strdup("Unknown");
+    return strdup(tmonths[month]);
+}
+
+/* ── std/json nested parser ──────────────────────────────────────────────── */
+
+typedef struct { const char* src; int jpos; int jlen; } JParser;
+static void jskip(JParser* jp) {
+    while (jp->jpos < jp->jlen && (jp->src[jp->jpos]==' '||jp->src[jp->jpos]=='\t'||
+           jp->src[jp->jpos]=='\n'||jp->src[jp->jpos]=='\r')) jp->jpos++;
+}
+static char* jstr(JParser* jp) {
+    if (jp->jpos >= jp->jlen || jp->src[jp->jpos] != '"') return strdup("");
+    jp->jpos++;
+    int js = jp->jpos, jol = 0;
+    while (jp->jpos < jp->jlen && jp->src[jp->jpos] != '"') {
+        if (jp->src[jp->jpos] == '\\') { jp->jpos++; jol++; }
+        else jol++;
+        jp->jpos++;
+    }
+    int je = jp->jpos;
+    if (jp->jpos < jp->jlen) jp->jpos++;
+    char* jo = (char*)malloc(jol + 1); int joi = 0;
+    for (int ji = js; ji < je; ) {
+        if (jp->src[ji] == '\\' && ji + 1 < je) {
+            ji++;
+            switch (jp->src[ji]) {
+                case '"': jo[joi++]='"'; break; case '\\': jo[joi++]='\\'; break;
+                case 'n': jo[joi++]='\n'; break; case 'r': jo[joi++]='\r'; break;
+                case 't': jo[joi++]='\t'; break; default: jo[joi++]=jp->src[ji]; break;
+            }
+            ji++;
+        } else jo[joi++] = jp->src[ji++];
+    }
+    jo[joi] = '\0'; return jo;
+}
+static char* jval(JParser* jp) {
+    jskip(jp);
+    if (jp->jpos >= jp->jlen) return strdup("null");
+    int jvs = jp->jpos; char jvc = jp->src[jp->jpos];
+    if (jvc == '"') {
+        jp->jpos++;
+        while (jp->jpos < jp->jlen && jp->src[jp->jpos] != '"') {
+            if (jp->src[jp->jpos] == '\\') jp->jpos++;
+            jp->jpos++;
+        }
+        if (jp->jpos < jp->jlen) jp->jpos++;
+    } else if (jvc == '{' || jvc == '[') {
+        char jcl = (jvc=='{') ? '}' : ']'; int jd = 1; jp->jpos++;
+        while (jp->jpos < jp->jlen && jd > 0) {
+            char jcc = jp->src[jp->jpos];
+            if (jcc == '"') { jp->jpos++;
+                while (jp->jpos < jp->jlen && jp->src[jp->jpos] != '"') {
+                    if (jp->src[jp->jpos] == '\\') jp->jpos++; jp->jpos++; }
+                if (jp->jpos < jp->jlen) jp->jpos++;
+            } else if (jcc==jvc) { jd++; jp->jpos++; }
+            else if (jcc==jcl) { jd--; jp->jpos++; }
+            else jp->jpos++;
+        }
+        (void)jcl;
+    } else {
+        while (jp->jpos < jp->jlen) {
+            char jcc2 = jp->src[jp->jpos];
+            if (jcc2==','||jcc2=='}'||jcc2==']'||jcc2==' '||jcc2=='\n'||jcc2=='\r'||jcc2=='\t') break;
+            jp->jpos++;
+        }
+    }
+    int jrl = jp->jpos - jvs; char* jr = (char*)malloc(jrl+1);
+    strncpy(jr, jp->src + jvs, jrl); jr[jrl]='\0'; return jr;
+}
+static HakiMap* jpobj(JParser* jp) {
+    HakiMap* jm = haki_map_new(sizeof(void*));
+    jskip(jp);
+    if (jp->jpos >= jp->jlen || jp->src[jp->jpos] != '{') return jm;
+    jp->jpos++;
+    while (1) {
+        jskip(jp);
+        if (jp->jpos >= jp->jlen || jp->src[jp->jpos] == '}') { jp->jpos++; break; }
+        if (jp->src[jp->jpos] == ',') { jp->jpos++; continue; }
+        char* jk = jstr(jp); jskip(jp);
+        if (jp->jpos < jp->jlen && jp->src[jp->jpos] == ':') jp->jpos++;
+        jskip(jp);
+        char* jv2 = (jp->jpos < jp->jlen && jp->src[jp->jpos] == '"') ? jstr(jp) : jval(jp);
+        haki_map_set(jm, jk, (void*)jv2); free(jk);
+    }
+    return jm;
+}
+void* haki_json_parse_nested(const char* s) {
+    JParser jp; jp.src=s; jp.jpos=0; jp.jlen=(int)strlen(s);
+    return (void*)jpobj(&jp);
+}
+const char* haki_json_encode_nested(void* jm_ptr) {
+    HakiMap* jm = (HakiMap*)jm_ptr;
+    size_t jcap=64; char* jout=(char*)malloc(jcap); strcpy(jout,"{"); int jfirst=1;
+    for (int64_t ji=0; ji<(jm?jm->capacity:0); ji++) {
+        const char* jk2=haki_map_entry_key(jm,ji);
+        if(!jk2) continue;
+        void* jvp=haki_map_get(jm,jk2); if(!jvp) continue;
+        const char* jv3=(const char*)jvp;
+        size_t jn=strlen(jout)+strlen(jk2)+strlen(jv3)+16;
+        if(jn>jcap){jcap=jn*2;jout=(char*)realloc(jout,jcap);}
+        if(!jfirst) strncat(jout,",",jcap-strlen(jout)-1);
+        jfirst=0;
+        strncat(jout,"\"",jcap-strlen(jout)-1); strncat(jout,jk2,jcap-strlen(jout)-1);
+        strncat(jout,"\":",jcap-strlen(jout)-1);
+        char jf=jv3[0];
+        int jraw=(jf=='{'||jf=='['||(jf>='0'&&jf<='9')||jf=='-'||
+                  strcmp(jv3,"true")==0||strcmp(jv3,"false")==0||strcmp(jv3,"null")==0);
+        if(jraw) strncat(jout,jv3,jcap-strlen(jout)-1);
+        else { strncat(jout,"\"",jcap-strlen(jout)-1); strncat(jout,jv3,jcap-strlen(jout)-1); strncat(jout,"\"",jcap-strlen(jout)-1); }
+    }
+    strncat(jout,"}",jcap-strlen(jout)-1); return jout;
+}
+
+/* ── JSON flat API (haki_json_str/num/flag/encode_object/encode_array/decode/decode_get)
+   Called by std/json stdlib. Self-contained: uses JParser/jpobj/haki_map_xx/haki_array_get
+   and haki_error_new defined above. Works in both HTTP and non-HTTP builds. */
+#ifndef HAKI_JSON_FLAT_DEFINED
+#define HAKI_JSON_FLAT_DEFINED
+#ifndef HAKI_JSON_TUPLE2_DEFINED
+#define HAKI_JSON_TUPLE2_DEFINED
+typedef struct { void* f0; void* f1; } HakiJsonTuple2;
+#endif
+const char* haki_json_str(const char* s) {
+    if(!s) return strdup("null");
+    size_t len=strlen(s); char* out=(char*)malloc(len*6+3); char* p=out; *p++='"';
+    while(*s){
+        unsigned char c=(unsigned char)*s++;
+        switch(c){
+            case '"':  *p++='\\'; *p++='"';  break;
+            case '\\': *p++='\\'; *p++='\\'; break;
+            case '\n': *p++='\\'; *p++='n';  break;
+            case '\r': *p++='\\'; *p++='r';  break;
+            case '\t': *p++='\\'; *p++='t';  break;
+            default: if(c<0x20){p+=sprintf(p,"\\u%04x",c);}else{*p++=(char)c;} break;
+        }
+    }
+    *p++='"'; *p='\0'; return out;
+}
+const char* haki_json_num(int64_t n) {
+    char buf[32]; snprintf(buf,sizeof(buf),"%lld",(long long)n); return strdup(buf);
+}
+const char* haki_json_flag(int b) { return strdup(b?"true":"false"); }
+const char* haki_json_encode_object(void* m_ptr) {
+    HakiMap* m=(HakiMap*)m_ptr;
+    if(!m) return strdup("{}");
+    size_t cap=32,olen=0; char* out=(char*)malloc(cap); out[olen++]='{'; int jeo_first=1;
+    for(int64_t i=0;i<m->capacity;i++){
+        const char* k=haki_map_entry_key(m,i); if(!k) continue;
+        void* vp=haki_map_get(m,k);
+        const char* v=vp?(const char*)vp:"null";
+        const char* ks=haki_json_str(k);
+        size_t ksl=strlen(ks); size_t vl=v?strlen(v):4;
+        size_t needed=olen+ksl+1+vl+3;
+        while(cap<=needed){cap*=2;out=(char*)realloc(out,cap);}
+        if(!jeo_first) out[olen++]=','; jeo_first=0;
+        memcpy(out+olen,ks,ksl); olen+=ksl; free((void*)ks);
+        out[olen++]=':';
+        if(v){memcpy(out+olen,v,vl);olen+=vl;}else{memcpy(out+olen,"null",4);olen+=4;}
+    }
+    out[olen++]='}'; out[olen]='\0'; return out;
+}
+const char* haki_json_encode_array(void* arr_ptr) {
+    HakiArray* arr=(HakiArray*)arr_ptr;
+    if(!arr||arr->length==0) return strdup("[]");
+    size_t cap=32,olen=0; char* out=(char*)malloc(cap); out[olen++]='[';
+    for(int64_t i=0;i<arr->length;i++){
+        void* ep=haki_array_get(arr,i);
+        const char* v=ep?*(const char**)ep:"null";
+        size_t vl=v?strlen(v):4;
+        size_t needed=olen+vl+3;
+        while(cap<=needed){cap*=2;out=(char*)realloc(out,cap);}
+        if(i>0) out[olen++]=',';
+        if(v){memcpy(out+olen,v,vl);olen+=vl;}else{memcpy(out+olen,"null",4);olen+=4;}
+    }
+    out[olen++]=']'; out[olen]='\0'; return out;
+}
+void* haki_json_decode(const char* s) {
+    HakiMap* jd_m=NULL; const char* jd_err=NULL;
+    if(!s){ jd_err="null input"; }
+    else {
+        JParser jp; jp.src=s; jp.jpos=0; jp.jlen=(int)strlen(s);
+        jskip(&jp);
+        if(jp.jpos>=jp.jlen||jp.src[jp.jpos]!='{'){ jd_err="expected JSON object"; }
+        else { jd_m=jpobj(&jp); }
+    }
+    HakiJsonTuple2* t=(HakiJsonTuple2*)malloc(sizeof(HakiJsonTuple2));
+    t->f0=jd_m; t->f1=jd_err?haki_error_new(jd_err):NULL;
+    return (void*)t;
+}
+const char* haki_json_decode_get(const char* s,const char* key) {
+    if(!s||!key) return strdup("");
+    JParser jp; jp.src=s; jp.jpos=0; jp.jlen=(int)strlen(s);
+    HakiMap* m=jpobj(&jp);
+    if(!m) return strdup("");
+    void* vp=haki_map_get(m,key);
+    const char* result=vp?strdup((const char*)vp):strdup("");
+    haki_map_free(m); return result;
+}
+#endif /* HAKI_JSON_FLAT_DEFINED */
+
+/* ── std/csv ─────────────────────────────────────────────────────────────── */
+
+#ifndef HAKI_CSV_DEFINED
+#define HAKI_CSV_DEFINED
+
+/* haki_csv_parse_row: parse one CSV/TSV line into HakiArray* of char*.
+   sep = delimiter as int64_t (44 = comma, 9 = tab).
+   NOTE: uses haki_array_append(&field) so elem_size=sizeof(char*) is correct. */
+void* haki_csv_parse_row(const char* line, int64_t sep_i) {
+    char sep = (char)(int)sep_i;
+    HakiArray* arr = haki_array_new(sizeof(char*));
+    if (!line) return (void*)arr;
+    const char* p = line;
+    int csv_at_end = 0;
+    do {
+        char* field = NULL;
+        size_t flen = 0, fcap = 16;
+        field = (char*)malloc(fcap);
+        if (*p == '"') {
+            /* Quoted field */
+            p++;
+            while (*p) {
+                if (*p == '"') {
+                    if (*(p+1) == '"') {
+                        /* escaped quote: "" -> " */
+                        if (flen+1 >= fcap) { fcap*=2; field=(char*)realloc(field,fcap); }
+                        field[flen++] = '"'; p += 2;
+                    } else { p++; break; /* closing quote */ }
+                } else {
+                    if (flen+1 >= fcap) { fcap*=2; field=(char*)realloc(field,fcap); }
+                    field[flen++] = *p++;
+                }
+            }
+            if (*p == sep) p++;
+            else csv_at_end = 1;
+        } else {
+            /* Unquoted field */
+            while (*p && *p != sep) {
+                if (flen+1 >= fcap) { fcap*=2; field=(char*)realloc(field,fcap); }
+                field[flen++] = *p++;
+            }
+            if (*p == sep) p++;
+            else csv_at_end = 1;
+        }
+        field[flen] = '\0';
+        haki_array_append(arr, &field); /* &field: copy char* value into array */
+    } while (!csv_at_end);
+    return (void*)arr;
+}
+
+/* haki_csv_encode_row: encode HakiArray* of char* into a CSV/TSV row string. */
+const char* haki_csv_encode_row(void* fields_ptr, int64_t sep_i) {
+    char sep = (char)(int)sep_i;
+    HakiArray* arr = (HakiArray*)fields_ptr;
+    if (!arr || arr->length == 0) return strdup("");
+    size_t cap = 64, olen = 0;
+    char* out = (char*)malloc(cap);
+    for (int64_t ci = 0; ci < arr->length; ci++) {
+        const char* field = *(const char**)haki_array_get(arr, ci); /* double deref */
+        if (!field) field = "";
+        if (ci > 0) {
+            if (olen+1 >= cap) { cap*=2; out=(char*)realloc(out,cap); }
+            out[olen++] = sep;
+        }
+        /* check if quoting needed */
+        int needs_q = 0;
+        const char* fp = field;
+        while (*fp) {
+            if (*fp == sep || *fp == '"' || *fp == '\n' || *fp == '\r') { needs_q=1; break; }
+            fp++;
+        }
+        if (needs_q) {
+            size_t flen = strlen(field);
+            while (olen + flen*2 + 4 >= cap) { cap*=2; out=(char*)realloc(out,cap); }
+            out[olen++] = '"';
+            fp = field;
+            while (*fp) {
+                if (*fp == '"') out[olen++] = '"'; /* escape */
+                out[olen++] = *fp++;
+            }
+            out[olen++] = '"';
+        } else {
+            size_t flen = strlen(field);
+            while (olen + flen + 2 >= cap) { cap*=2; out=(char*)realloc(out,cap); }
+            memcpy(out+olen, field, flen); olen += flen;
+        }
+    }
+    out[olen] = '\0';
+    return out;
+}
+
+/* haki_csv_parse: parse full CSV/TSV string into HakiArray* of HakiArray*.
+   Returns HakiJsonTuple2 { f0=rows, f1=error? }. */
+void* haki_csv_parse(const char* s, int64_t sep) {
+    HakiArray* rows = NULL;
+    const char* csv_parse_err = NULL;
+    if (!s) { csv_parse_err = "null input"; }
+    else {
+        rows = haki_array_new(sizeof(HakiArray*));
+        const char* p = s;
+        size_t total = strlen(s);
+        const char* csv_end = s + total;
+        while (p <= csv_end) {
+            const char* line_start = p;
+            int in_q = 0;
+            while (p < csv_end) {
+                if (*p == '"') { in_q = !in_q; p++; }
+                else if (!in_q && (*p == '\n' || *p == '\r')) { break; }
+                else { p++; }
+            }
+            size_t llen = (size_t)(p - line_start);
+            char* lbuf = (char*)malloc(llen + 1);
+            memcpy(lbuf, line_start, llen); lbuf[llen] = '\0';
+            if (p < csv_end && *p == '\r') p++;
+            if (p < csv_end && *p == '\n') p++;
+            if (llen == 0 && p >= csv_end) { free(lbuf); break; }
+            HakiArray* row = (HakiArray*)haki_csv_parse_row(lbuf, sep);
+            free(lbuf);
+            haki_array_append(rows, &row); /* &row: copy HakiArray* value */
+        }
+    }
+    HakiJsonTuple2* t = (HakiJsonTuple2*)malloc(sizeof(HakiJsonTuple2));
+    t->f0 = (void*)rows;
+    t->f1 = csv_parse_err ? haki_error_new(csv_parse_err) : NULL;
+    return (void*)t;
+}
+
+/* haki_csv_encode: encode HakiArray* of HakiArray* into a CSV/TSV string. */
+const char* haki_csv_encode(void* rows_ptr, int64_t sep) {
+    HakiArray* rows = (HakiArray*)rows_ptr;
+    if (!rows || rows->length == 0) return strdup("");
+    size_t cap = 256, olen = 0;
+    char* out = (char*)malloc(cap);
+    for (int64_t ri = 0; ri < rows->length; ri++) {
+        HakiArray* row = *(HakiArray**)haki_array_get(rows, ri); /* double deref */
+        if (!row) continue;
+        if (ri > 0) {
+            if (olen+2 >= cap) { cap*=2; out=(char*)realloc(out,cap); }
+            out[olen++] = '\n';
+        }
+        const char* row_str = haki_csv_encode_row((void*)row, sep);
+        size_t rlen = strlen(row_str);
+        while (olen + rlen + 2 >= cap) { cap*=2; out=(char*)realloc(out,cap); }
+        memcpy(out+olen, row_str, rlen); olen += rlen;
+        free((void*)row_str);
+    }
+    out[olen] = '\0';
+    return out;
+}
+
+#endif /* HAKI_CSV_DEFINED */
+
+
+/* ── std/xml ─────────────────────────────────────────────────────────────── */
+
+const char* haki_xml_get_element(const char* xml, const char* tag) {
+    char xopen[256], xclose[256];
+    snprintf(xopen,sizeof(xopen),"<%s",tag); snprintf(xclose,sizeof(xclose),"</%s>",tag);
+    const char* xs=strstr(xml,xopen); if(!xs) return strdup("");
+    xs=strchr(xs,'>'); if(!xs) return strdup(""); xs++;
+    const char* xe=strstr(xs,xclose); if(!xe) return strdup("");
+    int xl=(int)(xe-xs); char* xr=(char*)malloc(xl+1);
+    strncpy(xr,xs,xl); xr[xl]='\0'; return xr;
+}
+void* haki_xml_parse_attrs(const char* attr_str) {
+    HakiMap* xm=haki_map_new(sizeof(void*));
+    const char* xp=attr_str;
+    while(*xp){
+        while(*xp==' '||*xp=='\t'||*xp=='\n') xp++;
+        if(!*xp) break;
+        const char* xks=xp; while(*xp&&*xp!='='&&*xp!=' ') xp++;
+        if(!*xp||*xp!='=') break;
+        int xkl=(int)(xp-xks); char* xk=(char*)malloc(xkl+1);
+        strncpy(xk,xks,xkl); xk[xkl]='\0'; xp++;
+        char xq=0; if(*xp=='"'||*xp=='\''){xq=*xp;xp++;}
+        const char* xvs=xp; while(*xp&&(xq?*xp!=xq:(*xp!=' '&&*xp!='\t'))) xp++;
+        int xvl=(int)(xp-xvs); char* xv=(char*)malloc(xvl+1);
+        strncpy(xv,xvs,xvl); xv[xvl]='\0'; if(xq&&*xp) xp++;
+        haki_map_set(xm,xk,(void*)xv); free(xk);  /* store char* directly as void* */
+    }
+    return (void*)xm;
+}
+const char* haki_xml_get_attr(const char* tag_str, const char* attr_name) {
+    size_t xal=strlen(attr_name); const char* xap=tag_str;
+    while((xap=strstr(xap,attr_name))!=NULL){
+        if(xap>tag_str&&(*(xap-1)==' '||*(xap-1)=='\t'||*(xap-1)=='<')){
+            xap+=xal; while(*xap==' ')xap++;
+            if(*xap=='='){xap++; while(*xap==' ')xap++;
+                char xq2=0; if(*xap=='"'||*xap=='\''){xq2=*xap;xap++;}
+                const char* xvs2=xap;
+                while(*xap&&(xq2?*xap!=xq2:(*xap!=' '&&*xap!='>')))xap++;
+                int xvl2=(int)(xap-xvs2); char* xv2=(char*)malloc(xvl2+1);
+                strncpy(xv2,xvs2,xvl2); xv2[xvl2]='\0'; return xv2;
+            }
+        }
+        xap++;
+    }
+    return strdup("");
+}
+const char* haki_xml_emit_element(const char* tag, const char* content) {
+    size_t xel=strlen(tag)*2+strlen(content)+8; char* xeo=(char*)malloc(xel);
+    snprintf(xeo,xel,"<%s>%s</%s>",tag,content,tag); return xeo;
+}
+
+const char* haki_xml_emit_tag(const char* tag, HakiMap* attrs) {
+    size_t cap = 256;
+    char* out = (char*)malloc(cap);
+    snprintf(out, cap, "<%s", tag);
+    if (attrs) {
+        for (int64_t i = 0; i < attrs->capacity; i++) {
+            if (attrs->entries[i].key) {
+                const char* k = attrs->entries[i].key;
+                void* vp = attrs->entries[i].value;
+                const char* v = vp ? (const char*)vp : "";  /* Map<string,string> stores char* directly */
+                size_t need = strlen(out) + strlen(k) + strlen(v) + 8;
+                while (need > cap) { cap *= 2; out = (char*)realloc(out, cap); }
+                size_t l = strlen(out);
+                snprintf(out + l, cap - l, " %s=\"%s\"", k, v);
+            }
+        }
+    }
+    size_t l = strlen(out);
+    while (l + 4 > cap) { cap *= 2; out = (char*)realloc(out, cap); }
+    out[l++] = '/'; out[l++] = '>'; out[l] = '\0';
+    return out;
+}
+const char* haki_xml_escape(const char* s) {
+    size_t xslen=strlen(s); size_t xcap2=xslen*6+1; char* xout=(char*)malloc(xcap2); char* xo=xout;
+    for(size_t xi=0;xi<xslen;xi++){
+        switch(s[xi]){
+            case '&': memcpy(xo,"&amp;",5); xo+=5; break;
+            case '<': memcpy(xo,"&lt;",4); xo+=4; break;
+            case '>': memcpy(xo,"&gt;",4); xo+=4; break;
+            case '"': memcpy(xo,"&quot;",6); xo+=6; break;
+            case '\'': memcpy(xo,"&apos;",6); xo+=6; break;
+            default: *xo++=s[xi]; break;
+        }
+    }
+    *xo='\0'; return xout;
+}
+
+/* ── std/template ────────────────────────────────────────────────────────── */
+
+const char* haki_template_render(const char* tmpl, HakiMap* vars) {
+    size_t ttlen=strlen(tmpl); size_t ttcap=ttlen*2+256;
+    char* ttout=(char*)malloc(ttcap); ttout[0]='\0';
+    const char* ttp=tmpl;
+    while(*ttp){
+        if(ttp[0]=='{'&&ttp[1]=='{'){
+            ttp+=2; while(*ttp==' ')ttp++;
+            const char* ttks=ttp; while(*ttp&&!(ttp[0]=='}'&&ttp[1]=='}'))ttp++;
+            const char* ttke=ttp; while(ttke>ttks&&*(ttke-1)==' ')ttke--;
+            int ttkl=(int)(ttke-ttks); char* ttk=(char*)malloc(ttkl+1);
+            strncpy(ttk,ttks,ttkl); ttk[ttkl]='\0';
+            if(ttp[0]=='}'&&ttp[1]=='}')ttp+=2;
+            void* ttvp=haki_map_get(vars,ttk); const char* ttv=ttvp?(const char*)ttvp:"";
+            free(ttk);
+            size_t ttn=strlen(ttout)+strlen(ttv)+64;
+            if(ttn>ttcap){ttcap=ttn*2;ttout=(char*)realloc(ttout,ttcap);}
+            strncat(ttout,ttv,ttcap-strlen(ttout)-1);
+        } else {
+            size_t ttc=strlen(ttout);
+            if(ttc+2>ttcap){ttcap*=2;ttout=(char*)realloc(ttout,ttcap);}
+            ttout[ttc]=*ttp; ttout[ttc+1]='\0'; ttp++;
+        }
+    }
+    return ttout;
+}
+const char* haki_template_html_escape(const char* s) {
+    if (!s) return "";
+    size_t cap = strlen(s) * 6 + 64;
+    char* out = (char*)malloc(cap);
+    char* p = out;
+    while (*s) {
+        if (*s == '&') { memcpy(p,"&amp;",5); p+=5; }
+        else if (*s == '<') { memcpy(p,"&lt;",4); p+=4; }
+        else if (*s == '>') { memcpy(p,"&gt;",4); p+=4; }
+        else if (*s == '"') { memcpy(p,"&quot;",6); p+=6; }
+        else if (*s == '\'') { memcpy(p,"&#39;",5); p+=5; }
+        else { *p++ = *s; }
+        s++;
+    }
+    *p = '\0';
+    return out;
+}
+
+/* haki_template_render_full — full template engine with if/else/for blocks.
+   Tags supported:
+     {{var}}                          variable substitution
+     {{#if var}}...{{/if}}            conditional (truthy = non-empty, not "false", not "0")
+     {{#if var}}...{{#else}}...{{/if}} conditional with else branch
+     {{#for item in list}}...{{/for}} iteration (list = newline-separated values)
+*/
+
+/* Copy a HakiMap, then add/override one extra key=value. Used by template for loop. */
+static HakiMap* haki_map_copy_with(HakiMap* src, const char* key, const char* val) {
+    HakiMap* dst = haki_map_new(sizeof(void*));
+    if (src) {
+        for (int64_t i = 0; i < src->capacity; i++) {
+            if (src->entries[i].key) {
+                haki_map_set(dst, src->entries[i].key, src->entries[i].value);
+            }
+        }
+    }
+    char* vs = strdup(val);
+    haki_map_set(dst, key, (void*)vs);  /* store char* directly as void*, not &vs */
+    return dst;
+}
+static int trf_truthy(const char* v) {
+    if (!v || v[0]=='\0') return 0;
+    if (strcmp(v,"false")==0||strcmp(v,"0")==0) return 0;
+    return 1;
+}
+
+static char* trf_mapget(HakiMap* vars, const char* key) {
+    if (!vars) return NULL;
+    void* vp = haki_map_get(vars, key);
+    if (!vp) return NULL;
+    return (char*)vp;  /* Map<string,string> stores char* directly as void* */
+}
+
+static void trf_append(char** outp, size_t* lenp, size_t* capp, const char* s, size_t sl) {
+    if (sl == 0) return;
+    if (*lenp + sl + 1 > *capp) {
+        while (*lenp + sl + 1 > *capp) *capp *= 2;
+        *outp = (char*)realloc(*outp, *capp);
+    }
+    memcpy(*outp + *lenp, s, sl);
+    *lenp += sl;
+    (*outp)[*lenp] = '\0';
+}
+
+/* forward decl */
+static const char* trf_render(const char* p, const char* end, HakiMap* vars, char** outp, size_t* lenp, size_t* capp, int skip);
+
+/* parse {{tag_name rest}} — returns pointer past closing }}, fills tag and rest */
+static const char* trf_parse_tag(const char* p, const char* end, char* tag, size_t tsz, char* rest, size_t rsz) {
+    /* p points just past '{{' */
+    while (p < end && *p == ' ') p++;
+    const char* ts = p;
+    while (p < end && *p != ' ' && !(p[0]=='}' && p[1]=='}')) p++;
+    size_t tl = (size_t)(p - ts);
+    if (tl >= tsz) tl = tsz - 1;
+    strncpy(tag, ts, tl); tag[tl] = '\0';
+    while (p < end && *p == ' ') p++;
+    const char* rs = p;
+    while (p < end && !(p[0]=='}' && p[1]=='}')) p++;
+    size_t rl = (size_t)(p - rs);
+    while (rl > 0 && rs[rl-1] == ' ') rl--;
+    if (rl >= rsz) rl = rsz - 1;
+    strncpy(rest, rs, rl); rest[rl] = '\0';
+    if (p+1 < end) p += 2; /* skip }} */
+    return p;
+}
+
+static const char* trf_render(const char* p, const char* end, HakiMap* vars, char** outp, size_t* lenp, size_t* capp, int skip) {
+    char tag[256]; char rest[512];
+    while (p < end) {
+        if (p[0]=='{' && p+1<end && p[1]=='{') {
+            const char* tp = p + 2;
+            tp = trf_parse_tag(tp, end, tag, sizeof(tag), rest, sizeof(rest));
+            if (tag[0]=='#') {
+                /* block open */
+                const char* block_name = tag + 1; /* "if" or "for" */
+                if (strcmp(block_name, "if") == 0) {
+                    /* find matching {{/if}}, respecting nesting */
+                    /* render true branch, skip false branch (or vice versa) */
+                    char* val = trf_mapget(vars, rest);
+                    int cond = trf_truthy(val);
+                    int depth = 1;
+                    const char* branch_start = tp;
+                    const char* else_p = NULL;
+                    const char* close_p = NULL;
+                    /* scan to find {{#else}} and {{/if}} at depth 1 */
+                    const char* sp = tp;
+                    while (sp < end) {
+                        if (sp[0]=='{' && sp+1<end && sp[1]=='{') {
+                            char st[256]; char sr[512];
+                            const char* np = trf_parse_tag(sp+2, end, st, sizeof(st), sr, sizeof(sr));
+                            if (st[0]=='#' && (strcmp(st+1,"if")==0||strcmp(st+1,"for")==0)) depth++;
+                            else if (st[0]=='/' && strcmp(st+1,"if")==0) {
+                                depth--;
+                                if (depth==0) { close_p = sp; tp = np; break; }
+                            } else if (strcmp(st,"\x23" "else")==0 && depth==1) {
+                                else_p = sp; sp = np; continue;
+                            }
+                            sp = np;
+                        } else sp++;
+                    }
+                    if (!skip) {
+                        const char* true_end = else_p ? else_p : close_p;
+                        const char* false_start = NULL;
+                        const char* false_end = close_p;
+                        if (else_p) {
+                            char st[256]; char sr[512];
+                            false_start = trf_parse_tag(else_p+2, end, st, sizeof(st), sr, sizeof(sr));
+                        }
+                        if (cond) {
+                            trf_render(branch_start, true_end ? true_end : end, vars, outp, lenp, capp, 0);
+                        } else if (false_start) {
+                            trf_render(false_start, false_end ? false_end : end, vars, outp, lenp, capp, 0);
+                        }
+                    }
+                    p = tp;
+                } else if (strcmp(block_name, "for") == 0) {
+                    /* rest = "item in list_var" */
+                    char iter_var[128] = ""; char list_var[128] = "";
+                    sscanf(rest, "%127s in %127s", iter_var, list_var);
+                    char* list_val = trf_mapget(vars, list_var);
+                    /* find {{/for}} */
+                    int depth = 1;
+                    const char* body_start = tp;
+                    const char* close_p = NULL;
+                    const char* sp = tp;
+                    while (sp < end) {
+                        if (sp[0]=='{' && sp+1<end && sp[1]=='{') {
+                            char st[256]; char sr[512];
+                            const char* np = trf_parse_tag(sp+2, end, st, sizeof(st), sr, sizeof(sr));
+                            if (st[0]=='#' && (strcmp(st+1,"for")==0||strcmp(st+1,"if")==0)) depth++;
+                            else if (st[0]=='/' && strcmp(st+1,"for")==0) {
+                                depth--;
+                                if (depth==0) { close_p = sp; tp = np; break; }
+                            }
+                            sp = np;
+                        } else sp++;
+                    }
+                    if (!skip && list_val && iter_var[0]) {
+                        /* iterate newline-separated items */
+                        char* buf = strdup(list_val);
+                        char* line = strtok(buf, "\n");
+                        while (line) {
+                            while (*line == '\r') line++;
+                            char* le = line + strlen(line);
+                            while (le > line && (*(le-1)=='\r'||*(le-1)==' ')) { le--; *le='\0'; }
+                            if (*line) {
+                                HakiMap* iter_vars = haki_map_copy_with(vars, iter_var, line);
+                                trf_render(body_start, close_p ? close_p : end, iter_vars, outp, lenp, capp, 0);
+                            }
+                            line = strtok(NULL, "\n");
+                        }
+                        free(buf);
+                    }
+                    p = tp;
+                } else {
+                    /* unknown block — skip */
+                    p = tp;
+                }
+            } else if (tag[0]=='/') {
+                /* unmatched close tag — stop (caller handles it) */
+                break;
+            } else if (strcmp(tag,"\x23" "else")==0) {
+                /* unmatched else — stop */
+                break;
+            } else {
+                /* variable substitution */
+                if (!skip) {
+                    char* val = trf_mapget(vars, tag);
+                    if (val) trf_append(outp, lenp, capp, val, strlen(val));
+                }
+                p = tp;
+            }
+        } else {
+            if (!skip) trf_append(outp, lenp, capp, p, 1);
+            p++;
+        }
+    }
+    return p;
+}
+
+const char* haki_template_render_full(const char* tmpl, HakiMap* vars) {
+    if (!tmpl) return "";
+    size_t cap = strlen(tmpl) * 2 + 256;
+    char* out = (char*)malloc(cap);
+    out[0] = '\0';
+    size_t len = 0;
+    trf_render(tmpl, tmpl + strlen(tmpl), vars, &out, &len, &cap, 0);
+    return out;
+}
+
+
 typedef struct {
     void*       __arc;    /* ARC header — must be first */
     const char* message;
@@ -2024,8 +2852,9 @@ static const char* haki_curl_do(const char* url, const char* method, const char*
     } else if (method && strcmp(method,"DELETE")==0) {
         curl_easy_setopt(c, CURLOPT_CUSTOMREQUEST, "DELETE");
     }
-    curl_easy_perform(c);
-    long code = 200; curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
+    CURLcode res = curl_easy_perform(c);
+    long code = (res == CURLE_OK) ? 200 : 0;
+    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
     if (status_out) *status_out = code;
     curl_slist_free_all(hdrs); curl_easy_cleanup(c);
     return buf.data ? buf.data : strdup("");
@@ -2040,6 +2869,15 @@ int64_t haki_http_client_delete_status(const char* url){long s=-1;haki_curl_do(u
 const char* haki_http_client_delete_body(const char* url){return haki_curl_do(url,"DELETE",NULL,NULL,NULL);}
 int64_t haki_http_client_get_headers_status(const char* url,const char* hdrs){long s=-1;haki_curl_do(url,"GET",NULL,hdrs,&s);return s;}
 const char* haki_http_client_get_headers_body(const char* url,const char* hdrs){return haki_curl_do(url,"GET",NULL,hdrs,NULL);}
+/* Combined single-request fetch: returns __PayloadTuple2 { f0=status(int), f1=body(string) } */
+void* haki_http_fetch(const char* url, const char* method, const char* body, const char* ct) {
+    long status = 0;
+    const char* resp = haki_curl_do(url, method, body, ct, &status);
+    __PayloadTuple2* t = (__PayloadTuple2*)malloc(sizeof(__PayloadTuple2));
+    t->f0 = (void*)(intptr_t)status;
+    t->f1 = (void*)resp;
+    return (void*)t;
+}
 #else
 int64_t haki_http_client_get_status(const char* u){return -1;}
 const char* haki_http_client_get_body(const char* u){return "curl not available";}
@@ -2051,6 +2889,10 @@ int64_t haki_http_client_delete_status(const char* u){return -1;}
 const char* haki_http_client_delete_body(const char* u){return "curl not available";}
 int64_t haki_http_client_get_headers_status(const char* u,const char* h){return -1;}
 const char* haki_http_client_get_headers_body(const char* u,const char* h){return "curl not available";}
+void* haki_http_fetch(const char* u,const char* m,const char* b,const char* ct){
+    __PayloadTuple2* t=(__PayloadTuple2*)malloc(sizeof(__PayloadTuple2));
+    t->f0=(void*)(intptr_t)-1; t->f1=(void*)"curl not available"; return (void*)t;
+}
 #endif
 
 
@@ -2096,9 +2938,9 @@ int64_t haki_fs_exists(const char* p){struct stat s;return stat(p,&s)==0?1:0;}
 int64_t haki_fs_is_dir(const char* p){struct stat s;return(stat(p,&s)==0&&S_ISDIR(s.st_mode))?1:0;}
 int64_t haki_fs_is_file(const char* p){struct stat s;return(stat(p,&s)==0&&S_ISREG(s.st_mode))?1:0;}
 /* bool-returning path check wrappers for std/fs */
-static int8_t haki_fs_path_exists(const char* p){struct stat s;return(int8_t)(stat(p,&s)==0);}
-static int8_t haki_fs_path_is_dir(const char* p){struct stat s;return(int8_t)(stat(p,&s)==0&&S_ISDIR(s.st_mode));}
-static int8_t haki_fs_path_is_file(const char* p){struct stat s;return(int8_t)(stat(p,&s)==0&&S_ISREG(s.st_mode));}
+int8_t haki_fs_path_exists(const char* p){struct stat s;return(int8_t)(stat(p,&s)==0);}
+int8_t haki_fs_path_is_dir(const char* p){struct stat s;return(int8_t)(stat(p,&s)==0&&S_ISDIR(s.st_mode));}
+int8_t haki_fs_path_is_file(const char* p){struct stat s;return(int8_t)(stat(p,&s)==0&&S_ISREG(s.st_mode));}
 
 
 int64_t haki_fs_mkdir_all(const char* path) {
@@ -2136,7 +2978,7 @@ const char* haki_fs_dirname(const char* p) {
 
 /* ── Terminal I/O ────────────────────────────────────────────────────────────*/
 /* Read a line from stdin (strips trailing newline). Returns heap string. */
-static const char* haki_read_line(void) {
+const char* haki_read_line(void) {
     char buf[4096];
     if (!fgets(buf, sizeof(buf), stdin)) return strdup("");
     size_t len = strlen(buf);
@@ -2144,20 +2986,21 @@ static const char* haki_read_line(void) {
     return strdup(buf);
 }
 /* Print without trailing newline (for prompts). */
-static void haki_print_no_newline(const char* s) {
+void haki_print_no_newline(const char* s) {
     fputs(s, stdout); fflush(stdout);
 }
 /* Read a single character from stdin (no echo needed). */
-static int64_t haki_read_char(void) {
+int64_t haki_read_char(void) {
     int c = getchar();
     return (c == EOF) ? -1 : (int64_t)c;
 }
 /* Check if stdin has more input (non-blocking). */
-static int8_t haki_stdin_has_input(void) { return 1; }
+int8_t haki_stdin_has_input(void) { return 1; }
 
 "#;
 
 pub const RUNTIME_C_SOURCE: &str = r#"
+
 /* haki_runtime.c — Haki v0.1 runtime
    Compile: clang -c haki_runtime.c -o haki_runtime.o               */
 
@@ -2508,10 +3351,11 @@ void haki_map_set(HakiMap* m, const char* key, void* val_ptr) {
     if (!m || !key) return;
     if (m->length * 4 >= m->capacity * 3) haki_map_grow(m);
     char* k = strdup(key);
-    void* v = malloc((size_t)m->val_size);
-    if (!k || !v) abort();
-    memcpy(v, val_ptr, (size_t)m->val_size);
-    haki_map_insert_entry(m, k, v);
+    if (!k) abort();
+    // Store val_ptr directly — values are either pointer-sized primitives
+    // (int/float/bool stored as (void*)(intptr_t)value) or pointer-to-heap-object.
+    // No malloc/memcpy needed; the pointer IS the value.
+    haki_map_insert_entry(m, k, val_ptr);
 }
 
 /* Returns pointer to value, or NULL if not found. */
@@ -2564,6 +3408,21 @@ void haki_map_free(HakiMap* m) {
     free(m->entries);
     free(m);
 }
+
+/* Map iteration helpers */
+int64_t haki_map_capacity(HakiMap* m) { return m ? m->capacity : 0; }
+#ifndef HAKI_MAP_ENTRY_DEFINED
+#define HAKI_MAP_ENTRY_DEFINED
+const char* haki_map_entry_key(HakiMap* m, int64_t i) {
+    if (!m || i < 0 || i >= m->capacity) return NULL;
+    return m->entries[i].key;
+}
+void* haki_map_entry_value(HakiMap* m, int64_t i) {
+    if (!m || i < 0 || i >= m->capacity) return NULL;
+    return m->entries[i].value;
+}
+#endif /* HAKI_MAP_ENTRY_DEFINED */
+
 
 /* ── Thread (OS 1:1 pthread wrapper) ────────────────────────────── */
 
@@ -2997,7 +3856,8 @@ static int haki_select_arm_ready(int i, HakiChan** chans, int* ops) {
         return !ch->closed && (ch->cap == 0 || ch->count < ch->cap);
 }
 
-int haki_select(int n, HakiChan** chans, int* ops, void** vals) {
+/* timeout_ms: -1 = block forever; >= 0 = return -1 after that many milliseconds */
+int haki_select(int n, HakiChan** chans, int* ops, void** vals, int64_t timeout_ms) {
     if (n <= 0 || n > HAKI_SELECT_MAX) return -1;
 
     int order[HAKI_SELECT_MAX];
@@ -3013,6 +3873,16 @@ int haki_select(int n, HakiChan** chans, int* ops, void** vals) {
         waiters[i].mu   = &sel_mu;
         waiters[i].cond = &sel_cond;
         waiters[i].next = NULL;
+    }
+
+    /* Compute absolute deadline once (CLOCK_REALTIME for pthread_cond_timedwait) */
+    struct timespec deadline = {0, 0};
+    int has_timeout = (timeout_ms >= 0);
+    if (has_timeout) {
+        clock_gettime(CLOCK_REALTIME, &deadline);
+        int64_t ns = deadline.tv_nsec + (timeout_ms % 1000LL) * 1000000LL;
+        deadline.tv_sec  += (time_t)(timeout_ms / 1000LL) + (time_t)(ns / 1000000000LL);
+        deadline.tv_nsec  = (long)(ns % 1000000000LL);
     }
 
     int result = -1;
@@ -3092,11 +3962,17 @@ int haki_select(int n, HakiChan** chans, int* ops, void** vals) {
         for (int i = 0; i < n; i++)
             haki_chan_add_waiter(chans[i], &waiters[i]);
 
-        /* Unlock all and wait for a signal */
+        /* Unlock all and wait for a signal (or timeout) */
         pthread_mutex_lock(&sel_mu);
         for (int i = n-1; i >= 0; i--)
             pthread_mutex_unlock(&chans[order[i]]->mu);
-        pthread_cond_wait(&sel_cond, &sel_mu);
+
+        int wait_rc = 0;
+        if (has_timeout) {
+            wait_rc = pthread_cond_timedwait(&sel_cond, &sel_mu, &deadline);
+        } else {
+            pthread_cond_wait(&sel_cond, &sel_mu);
+        }
         pthread_mutex_unlock(&sel_mu);
 
         /* Remove waiters before re-locking channels */
@@ -3106,6 +3982,11 @@ int haki_select(int n, HakiChan** chans, int* ops, void** vals) {
             haki_chan_remove_waiter(chans[i], &waiters[i]);
         for (int i = n-1; i >= 0; i--)
             pthread_mutex_unlock(&chans[order[i]]->mu);
+
+        if (wait_rc == ETIMEDOUT) {
+            result = -1;
+            break;
+        }
     }
 
     pthread_mutex_destroy(&sel_mu);
@@ -3147,6 +4028,18 @@ void haki_taskgroup_spawn(HakiTaskGroup* g, HakiTaskFn fn, void* arg) {
         g->cap *= 2;
         g->tasks = (HakiTask**)realloc(g->tasks, (size_t)g->cap * sizeof(HakiTask*));
         if (!g->tasks) abort();
+    }
+    g->tasks[g->count++] = t;
+    pthread_mutex_unlock(&g->mu);
+}
+
+/* Add an already-spawned task to a TaskGroup */
+void haki_taskgroup_add(HakiTaskGroup* g, HakiTask* t) {
+    if (!g || !t) return;
+    pthread_mutex_lock(&g->mu);
+    if (g->count >= g->cap) {
+        g->cap = g->cap ? g->cap * 2 : 8;
+        g->tasks = (HakiTask**)realloc(g->tasks, g->cap * sizeof(HakiTask*));
     }
     g->tasks[g->count++] = t;
     pthread_mutex_unlock(&g->mu);
@@ -3681,6 +4574,27 @@ char* haki_string_substring(const char* s, int64_t start, int64_t end) {
     r[sub_len] = '\0';
     return r;
 }
+#ifndef HAKI_STRING_EXTRAS_DEFINED
+#define HAKI_STRING_EXTRAS_DEFINED
+int8_t haki_string_is_empty(const char* s) {
+    return (!s || s[0] == '\0') ? 1 : 0;
+}
+char* haki_string_char_at(const char* s, int64_t idx) {
+    if (!s) return strdup("");
+    int64_t len = (int64_t)strlen(s);
+    if (idx < 0 || idx >= len) return strdup("");
+    char* r = (char*)malloc(2);
+    r[0] = s[idx]; r[1] = '\0';
+    return r;
+}
+int64_t haki_string_char_code_at(const char* s, int64_t idx) {
+    if (!s) return -1;
+    int64_t len = (int64_t)strlen(s);
+    if (idx < 0 || idx >= len) return -1;
+    return (int64_t)(unsigned char)s[idx];
+}
+#endif /* HAKI_STRING_EXTRAS_DEFINED */
+
 
 /* ── File I/O ────────────────────────────────────────────────────
    Simple blocking file operations for scripting use.             */
@@ -3765,19 +4679,38 @@ static void* haki_string_to_float(const char* s) {
     return (void*)t;
 }
 /* ── Terminal I/O ────────────────────────────────────────────────────────────*/
-static const char* haki_read_line(void) {
+const char* haki_read_line(void) {
     char buf[4096];
     if (!fgets(buf, sizeof(buf), stdin)) return strdup("");
     size_t len=strlen(buf);
     if (len>0 && buf[len-1]=='\n') buf[len-1]='\0';
     return strdup(buf);
 }
-static void haki_print_no_newline(const char* s) { fputs(s,stdout); fflush(stdout); }
-static int64_t haki_read_char(void) { int c=getchar(); return c==EOF?-1:(int64_t)c; }
+void haki_print_no_newline(const char* s) { fputs(s,stdout); fflush(stdout); }
+int64_t haki_read_char(void) { int c=getchar(); return c==EOF?-1:(int64_t)c; }
 
+
+/* ── std/math — float wrappers ──────────────────────────────────────────── */
+#include <math.h>
+double haki_math_sqrt(double x) { return sqrt(x); }
+double haki_math_floor(double x) { return floor(x); }
+double haki_math_ceil(double x) { return ceil(x); }
+double haki_math_pow_f(double base, double exp) { return pow(base, exp); }
+double haki_math_log(double x) { return log(x); }
+double haki_math_sin(double x) { return sin(x); }
+double haki_math_cos(double x) { return cos(x); }
+double haki_math_abs_f(double x) { return fabs(x); }
+int64_t haki_math_floor_to_int(double x) { return (int64_t)floor(x); }
+int64_t haki_math_ceil_to_int(double x) { return (int64_t)ceil(x); }
+int64_t haki_math_round_to_int(double x) { return (int64_t)round(x); }
 
 /* haki_fs_* wrappers — match extern declarations in std/fs.haki */
-const char* haki_fs_read_file(const char* p) { return (const char*)haki_read_file(p); }
+const char* haki_fs_read_file(const char* p) {
+    char* content = NULL; char* err = NULL;
+    haki_file_read(p, &content, &err);
+    if (err) { free(err); }
+    return content ? content : strdup("");
+}
 int64_t haki_fs_write_file(const char* p, const char* c) {
     FILE* f=fopen(p,"wb"); if(!f) return -1; fwrite(c,1,strlen(c),f); fclose(f); return 0;
 }
@@ -4170,6 +5103,779 @@ void* haki_regex_split(const char* s, const char* pattern) {
     return arr;
 }
 
+
+/* haki_regex_find_groups: return Array<string> of capture groups (groups[0] = first capture).
+   Returns empty array if no match or invalid pattern.
+   Uses POSIX ERE — patterns should use [0-9] not \d, [a-z] not \w, etc. */
+void* haki_regex_find_groups(const char* s, const char* pattern) {
+    void* farr = haki_array_new(sizeof(void*));
+    regex_t fre;
+    /* count capture groups (unescaped '(') */
+    int fngroups = 0;
+    for (const char* fp = pattern; *fp; fp++) {
+        if (*fp == '\\') { fp++; continue; }
+        if (*fp == '(')  fngroups++;
+    }
+    if (fngroups == 0) return farr;  /* no capture groups */
+    if (fngroups > 32) fngroups = 32;
+    /* need fngroups+1 slots: slot 0 = full match, slots 1..fngroups = captures */
+    int fntotal = fngroups + 1;
+    if (regcomp(&fre, pattern, REG_EXTENDED) != 0) return farr;
+    regmatch_t fgrp[33];
+    if (regexec(&fre, s, (size_t)fntotal, fgrp, 0) == 0) {
+        /* skip fgrp[0] (full match), return only capture groups */
+        for (int fi = 1; fi < fntotal; fi++) {
+            if (fgrp[fi].rm_so < 0) {
+                char* fe = strdup(""); haki_array_append(farr, &fe);
+            } else {
+                int fgl = fgrp[fi].rm_eo - fgrp[fi].rm_so;
+                char* fp2 = (char*)malloc(fgl + 1);
+                strncpy(fp2, s + fgrp[fi].rm_so, fgl); fp2[fgl] = '\0';
+                haki_array_append(farr, &fp2);
+            }
+        }
+    }
+    regfree(&fre);
+    return farr;
+}
+
+/* ── std/time extensions ─────────────────────────────────────────────────── */
+
+int64_t haki_time_parse(const char* s) {
+    struct tm ttm; memset(&ttm, 0, sizeof(ttm));
+    int tn = sscanf(s, "%d-%d-%dT%d:%d:%d",
+        &ttm.tm_year, &ttm.tm_mon, &ttm.tm_mday,
+        &ttm.tm_hour, &ttm.tm_min, &ttm.tm_sec);
+    if (tn < 3) return -1;
+    ttm.tm_year -= 1900; ttm.tm_mon -= 1; ttm.tm_isdst = 0;
+#ifdef _WIN32
+    return (int64_t)_mkgmtime(&ttm);
+#else
+    return (int64_t)timegm(&ttm);
+#endif
+}
+
+const char* haki_time_format_pattern(int64_t unix_sec, const char* pattern) {
+    time_t tt = (time_t)unix_sec;
+    struct tm* tmi = gmtime(&tt);
+    char* tbuf = (char*)malloc(256);
+    strftime(tbuf, 256, pattern, tmi);
+    return tbuf;
+}
+
+int64_t haki_time_diff_sec(int64_t a, int64_t b) { return a - b; }
+
+const char* haki_time_format_tz(int64_t unix_sec, int64_t offset_minutes) {
+    time_t tt2 = (time_t)(unix_sec + offset_minutes * 60);
+    struct tm* tmi2 = gmtime(&tt2);
+    char* tbuf2 = (char*)malloc(32);
+    strftime(tbuf2, 32, "%Y-%m-%dT%H:%M:%S", tmi2);
+    int tabs = (int)(offset_minutes < 0 ? -offset_minutes : offset_minutes);
+    char tsign = offset_minutes >= 0 ? '+' : '-';
+    char ttz[8]; snprintf(ttz, sizeof(ttz), "%c%02d:%02d", tsign, tabs/60, tabs%60);
+    strncat(tbuf2, ttz, 31 - strlen(tbuf2));
+    return tbuf2;
+}
+
+int64_t haki_time_day_of_week(int64_t unix_sec) {
+    time_t tt3 = (time_t)unix_sec;
+    return (int64_t)gmtime(&tt3)->tm_wday;
+}
+
+int64_t haki_time_start_of_day(int64_t unix_sec) {
+    return unix_sec - (unix_sec % 86400);
+}
+
+const char* haki_time_day_name(int64_t wday) {
+    const char* tdays[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+    if (wday < 0 || wday > 6) return strdup("Unknown");
+    return strdup(tdays[wday]);
+}
+
+const char* haki_time_month_name(int64_t month) {
+    const char* tmonths[] = {"","January","February","March","April","May","June",
+                              "July","August","September","October","November","December"};
+    if (month < 1 || month > 12) return strdup("Unknown");
+    return strdup(tmonths[month]);
+}
+
+/* ── std/json nested parser ──────────────────────────────────────────────── */
+
+typedef struct { const char* src; int jpos; int jlen; } JParser;
+static void jskip(JParser* jp) {
+    while (jp->jpos < jp->jlen && (jp->src[jp->jpos]==' '||jp->src[jp->jpos]=='\t'||
+           jp->src[jp->jpos]=='\n'||jp->src[jp->jpos]=='\r')) jp->jpos++;
+}
+static char* jstr(JParser* jp) {
+    if (jp->jpos >= jp->jlen || jp->src[jp->jpos] != '"') return strdup("");
+    jp->jpos++;
+    int js = jp->jpos, jol = 0;
+    while (jp->jpos < jp->jlen && jp->src[jp->jpos] != '"') {
+        if (jp->src[jp->jpos] == '\\') { jp->jpos++; jol++; }
+        else jol++;
+        jp->jpos++;
+    }
+    int je = jp->jpos;
+    if (jp->jpos < jp->jlen) jp->jpos++;
+    char* jo = (char*)malloc(jol + 1); int joi = 0;
+    for (int ji = js; ji < je; ) {
+        if (jp->src[ji] == '\\' && ji + 1 < je) {
+            ji++;
+            switch (jp->src[ji]) {
+                case '"': jo[joi++]='"'; break; case '\\': jo[joi++]='\\'; break;
+                case 'n': jo[joi++]='\n'; break; case 'r': jo[joi++]='\r'; break;
+                case 't': jo[joi++]='\t'; break; default: jo[joi++]=jp->src[ji]; break;
+            }
+            ji++;
+        } else jo[joi++] = jp->src[ji++];
+    }
+    jo[joi] = '\0'; return jo;
+}
+static char* jval(JParser* jp) {
+    jskip(jp);
+    if (jp->jpos >= jp->jlen) return strdup("null");
+    int jvs = jp->jpos; char jvc = jp->src[jp->jpos];
+    if (jvc == '"') {
+        jp->jpos++;
+        while (jp->jpos < jp->jlen && jp->src[jp->jpos] != '"') {
+            if (jp->src[jp->jpos] == '\\') jp->jpos++;
+            jp->jpos++;
+        }
+        if (jp->jpos < jp->jlen) jp->jpos++;
+    } else if (jvc == '{' || jvc == '[') {
+        char jcl = (jvc=='{') ? '}' : ']'; int jd = 1; jp->jpos++;
+        while (jp->jpos < jp->jlen && jd > 0) {
+            char jcc = jp->src[jp->jpos];
+            if (jcc == '"') { jp->jpos++;
+                while (jp->jpos < jp->jlen && jp->src[jp->jpos] != '"') {
+                    if (jp->src[jp->jpos] == '\\') jp->jpos++; jp->jpos++; }
+                if (jp->jpos < jp->jlen) jp->jpos++;
+            } else if (jcc==jvc) { jd++; jp->jpos++; }
+            else if (jcc==jcl) { jd--; jp->jpos++; }
+            else jp->jpos++;
+        }
+        (void)jcl;
+    } else {
+        while (jp->jpos < jp->jlen) {
+            char jcc2 = jp->src[jp->jpos];
+            if (jcc2==','||jcc2=='}'||jcc2==']'||jcc2==' '||jcc2=='\n'||jcc2=='\r'||jcc2=='\t') break;
+            jp->jpos++;
+        }
+    }
+    int jrl = jp->jpos - jvs; char* jr = (char*)malloc(jrl+1);
+    strncpy(jr, jp->src + jvs, jrl); jr[jrl]='\0'; return jr;
+}
+static HakiMap* jpobj(JParser* jp) {
+    HakiMap* jm = haki_map_new(sizeof(void*));
+    jskip(jp);
+    if (jp->jpos >= jp->jlen || jp->src[jp->jpos] != '{') return jm;
+    jp->jpos++;
+    while (1) {
+        jskip(jp);
+        if (jp->jpos >= jp->jlen || jp->src[jp->jpos] == '}') { jp->jpos++; break; }
+        if (jp->src[jp->jpos] == ',') { jp->jpos++; continue; }
+        char* jk = jstr(jp); jskip(jp);
+        if (jp->jpos < jp->jlen && jp->src[jp->jpos] == ':') jp->jpos++;
+        jskip(jp);
+        char* jv2 = (jp->jpos < jp->jlen && jp->src[jp->jpos] == '"') ? jstr(jp) : jval(jp);
+        haki_map_set(jm, jk, (void*)jv2); free(jk);
+    }
+    return jm;
+}
+void* haki_json_parse_nested(const char* s) {
+    JParser jp; jp.src=s; jp.jpos=0; jp.jlen=(int)strlen(s);
+    return (void*)jpobj(&jp);
+}
+const char* haki_json_encode_nested(void* jm_ptr) {
+    HakiMap* jm = (HakiMap*)jm_ptr;
+    size_t jcap=64; char* jout=(char*)malloc(jcap); strcpy(jout,"{"); int jfirst=1;
+    for (int64_t ji=0; ji<(jm?jm->capacity:0); ji++) {
+        const char* jk2=haki_map_entry_key(jm,ji);
+        if(!jk2) continue;
+        void* jvp=haki_map_get(jm,jk2); if(!jvp) continue;
+        const char* jv3=(const char*)jvp;
+        size_t jn=strlen(jout)+strlen(jk2)+strlen(jv3)+16;
+        if(jn>jcap){jcap=jn*2;jout=(char*)realloc(jout,jcap);}
+        if(!jfirst) strncat(jout,",",jcap-strlen(jout)-1);
+        jfirst=0;
+        strncat(jout,"\"",jcap-strlen(jout)-1); strncat(jout,jk2,jcap-strlen(jout)-1);
+        strncat(jout,"\":",jcap-strlen(jout)-1);
+        char jf=jv3[0];
+        int jraw=(jf=='{'||jf=='['||(jf>='0'&&jf<='9')||jf=='-'||
+                  strcmp(jv3,"true")==0||strcmp(jv3,"false")==0||strcmp(jv3,"null")==0);
+        if(jraw) strncat(jout,jv3,jcap-strlen(jout)-1);
+        else { strncat(jout,"\"",jcap-strlen(jout)-1); strncat(jout,jv3,jcap-strlen(jout)-1); strncat(jout,"\"",jcap-strlen(jout)-1); }
+    }
+    strncat(jout,"}",jcap-strlen(jout)-1); return jout;
+}
+
+/* ── JSON flat API (haki_json_str/num/flag/encode_object/encode_array/decode/decode_get)
+   Called by std/json stdlib. Self-contained: uses JParser/jpobj/haki_map_xx/haki_array_get
+   and haki_error_new defined above. Works in both HTTP and non-HTTP builds. */
+#ifndef HAKI_JSON_FLAT_DEFINED
+#define HAKI_JSON_FLAT_DEFINED
+#ifndef HAKI_JSON_TUPLE2_DEFINED
+#define HAKI_JSON_TUPLE2_DEFINED
+typedef struct { void* f0; void* f1; } HakiJsonTuple2;
+#endif
+const char* haki_json_str(const char* s) {
+    if(!s) return strdup("null");
+    size_t len=strlen(s); char* out=(char*)malloc(len*6+3); char* p=out; *p++='"';
+    while(*s){
+        unsigned char c=(unsigned char)*s++;
+        switch(c){
+            case '"':  *p++='\\'; *p++='"';  break;
+            case '\\': *p++='\\'; *p++='\\'; break;
+            case '\n': *p++='\\'; *p++='n';  break;
+            case '\r': *p++='\\'; *p++='r';  break;
+            case '\t': *p++='\\'; *p++='t';  break;
+            default: if(c<0x20){p+=sprintf(p,"\\u%04x",c);}else{*p++=(char)c;} break;
+        }
+    }
+    *p++='"'; *p='\0'; return out;
+}
+const char* haki_json_num(int64_t n) {
+    char buf[32]; snprintf(buf,sizeof(buf),"%lld",(long long)n); return strdup(buf);
+}
+const char* haki_json_flag(int b) { return strdup(b?"true":"false"); }
+const char* haki_json_encode_object(void* m_ptr) {
+    HakiMap* m=(HakiMap*)m_ptr;
+    if(!m) return strdup("{}");
+    size_t cap=32,olen=0; char* out=(char*)malloc(cap); out[olen++]='{'; int jeo_first=1;
+    for(int64_t i=0;i<m->capacity;i++){
+        const char* k=haki_map_entry_key(m,i); if(!k) continue;
+        void* vp=haki_map_get(m,k);
+        const char* v=vp?(const char*)vp:"null";
+        const char* ks=haki_json_str(k);
+        size_t ksl=strlen(ks); size_t vl=v?strlen(v):4;
+        size_t needed=olen+ksl+1+vl+3;
+        while(cap<=needed){cap*=2;out=(char*)realloc(out,cap);}
+        if(!jeo_first) out[olen++]=','; jeo_first=0;
+        memcpy(out+olen,ks,ksl); olen+=ksl; free((void*)ks);
+        out[olen++]=':';
+        if(v){memcpy(out+olen,v,vl);olen+=vl;}else{memcpy(out+olen,"null",4);olen+=4;}
+    }
+    out[olen++]='}'; out[olen]='\0'; return out;
+}
+const char* haki_json_encode_array(void* arr_ptr) {
+    HakiArray* arr=(HakiArray*)arr_ptr;
+    if(!arr||arr->length==0) return strdup("[]");
+    size_t cap=32,olen=0; char* out=(char*)malloc(cap); out[olen++]='[';
+    for(int64_t i=0;i<arr->length;i++){
+        void* ep=haki_array_get(arr,i);
+        const char* v=ep?*(const char**)ep:"null";
+        size_t vl=v?strlen(v):4;
+        size_t needed=olen+vl+3;
+        while(cap<=needed){cap*=2;out=(char*)realloc(out,cap);}
+        if(i>0) out[olen++]=',';
+        if(v){memcpy(out+olen,v,vl);olen+=vl;}else{memcpy(out+olen,"null",4);olen+=4;}
+    }
+    out[olen++]=']'; out[olen]='\0'; return out;
+}
+void* haki_json_decode(const char* s) {
+    HakiMap* jd_m=NULL; const char* jd_err=NULL;
+    if(!s){ jd_err="null input"; }
+    else {
+        JParser jp; jp.src=s; jp.jpos=0; jp.jlen=(int)strlen(s);
+        jskip(&jp);
+        if(jp.jpos>=jp.jlen||jp.src[jp.jpos]!='{'){ jd_err="expected JSON object"; }
+        else { jd_m=jpobj(&jp); }
+    }
+    HakiJsonTuple2* t=(HakiJsonTuple2*)malloc(sizeof(HakiJsonTuple2));
+    t->f0=jd_m; t->f1=jd_err?haki_error_new(jd_err):NULL;
+    return (void*)t;
+}
+const char* haki_json_decode_get(const char* s,const char* key) {
+    if(!s||!key) return strdup("");
+    JParser jp; jp.src=s; jp.jpos=0; jp.jlen=(int)strlen(s);
+    HakiMap* m=jpobj(&jp);
+    if(!m) return strdup("");
+    void* vp=haki_map_get(m,key);
+    const char* result=vp?strdup((const char*)vp):strdup("");
+    haki_map_free(m); return result;
+}
+#endif /* HAKI_JSON_FLAT_DEFINED */
+
+/* ── std/csv ─────────────────────────────────────────────────────────────── */
+
+#ifndef HAKI_CSV_DEFINED
+#define HAKI_CSV_DEFINED
+
+/* haki_csv_parse_row: parse one CSV/TSV line into HakiArray* of char*.
+   sep = delimiter as int64_t (44 = comma, 9 = tab).
+   NOTE: uses haki_array_append(&field) so elem_size=sizeof(char*) is correct. */
+void* haki_csv_parse_row(const char* line, int64_t sep_i) {
+    char sep = (char)(int)sep_i;
+    HakiArray* arr = haki_array_new(sizeof(char*));
+    if (!line) return (void*)arr;
+    const char* p = line;
+    int csv_at_end = 0;
+    do {
+        char* field = NULL;
+        size_t flen = 0, fcap = 16;
+        field = (char*)malloc(fcap);
+        if (*p == '"') {
+            /* Quoted field */
+            p++;
+            while (*p) {
+                if (*p == '"') {
+                    if (*(p+1) == '"') {
+                        /* escaped quote: "" -> " */
+                        if (flen+1 >= fcap) { fcap*=2; field=(char*)realloc(field,fcap); }
+                        field[flen++] = '"'; p += 2;
+                    } else { p++; break; /* closing quote */ }
+                } else {
+                    if (flen+1 >= fcap) { fcap*=2; field=(char*)realloc(field,fcap); }
+                    field[flen++] = *p++;
+                }
+            }
+            if (*p == sep) p++;
+            else csv_at_end = 1;
+        } else {
+            /* Unquoted field */
+            while (*p && *p != sep) {
+                if (flen+1 >= fcap) { fcap*=2; field=(char*)realloc(field,fcap); }
+                field[flen++] = *p++;
+            }
+            if (*p == sep) p++;
+            else csv_at_end = 1;
+        }
+        field[flen] = '\0';
+        haki_array_append(arr, &field); /* &field: copy char* value into array */
+    } while (!csv_at_end);
+    return (void*)arr;
+}
+
+/* haki_csv_encode_row: encode HakiArray* of char* into a CSV/TSV row string. */
+const char* haki_csv_encode_row(void* fields_ptr, int64_t sep_i) {
+    char sep = (char)(int)sep_i;
+    HakiArray* arr = (HakiArray*)fields_ptr;
+    if (!arr || arr->length == 0) return strdup("");
+    size_t cap = 64, olen = 0;
+    char* out = (char*)malloc(cap);
+    for (int64_t ci = 0; ci < arr->length; ci++) {
+        const char* field = *(const char**)haki_array_get(arr, ci); /* double deref */
+        if (!field) field = "";
+        if (ci > 0) {
+            if (olen+1 >= cap) { cap*=2; out=(char*)realloc(out,cap); }
+            out[olen++] = sep;
+        }
+        /* check if quoting needed */
+        int needs_q = 0;
+        const char* fp = field;
+        while (*fp) {
+            if (*fp == sep || *fp == '"' || *fp == '\n' || *fp == '\r') { needs_q=1; break; }
+            fp++;
+        }
+        if (needs_q) {
+            size_t flen = strlen(field);
+            while (olen + flen*2 + 4 >= cap) { cap*=2; out=(char*)realloc(out,cap); }
+            out[olen++] = '"';
+            fp = field;
+            while (*fp) {
+                if (*fp == '"') out[olen++] = '"'; /* escape */
+                out[olen++] = *fp++;
+            }
+            out[olen++] = '"';
+        } else {
+            size_t flen = strlen(field);
+            while (olen + flen + 2 >= cap) { cap*=2; out=(char*)realloc(out,cap); }
+            memcpy(out+olen, field, flen); olen += flen;
+        }
+    }
+    out[olen] = '\0';
+    return out;
+}
+
+/* haki_csv_parse: parse full CSV/TSV string into HakiArray* of HakiArray*.
+   Returns HakiJsonTuple2 { f0=rows, f1=error? }. */
+void* haki_csv_parse(const char* s, int64_t sep) {
+    HakiArray* rows = NULL;
+    const char* csv_parse_err = NULL;
+    if (!s) { csv_parse_err = "null input"; }
+    else {
+        rows = haki_array_new(sizeof(HakiArray*));
+        const char* p = s;
+        size_t total = strlen(s);
+        const char* csv_end = s + total;
+        while (p <= csv_end) {
+            const char* line_start = p;
+            int in_q = 0;
+            while (p < csv_end) {
+                if (*p == '"') { in_q = !in_q; p++; }
+                else if (!in_q && (*p == '\n' || *p == '\r')) { break; }
+                else { p++; }
+            }
+            size_t llen = (size_t)(p - line_start);
+            char* lbuf = (char*)malloc(llen + 1);
+            memcpy(lbuf, line_start, llen); lbuf[llen] = '\0';
+            if (p < csv_end && *p == '\r') p++;
+            if (p < csv_end && *p == '\n') p++;
+            if (llen == 0 && p >= csv_end) { free(lbuf); break; }
+            HakiArray* row = (HakiArray*)haki_csv_parse_row(lbuf, sep);
+            free(lbuf);
+            haki_array_append(rows, &row); /* &row: copy HakiArray* value */
+        }
+    }
+    HakiJsonTuple2* t = (HakiJsonTuple2*)malloc(sizeof(HakiJsonTuple2));
+    t->f0 = (void*)rows;
+    t->f1 = csv_parse_err ? haki_error_new(csv_parse_err) : NULL;
+    return (void*)t;
+}
+
+/* haki_csv_encode: encode HakiArray* of HakiArray* into a CSV/TSV string. */
+const char* haki_csv_encode(void* rows_ptr, int64_t sep) {
+    HakiArray* rows = (HakiArray*)rows_ptr;
+    if (!rows || rows->length == 0) return strdup("");
+    size_t cap = 256, olen = 0;
+    char* out = (char*)malloc(cap);
+    for (int64_t ri = 0; ri < rows->length; ri++) {
+        HakiArray* row = *(HakiArray**)haki_array_get(rows, ri); /* double deref */
+        if (!row) continue;
+        if (ri > 0) {
+            if (olen+2 >= cap) { cap*=2; out=(char*)realloc(out,cap); }
+            out[olen++] = '\n';
+        }
+        const char* row_str = haki_csv_encode_row((void*)row, sep);
+        size_t rlen = strlen(row_str);
+        while (olen + rlen + 2 >= cap) { cap*=2; out=(char*)realloc(out,cap); }
+        memcpy(out+olen, row_str, rlen); olen += rlen;
+        free((void*)row_str);
+    }
+    out[olen] = '\0';
+    return out;
+}
+
+#endif /* HAKI_CSV_DEFINED */
+
+
+/* ── std/xml ─────────────────────────────────────────────────────────────── */
+
+const char* haki_xml_get_element(const char* xml, const char* tag) {
+    char xopen[256], xclose[256];
+    snprintf(xopen,sizeof(xopen),"<%s",tag); snprintf(xclose,sizeof(xclose),"</%s>",tag);
+    const char* xs=strstr(xml,xopen); if(!xs) return strdup("");
+    xs=strchr(xs,'>'); if(!xs) return strdup(""); xs++;
+    const char* xe=strstr(xs,xclose); if(!xe) return strdup("");
+    int xl=(int)(xe-xs); char* xr=(char*)malloc(xl+1);
+    strncpy(xr,xs,xl); xr[xl]='\0'; return xr;
+}
+void* haki_xml_parse_attrs(const char* attr_str) {
+    HakiMap* xm=haki_map_new(sizeof(void*));
+    const char* xp=attr_str;
+    while(*xp){
+        while(*xp==' '||*xp=='\t'||*xp=='\n') xp++;
+        if(!*xp) break;
+        const char* xks=xp; while(*xp&&*xp!='='&&*xp!=' ') xp++;
+        if(!*xp||*xp!='=') break;
+        int xkl=(int)(xp-xks); char* xk=(char*)malloc(xkl+1);
+        strncpy(xk,xks,xkl); xk[xkl]='\0'; xp++;
+        char xq=0; if(*xp=='"'||*xp=='\''){xq=*xp;xp++;}
+        const char* xvs=xp; while(*xp&&(xq?*xp!=xq:(*xp!=' '&&*xp!='\t'))) xp++;
+        int xvl=(int)(xp-xvs); char* xv=(char*)malloc(xvl+1);
+        strncpy(xv,xvs,xvl); xv[xvl]='\0'; if(xq&&*xp) xp++;
+        haki_map_set(xm,xk,(void*)xv); free(xk);  /* store char* directly as void* */
+    }
+    return (void*)xm;
+}
+const char* haki_xml_get_attr(const char* tag_str, const char* attr_name) {
+    size_t xal=strlen(attr_name); const char* xap=tag_str;
+    while((xap=strstr(xap,attr_name))!=NULL){
+        if(xap>tag_str&&(*(xap-1)==' '||*(xap-1)=='\t'||*(xap-1)=='<')){
+            xap+=xal; while(*xap==' ')xap++;
+            if(*xap=='='){xap++; while(*xap==' ')xap++;
+                char xq2=0; if(*xap=='"'||*xap=='\''){xq2=*xap;xap++;}
+                const char* xvs2=xap;
+                while(*xap&&(xq2?*xap!=xq2:(*xap!=' '&&*xap!='>')))xap++;
+                int xvl2=(int)(xap-xvs2); char* xv2=(char*)malloc(xvl2+1);
+                strncpy(xv2,xvs2,xvl2); xv2[xvl2]='\0'; return xv2;
+            }
+        }
+        xap++;
+    }
+    return strdup("");
+}
+const char* haki_xml_emit_element(const char* tag, const char* content) {
+    size_t xel=strlen(tag)*2+strlen(content)+8; char* xeo=(char*)malloc(xel);
+    snprintf(xeo,xel,"<%s>%s</%s>",tag,content,tag); return xeo;
+}
+
+const char* haki_xml_emit_tag(const char* tag, HakiMap* attrs) {
+    size_t cap = 256;
+    char* out = (char*)malloc(cap);
+    snprintf(out, cap, "<%s", tag);
+    if (attrs) {
+        for (int64_t i = 0; i < attrs->capacity; i++) {
+            if (attrs->entries[i].key) {
+                const char* k = attrs->entries[i].key;
+                void* vp = attrs->entries[i].value;
+                const char* v = vp ? (const char*)vp : "";  /* Map<string,string> stores char* directly */
+                size_t need = strlen(out) + strlen(k) + strlen(v) + 8;
+                while (need > cap) { cap *= 2; out = (char*)realloc(out, cap); }
+                size_t l = strlen(out);
+                snprintf(out + l, cap - l, " %s=\"%s\"", k, v);
+            }
+        }
+    }
+    size_t l = strlen(out);
+    while (l + 4 > cap) { cap *= 2; out = (char*)realloc(out, cap); }
+    out[l++] = '/'; out[l++] = '>'; out[l] = '\0';
+    return out;
+}
+const char* haki_xml_escape(const char* s) {
+    size_t xslen=strlen(s); size_t xcap2=xslen*6+1; char* xout=(char*)malloc(xcap2); char* xo=xout;
+    for(size_t xi=0;xi<xslen;xi++){
+        switch(s[xi]){
+            case '&': memcpy(xo,"&amp;",5); xo+=5; break;
+            case '<': memcpy(xo,"&lt;",4); xo+=4; break;
+            case '>': memcpy(xo,"&gt;",4); xo+=4; break;
+            case '"': memcpy(xo,"&quot;",6); xo+=6; break;
+            case '\'': memcpy(xo,"&apos;",6); xo+=6; break;
+            default: *xo++=s[xi]; break;
+        }
+    }
+    *xo='\0'; return xout;
+}
+
+/* ── std/template ────────────────────────────────────────────────────────── */
+
+const char* haki_template_render(const char* tmpl, HakiMap* vars) {
+    size_t ttlen=strlen(tmpl); size_t ttcap=ttlen*2+256;
+    char* ttout=(char*)malloc(ttcap); ttout[0]='\0';
+    const char* ttp=tmpl;
+    while(*ttp){
+        if(ttp[0]=='{'&&ttp[1]=='{'){
+            ttp+=2; while(*ttp==' ')ttp++;
+            const char* ttks=ttp; while(*ttp&&!(ttp[0]=='}'&&ttp[1]=='}'))ttp++;
+            const char* ttke=ttp; while(ttke>ttks&&*(ttke-1)==' ')ttke--;
+            int ttkl=(int)(ttke-ttks); char* ttk=(char*)malloc(ttkl+1);
+            strncpy(ttk,ttks,ttkl); ttk[ttkl]='\0';
+            if(ttp[0]=='}'&&ttp[1]=='}')ttp+=2;
+            void* ttvp=haki_map_get(vars,ttk); const char* ttv=ttvp?(const char*)ttvp:"";
+            free(ttk);
+            size_t ttn=strlen(ttout)+strlen(ttv)+64;
+            if(ttn>ttcap){ttcap=ttn*2;ttout=(char*)realloc(ttout,ttcap);}
+            strncat(ttout,ttv,ttcap-strlen(ttout)-1);
+        } else {
+            size_t ttc=strlen(ttout);
+            if(ttc+2>ttcap){ttcap*=2;ttout=(char*)realloc(ttout,ttcap);}
+            ttout[ttc]=*ttp; ttout[ttc+1]='\0'; ttp++;
+        }
+    }
+    return ttout;
+}
+const char* haki_template_html_escape(const char* s) {
+    if (!s) return "";
+    size_t cap = strlen(s) * 6 + 64;
+    char* out = (char*)malloc(cap);
+    char* p = out;
+    while (*s) {
+        if (*s == '&') { memcpy(p,"&amp;",5); p+=5; }
+        else if (*s == '<') { memcpy(p,"&lt;",4); p+=4; }
+        else if (*s == '>') { memcpy(p,"&gt;",4); p+=4; }
+        else if (*s == '"') { memcpy(p,"&quot;",6); p+=6; }
+        else if (*s == '\'') { memcpy(p,"&#39;",5); p+=5; }
+        else { *p++ = *s; }
+        s++;
+    }
+    *p = '\0';
+    return out;
+}
+
+/* haki_template_render_full — full template engine with if/else/for blocks.
+   Tags supported:
+     {{var}}                          variable substitution
+     {{#if var}}...{{/if}}            conditional (truthy = non-empty, not "false", not "0")
+     {{#if var}}...{{#else}}...{{/if}} conditional with else branch
+     {{#for item in list}}...{{/for}} iteration (list = newline-separated values)
+*/
+
+/* Copy a HakiMap, then add/override one extra key=value. Used by template for loop. */
+static HakiMap* haki_map_copy_with(HakiMap* src, const char* key, const char* val) {
+    HakiMap* dst = haki_map_new(sizeof(void*));
+    if (src) {
+        for (int64_t i = 0; i < src->capacity; i++) {
+            if (src->entries[i].key) {
+                haki_map_set(dst, src->entries[i].key, src->entries[i].value);
+            }
+        }
+    }
+    char* vs = strdup(val);
+    haki_map_set(dst, key, (void*)vs);  /* store char* directly as void*, not &vs */
+    return dst;
+}
+static int trf_truthy(const char* v) {
+    if (!v || v[0]=='\0') return 0;
+    if (strcmp(v,"false")==0||strcmp(v,"0")==0) return 0;
+    return 1;
+}
+
+static char* trf_mapget(HakiMap* vars, const char* key) {
+    if (!vars) return NULL;
+    void* vp = haki_map_get(vars, key);
+    if (!vp) return NULL;
+    return (char*)vp;  /* Map<string,string> stores char* directly as void* */
+}
+
+static void trf_append(char** outp, size_t* lenp, size_t* capp, const char* s, size_t sl) {
+    if (sl == 0) return;
+    if (*lenp + sl + 1 > *capp) {
+        while (*lenp + sl + 1 > *capp) *capp *= 2;
+        *outp = (char*)realloc(*outp, *capp);
+    }
+    memcpy(*outp + *lenp, s, sl);
+    *lenp += sl;
+    (*outp)[*lenp] = '\0';
+}
+
+/* forward decl */
+static const char* trf_render(const char* p, const char* end, HakiMap* vars, char** outp, size_t* lenp, size_t* capp, int skip);
+
+/* parse {{tag_name rest}} — returns pointer past closing }}, fills tag and rest */
+static const char* trf_parse_tag(const char* p, const char* end, char* tag, size_t tsz, char* rest, size_t rsz) {
+    /* p points just past '{{' */
+    while (p < end && *p == ' ') p++;
+    const char* ts = p;
+    while (p < end && *p != ' ' && !(p[0]=='}' && p[1]=='}')) p++;
+    size_t tl = (size_t)(p - ts);
+    if (tl >= tsz) tl = tsz - 1;
+    strncpy(tag, ts, tl); tag[tl] = '\0';
+    while (p < end && *p == ' ') p++;
+    const char* rs = p;
+    while (p < end && !(p[0]=='}' && p[1]=='}')) p++;
+    size_t rl = (size_t)(p - rs);
+    while (rl > 0 && rs[rl-1] == ' ') rl--;
+    if (rl >= rsz) rl = rsz - 1;
+    strncpy(rest, rs, rl); rest[rl] = '\0';
+    if (p+1 < end) p += 2; /* skip }} */
+    return p;
+}
+
+static const char* trf_render(const char* p, const char* end, HakiMap* vars, char** outp, size_t* lenp, size_t* capp, int skip) {
+    char tag[256]; char rest[512];
+    while (p < end) {
+        if (p[0]=='{' && p+1<end && p[1]=='{') {
+            const char* tp = p + 2;
+            tp = trf_parse_tag(tp, end, tag, sizeof(tag), rest, sizeof(rest));
+            if (tag[0]=='#') {
+                /* block open */
+                const char* block_name = tag + 1; /* "if" or "for" */
+                if (strcmp(block_name, "if") == 0) {
+                    /* find matching {{/if}}, respecting nesting */
+                    /* render true branch, skip false branch (or vice versa) */
+                    char* val = trf_mapget(vars, rest);
+                    int cond = trf_truthy(val);
+                    int depth = 1;
+                    const char* branch_start = tp;
+                    const char* else_p = NULL;
+                    const char* close_p = NULL;
+                    /* scan to find {{#else}} and {{/if}} at depth 1 */
+                    const char* sp = tp;
+                    while (sp < end) {
+                        if (sp[0]=='{' && sp+1<end && sp[1]=='{') {
+                            char st[256]; char sr[512];
+                            const char* np = trf_parse_tag(sp+2, end, st, sizeof(st), sr, sizeof(sr));
+                            if (st[0]=='#' && (strcmp(st+1,"if")==0||strcmp(st+1,"for")==0)) depth++;
+                            else if (st[0]=='/' && strcmp(st+1,"if")==0) {
+                                depth--;
+                                if (depth==0) { close_p = sp; tp = np; break; }
+                            } else if (strcmp(st,"\x23" "else")==0 && depth==1) {
+                                else_p = sp; sp = np; continue;
+                            }
+                            sp = np;
+                        } else sp++;
+                    }
+                    if (!skip) {
+                        const char* true_end = else_p ? else_p : close_p;
+                        const char* false_start = NULL;
+                        const char* false_end = close_p;
+                        if (else_p) {
+                            char st[256]; char sr[512];
+                            false_start = trf_parse_tag(else_p+2, end, st, sizeof(st), sr, sizeof(sr));
+                        }
+                        if (cond) {
+                            trf_render(branch_start, true_end ? true_end : end, vars, outp, lenp, capp, 0);
+                        } else if (false_start) {
+                            trf_render(false_start, false_end ? false_end : end, vars, outp, lenp, capp, 0);
+                        }
+                    }
+                    p = tp;
+                } else if (strcmp(block_name, "for") == 0) {
+                    /* rest = "item in list_var" */
+                    char iter_var[128] = ""; char list_var[128] = "";
+                    sscanf(rest, "%127s in %127s", iter_var, list_var);
+                    char* list_val = trf_mapget(vars, list_var);
+                    /* find {{/for}} */
+                    int depth = 1;
+                    const char* body_start = tp;
+                    const char* close_p = NULL;
+                    const char* sp = tp;
+                    while (sp < end) {
+                        if (sp[0]=='{' && sp+1<end && sp[1]=='{') {
+                            char st[256]; char sr[512];
+                            const char* np = trf_parse_tag(sp+2, end, st, sizeof(st), sr, sizeof(sr));
+                            if (st[0]=='#' && (strcmp(st+1,"for")==0||strcmp(st+1,"if")==0)) depth++;
+                            else if (st[0]=='/' && strcmp(st+1,"for")==0) {
+                                depth--;
+                                if (depth==0) { close_p = sp; tp = np; break; }
+                            }
+                            sp = np;
+                        } else sp++;
+                    }
+                    if (!skip && list_val && iter_var[0]) {
+                        /* iterate newline-separated items */
+                        char* buf = strdup(list_val);
+                        char* line = strtok(buf, "\n");
+                        while (line) {
+                            while (*line == '\r') line++;
+                            char* le = line + strlen(line);
+                            while (le > line && (*(le-1)=='\r'||*(le-1)==' ')) { le--; *le='\0'; }
+                            if (*line) {
+                                HakiMap* iter_vars = haki_map_copy_with(vars, iter_var, line);
+                                trf_render(body_start, close_p ? close_p : end, iter_vars, outp, lenp, capp, 0);
+                            }
+                            line = strtok(NULL, "\n");
+                        }
+                        free(buf);
+                    }
+                    p = tp;
+                } else {
+                    /* unknown block — skip */
+                    p = tp;
+                }
+            } else if (tag[0]=='/') {
+                /* unmatched close tag — stop (caller handles it) */
+                break;
+            } else if (strcmp(tag,"\x23" "else")==0) {
+                /* unmatched else — stop */
+                break;
+            } else {
+                /* variable substitution */
+                if (!skip) {
+                    char* val = trf_mapget(vars, tag);
+                    if (val) trf_append(outp, lenp, capp, val, strlen(val));
+                }
+                p = tp;
+            }
+        } else {
+            if (!skip) trf_append(outp, lenp, capp, p, 1);
+            p++;
+        }
+    }
+    return p;
+}
+
+const char* haki_template_render_full(const char* tmpl, HakiMap* vars) {
+    if (!tmpl) return "";
+    size_t cap = strlen(tmpl) * 2 + 256;
+    char* out = (char*)malloc(cap);
+    out[0] = '\0';
+    size_t len = 0;
+    trf_render(tmpl, tmpl + strlen(tmpl), vars, &out, &len, &cap, 0);
+    return out;
+}
+
+
 typedef struct {
     void*       __arc;    /* ARC header — must be first */
     const char* message;
@@ -4205,7 +5911,7 @@ void* haki_error_cause(void* err) {
     return ((HakiError*)err)->cause;
 }
 
-/* ── HTTP Server (via libmicrohttpd) ─────────────────────────────
+/* ── HTTP Server (self-contained) ───────────────────────────────
    haki_http_server_new(port, handler) starts a server that calls
    handler(HttpRequest*) → HttpResponse* for each request.
    haki_http_server_listen(server) blocks the calling thread.      */
@@ -4233,209 +5939,222 @@ typedef struct {
     void*             daemon;
 } HttpServer;
 
-#ifdef HAKI_MHD_SERVER
-#include <microhttpd.h>
-#include <stdarg.h>
-/* HttpRequest/HttpResponse defined in user's preamble via SO_HTTP_TYPES.
-   The runtime only needs forward declarations. */
+/* ── Haki self-contained HTTP/1.1 server ─────────────────────────────────
+   Pure POSIX sockets + pthreads. No external deps. Zero system installs.
+   Works on macOS and Linux. Windows: swap in Winsock if needed.         */
 
+#ifdef _WIN32
+#  include <winsock2.h>
+#  include <ws2tcpip.h>
+   typedef SOCKET haki_sock_t;
+#  define HAKI_INVALID_SOCK INVALID_SOCKET
+#  define haki_sock_close(s) closesocket(s)
+#else
+#  include <sys/socket.h>
+#  include <netinet/in.h>
+#  include <arpa/inet.h>
+#  include <unistd.h>
+   typedef int haki_sock_t;
+#  define HAKI_INVALID_SOCK (-1)
+#  define haki_sock_close(s) close(s)
+#endif
 
-/* HttpServer: using Haki-compat layout { port, handler, daemon } */
+static int haki_http_recv_headers(haki_sock_t fd, char* buf, int maxlen) {
+    int total = 0;
+    while (total < maxlen - 1) {
+        int n = (int)recv(fd, buf + total, maxlen - total - 1, 0);
+        if (n <= 0) break;
+        total += n;
+        buf[total] = '\0';
+        if (strstr(buf, "\r\n\r\n")) break;
+    }
+    buf[total] = '\0';
+    return total;
+}
 
-/* Body accumulator for POST/PUT requests */
-typedef struct { char* data; size_t len; } HakiBodyBuf;
+static int haki_http_recv_body(haki_sock_t fd, char* buf, int len) {
+    int got = 0;
+    while (got < len) {
+        int n = (int)recv(fd, buf + got, len - got, 0);
+        if (n <= 0) break;
+        got += n;
+    }
+    return got;
+}
 
-static enum MHD_Result haki_mhd_callback(
-    void* cls,
-    struct MHD_Connection* conn,
-    const char* url,
-    const char* method,
-    const char* version,
-    const char* upload_data,
-    size_t*     upload_data_size,
-    void**      con_cls)
-{
-    (void)version;
-    HttpHandler handler = (HttpHandler)cls;
+static int haki_http_content_len(const char* hdr) {
+    const char* p = hdr;
+    while (*p) {
+        if (strncasecmp(p, "Content-Length:", 15) == 0) {
+            p += 15;
+            while (*p == ' ') p++;
+            return atoi(p);
+        }
+        const char* nl = strchr(p, '\n');
+        if (!nl) break;
+        p = nl + 1;
+    }
+    return 0;
+}
 
-    /* First call: allocate body buffer */
-    if (*con_cls == NULL) {
-        HakiBodyBuf* buf = (HakiBodyBuf*)calloc(1, sizeof(HakiBodyBuf));
-        *con_cls = buf;
-        return MHD_YES;
+static const char* haki_http_status_text(int code) {
+    switch (code) {
+        case 200: return "OK";
+        case 201: return "Created";
+        case 204: return "No Content";
+        case 301: return "Moved Permanently";
+        case 302: return "Found";
+        case 400: return "Bad Request";
+        case 401: return "Unauthorized";
+        case 403: return "Forbidden";
+        case 404: return "Not Found";
+        case 405: return "Method Not Allowed";
+        case 500: return "Internal Server Error";
+        default:  return "OK";
+    }
+}
+
+static void haki_http_send_resp(haki_sock_t fd, HttpResponse* resp) {
+    const char* ct   = (resp->contentType && resp->contentType[0]) ? resp->contentType : "text/plain";
+    const char* body = resp->body ? resp->body : "";
+    int blen = (int)strlen(body);
+    char hdr[1024];
+    int hlen = snprintf(hdr, sizeof(hdr),
+        "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
+        resp->status, haki_http_status_text(resp->status), ct, blen);
+    send(fd, hdr, hlen, 0);
+    if (blen > 0) send(fd, body, blen, 0);
+}
+
+typedef HttpResponse* (*HttpHandler)(HttpRequest*);
+typedef struct { haki_sock_t fd; HttpHandler handler; } HakiConnCtx;
+
+static void* haki_http_conn_thread(void* arg) {
+    HakiConnCtx* ctx = (HakiConnCtx*)arg;
+    haki_sock_t fd   = ctx->fd;
+    HttpHandler h    = ctx->handler;
+    free(ctx);
+
+    char hdr_buf[8192];
+    int hlen = haki_http_recv_headers(fd, hdr_buf, sizeof(hdr_buf));
+    if (hlen <= 0) { haki_sock_close(fd); return NULL; }
+
+    char method[16]={0}, path[2048]={0};
+    sscanf(hdr_buf, "%15s %2047s", method, path);
+
+    char* body_start = strstr(hdr_buf, "\r\n\r\n");
+    if (!body_start) { haki_sock_close(fd); return NULL; }
+    body_start += 4;
+
+    int clen = haki_http_content_len(hdr_buf);
+    char* body_buf = NULL;
+    if (clen > 0) {
+        body_buf = (char*)calloc(1, clen + 1);
+        if (body_buf) {
+            int already = (int)(hlen - (int)(body_start - hdr_buf));
+            if (already > clen) already = clen;
+            if (already > 0) memcpy(body_buf, body_start, already);
+            if (already < clen) haki_http_recv_body(fd, body_buf + already, clen - already);
+        }
     }
 
-    /* Accumulate body */
-    HakiBodyBuf* buf = (HakiBodyBuf*)*con_cls;
-    if (*upload_data_size > 0) {
-        buf->data = (char*)realloc(buf->data, buf->len + *upload_data_size + 1);
-        memcpy(buf->data + buf->len, upload_data, *upload_data_size);
-        buf->len += *upload_data_size;
-        buf->data[buf->len] = '\0';
-        *upload_data_size = 0;
-        return MHD_YES;
+    HttpRequest req;
+    req.method     = method;
+    req.path       = path;
+    req.body       = body_buf ? body_buf : "";
+    req.body_len   = clen;
+    req.connection = (void*)(intptr_t)fd;
+
+    /* h is a Haki closure fat pointer: void*[2] = { fn_ptr, env_ptr }
+       Unpack and call: fn_ptr(env, &req) */
+    typedef HttpResponse* (*HakiHttpFn)(void*, HttpRequest*);
+    HakiHttpFn haki_http_fn_ptr = (HakiHttpFn)((void**)h)[0];
+    void*       haki_http_env   = ((void**)h)[1];
+    HttpResponse* resp = haki_http_fn_ptr(haki_http_env, &req);
+    if (resp) haki_http_send_resp(fd, resp);
+    else {
+        const char* e = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n";
+        send(fd, e, (int)strlen(e), 0);
     }
 
-    /* Build HttpRequest and call handler */
-    HttpRequest req = {
-        .method     = method,
-        .path       = url,
-        .body       = buf->data ? buf->data : "",
-        .body_len   = buf->len,
-        .connection = conn,
-    };
-    HttpResponse* resp = handler(&req);
-    int status = resp ? resp->status : 500;
-    const char* body = (resp && resp->body) ? resp->body : "";
-    const char* ct   = (resp && resp->contentType) ? resp->contentType : "text/plain";
+    if (body_buf) free(body_buf);
+    haki_sock_close(fd);
+    return NULL;
+}
 
-    struct MHD_Response* mhd_resp = MHD_create_response_from_buffer(
-        strlen(body), (void*)body, MHD_RESPMEM_MUST_COPY);
-    /* Remove any default Content-Type MHD may have added, then set ours. */
-    MHD_del_response_header(mhd_resp, "Content-Type", NULL);
-    MHD_add_response_header(mhd_resp, "Content-Type", ct);
-    MHD_add_response_header(mhd_resp, "Connection", "close");
-    enum MHD_Result rc = MHD_queue_response(conn, (unsigned int)status, mhd_resp);
-    MHD_destroy_response(mhd_resp);
+typedef struct { HttpServer* srv; } HakiAcceptArg;
 
-    if (resp) free(resp);
-    if (buf->data) free(buf->data);
-    free(buf);
-    *con_cls = NULL;
-
-    return rc;
+static void* haki_http_accept_loop(void* arg) {
+    HttpServer* s = ((HakiAcceptArg*)arg)->srv;
+    free(arg);
+    haki_sock_t srv_fd = (haki_sock_t)(intptr_t)s->daemon;
+    fprintf(stderr, "haki: HTTP server listening on :%lld (Ctrl+C to stop)\n", (long long)s->port);
+    while (1) {
+        struct sockaddr_in ca;
+#ifdef _WIN32
+        int al = sizeof(ca);
+#else
+        socklen_t al = sizeof(ca);
+#endif
+        haki_sock_t cfd = accept(srv_fd, (struct sockaddr*)&ca, &al);
+        if (cfd == HAKI_INVALID_SOCK) break;
+        HakiConnCtx* ctx = (HakiConnCtx*)malloc(sizeof(HakiConnCtx));
+        if (!ctx) { haki_sock_close(cfd); continue; }
+        ctx->fd = cfd; ctx->handler = s->handler;
+        pthread_t tid;
+        pthread_create(&tid, NULL, haki_http_conn_thread, ctx);
+        pthread_detach(tid);
+    }
+    return NULL;
 }
 
 HttpServer* haki_http_server_new(int64_t port, HttpHandler handler) {
-    HttpServer* s = (HttpServer*)malloc(sizeof(HttpServer));
+    HttpServer* s = (HttpServer*)calloc(1, sizeof(HttpServer));
     if (!s) abort();
-    s->handler = handler;
-    s->daemon  = MHD_start_daemon(
-        MHD_USE_THREAD_PER_CONNECTION,
-        (uint16_t)port,
-        NULL, NULL,
-        haki_mhd_callback, (void*)handler,
-        MHD_OPTION_END);
-    if (!s->daemon) {
-        fprintf(stderr, "haki: failed to start HTTP server on port %lld\n", (long long)port);
-        free(s);
-        return NULL;
-    }
+    s->port = port; s->handler = handler; s->daemon = NULL;
     return s;
+}
+/* Compat alias — Haki programs may call either name */
+HttpServer* haki_http_server_new_compat(int64_t port, HttpHandler handler) {
+    return haki_http_server_new(port, handler);
 }
 
 void haki_http_server_listen(HttpServer* s) {
     if (!s) return;
-    fprintf(stderr, "haki: HTTP server listening (press Ctrl+C to stop)\n");
-    /* Block forever — MHD handles threads internally */
-    for (;;) { sleep(3600); }
-}
-
-/* Request field accessors */
-
-/* Request field accessors */
-
-#endif /* HAKI_MHD_SERVER */
-
-/* Aliases so Haki programs can call the standard names regardless of MHD availability */
-#define haki_http_server_new      haki_http_server_new_compat
-#define haki_http_server_listen   haki_http_server_listen_compat
-
-/* server.router() defined after haki_router_new (in Router section) */
-/* Placeholder — actual definition is injected at end of Router section */
-
-/* ── Haki-compatible HTTP server (uses Haki field name: contentType) ──────
-   These are called from Haki programs that use HttpServer directly.
-   The handler returns HttpResponse* (with contentType field).            */
-
-typedef HttpResponse* (*HttpHandler)(HttpRequest*);
-
-
-#ifdef HAKI_MHD_SERVER
-static enum MHD_Result haki_compat_mhd_callback(
-    void* cls, struct MHD_Connection* conn,
-    const char* url, const char* method,
-    const char* version, const char* upload_data,
-    size_t* upload_data_size, void** con_cls)
-{
-    (void)version;
-    HttpHandler handler = (HttpHandler)cls;
-    /* Collect body */
-    static char body_buf[65536];
-    if (*upload_data_size > 0) {
-        size_t copy = *upload_data_size < sizeof(body_buf)-1 ? *upload_data_size : sizeof(body_buf)-1;
-        memcpy(body_buf, upload_data, copy);
-        body_buf[copy] = 0;
-        *upload_data_size = 0;
-        return MHD_YES;
+#ifdef _WIN32
+    WSADATA wsa; WSAStartup(MAKEWORD(2,2), &wsa);
+#endif
+    haki_sock_t fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == HAKI_INVALID_SOCK) { fprintf(stderr, "haki: socket() failed\n"); return; }
+    int opt = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET; addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons((uint16_t)s->port);
+    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        fprintf(stderr, "haki: bind() failed on port %lld\n", (long long)s->port);
+        haki_sock_close(fd); return;
     }
-    HttpRequest req;
-    req.path    = url    ? url    : "/";
-    req.method  = method ? method : "GET";
-    req.body    = body_buf;
-    req.body_len = strlen(body_buf);
-    req.connection = conn;
-    HttpResponse* resp = handler(&req);
-    const char* body = resp && resp->body ? resp->body : "";
-    const char* ct   = resp && resp->contentType ? resp->contentType : "text/plain";
-    int status = resp ? (int)resp->status : 200;
-    struct MHD_Response* mhd_resp = MHD_create_response_from_buffer(
-        strlen(body), (void*)body, MHD_RESPMEM_MUST_COPY);
-    MHD_add_response_header(mhd_resp, "Content-Type", ct);
-    enum MHD_Result r = MHD_queue_response(conn, status, mhd_resp);
-    MHD_destroy_response(mhd_resp);
-    body_buf[0] = 0;
-    return r;
+    if (listen(fd, 128) < 0) { fprintf(stderr, "haki: listen() failed\n"); haki_sock_close(fd); return; }
+    s->daemon = (void*)(intptr_t)fd;
+    HakiAcceptArg* aa = (HakiAcceptArg*)malloc(sizeof(HakiAcceptArg));
+    if (!aa) { haki_sock_close(fd); return; }
+    aa->srv = s;
+    haki_http_accept_loop(aa); /* blocks */
 }
+/* Compat alias */
+void haki_http_server_listen_compat(HttpServer* s) { haki_http_server_listen(s); }
 
-HttpServer* haki_http_server_new_compat(int64_t port, HttpHandler handler) {
-    HttpServer* s = (HttpServer*)malloc(sizeof(HttpServer));
-    if (!s) abort();
-    s->port    = port;
-    s->handler = handler;
-    s->daemon  = MHD_start_daemon(
-        MHD_USE_THREAD_PER_CONNECTION,
-        (uint16_t)port,
-        NULL, NULL,
-        haki_compat_mhd_callback, (void*)handler,
-        MHD_OPTION_END);
-    if (!s->daemon) {
-        fprintf(stderr, "haki: failed to start HTTP server on port %lld\n", (long long)port);
-        free(s);
-        return NULL;
-    }
-    return s;
-}
-
-void haki_http_server_listen_compat(HttpServer* s) {
-    if (!s) return;
-    fprintf(stderr, "haki: HTTP server listening on :%lld (Ctrl+C to stop)\n", s ? s->port : 0);
-    for (;;) { sleep(3600); }
+void haki_http_server_stop(HttpServer* s) {
+    if (!s || !s->daemon) return;
+    haki_sock_close((haki_sock_t)(intptr_t)s->daemon);
+    s->daemon = NULL;
 }
 
 const char* haki_http_request_path(HttpRequest* r)   { return r ? r->path   : ""; }
 const char* haki_http_request_method(HttpRequest* r) { return r ? r->method : ""; }
 const char* haki_http_request_body(HttpRequest* r)   { return r ? r->body   : ""; }
-
-/* Response constructor */
-
-#endif /* HAKI_MHD_SERVER (compat callbacks) */
-/* Stub: when MHD is not available, HttpServer can still be created + used for routing */
-#ifndef HAKI_MHD_SERVER
-HttpServer* haki_http_server_new_compat(int64_t port, HttpHandler handler) {
-    HttpServer* s = (HttpServer*)calloc(1, sizeof(HttpServer));
-    if (!s) abort();
-    s->port = port;
-    s->handler = handler;
-    s->daemon = NULL; /* no MHD daemon — live listen will fail gracefully */
-    return s;
-}
-void haki_http_server_listen_compat(HttpServer* s) {
-    (void)s;
-    fprintf(stderr, "haki: HTTP server requires libmicrohttpd (server not started)\n");
-}
-void haki_http_server_stop_compat(HttpServer* s) { (void)s; }
-#endif /* !HAKI_MHD_SERVER */
 
 
 /* Map entry accessors: defined in CORE for user.c, also needed in standalone runtime.c */
@@ -4513,10 +6232,12 @@ char* haki_json_concat(const char* a, const char* sep, const char* b) {
 
 
 
-void haki_json_decode(const char* s, HakiMap** out_map, char** out_error); /* forward decl */
+#ifndef HAKI_JSON_FLAT_DEFINED
+void haki_json_decode_impl(const char* s, HakiMap** out_map, char** out_error); /* forward decl */
+#endif
 
-/* ── JSON API wrappers (Haki API names → C implementations) ────────────────
-   json.haki calls these names; the implementations are haki_json_* above.  */
+/* ── JSON API wrappers (Haki API names → C implementations, legacy) ────────
+   These wrappers are dead code when std/json uses the new haki_json_* API.  */
 
 static inline const char* jsonString(const char* s) { return haki_json_string(s); }
 static inline const char* jsonInt(int64_t n) { return haki_json_int(n); }
@@ -4567,22 +6288,31 @@ static const char* jsonEncodeArray(HakiArray* arr) {
 }
 
 /* jsonDecode: returns a struct{f0=map, f1=error} matching Haki multi-return Tuple2. */
+#ifndef HAKI_JSON_TUPLE2_DEFINED
+#define HAKI_JSON_TUPLE2_DEFINED
 typedef struct { void* f0; void* f1; } HakiJsonTuple2;
+#endif
+#ifndef HAKI_JSON_FLAT_DEFINED
 static void* jsonDecode(const char* s) {
     HakiMap* m = NULL; char* err = NULL;
-    haki_json_decode(s, &m, &err);
+    haki_json_decode_impl(s, &m, &err);
     HakiJsonTuple2* t = (HakiJsonTuple2*)malloc(sizeof(HakiJsonTuple2));
     t->f0 = m;
     t->f1 = err ? haki_error_new(err) : NULL;
     return t;
 }
+#endif
 
+#ifndef HAKI_JSON_FLAT_DEFINED
 /* Forward declaration needed since haki_json_decode_get is defined later */
 const char* haki_json_decode_get(const char* s, const char* key);
+#endif
 
+#ifndef HAKI_JSON_FLAT_DEFINED
 static const char* jsonDecodeGet(const char* s, const char* key) {
     return haki_json_decode_get(s, key);
 }
+#endif
 
 
 /* HTTP response constructors — MHD-independent */
@@ -4775,19 +6505,10 @@ const char* haki_request_param(HttpRequest* req, const char* key) {
 
 /* Phase 3 extras: query string, headers, content-type on response */
 
-/* Parse query string — use MHD's built-in lookup if connection is available,
-   fall back to manual parsing of req->path for non-MHD requests.            */
+/* Parse query string from req->path (?key=val&key2=val2 …) */
 const char* haki_request_query(HttpRequest* req, const char* key) {
     if (!req || !key) return "";
-    /* Use MHD's query parameter lookup when available */
-#ifdef HAKI_MHD_SERVER
-    if (req->connection) {
-        const char* val = MHD_lookup_connection_value(
-            req->connection, MHD_GET_ARGUMENT_KIND, key);
-        return val ? val : "";
-    }
-#endif
-    /* Fallback: manual parse of query string from path */
+    /* Manual parse of query string from path */
     if (!req->path) return "";
     const char* q = strchr(req->path, '?');
     if (!q) return "";
@@ -4982,9 +6703,10 @@ static char* json_parse_number(const char** pp) {
     return strndup(start, (size_t)(*pp - start));
 }
 
-/* haki_json_decode: parse flat JSON object {"k": "v"} into a HakiMap.
+#ifndef HAKI_JSON_FLAT_DEFINED
+/* haki_json_decode_impl: parse flat JSON object {"k": "v"} into a HakiMap (internal).
    Returns map on success, NULL + *out_error on failure.              */
-void haki_json_decode(const char* s, HakiMap** out_map, char** out_error) {
+void haki_json_decode_impl(const char* s, HakiMap** out_map, char** out_error) {
     *out_map    = NULL;
     *out_error  = NULL;
     if (!s) { *out_error = strdup("null input"); return; }
@@ -5059,13 +6781,14 @@ void haki_render_template_map(const char* path, HakiMap* data, char** out_result
 /* jsonDecodeGet: decode flat JSON and return one key's value. */
 const char* haki_json_decode_get(const char* s, const char* key) {
     HakiMap* m = NULL; char* err = NULL;
-    haki_json_decode(s, &m, &err);
+    haki_json_decode_impl(s, &m, &err);
     if (err || !m) { if (err) free(err); return ""; }
     void* vp = haki_map_get(m, key);
     const char* result = vp ? strdup(*(const char**)vp) : strdup("");
     haki_map_free(m);
     return result;
 }
+#endif /* HAKI_JSON_FLAT_DEFINED */
 
 #ifndef HAKI_CHAN_TYPES_DEFINED
 #define HAKI_CHAN_TYPES_DEFINED

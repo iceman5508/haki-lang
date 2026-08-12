@@ -151,7 +151,7 @@ pub fn emit_c_http_unity(prog: &MonoProgram, source_path: Option<&str>) -> CResu
 
 fn emit_c_impl(prog: &MonoProgram, target_so: bool, uses_http: bool, full_runtime: bool, source_path: &str) -> CResult<String> {
     let mut out = String::with_capacity(64 * 1024);
-    let cx = Cx { prog, self_fields: std::cell::RefCell::new(std::collections::HashSet::new()), fn_locals: std::cell::RefCell::new(std::collections::HashSet::new()), source_path: source_path.to_string() };
+    let cx = Cx { prog, self_fields: std::cell::RefCell::new(std::collections::HashSet::new()), fn_locals: std::cell::RefCell::new(std::collections::HashSet::new()), mutable_captures: std::cell::RefCell::new(std::collections::HashSet::new()), async_thunks: std::cell::RefCell::new(Vec::new()), current_fn_error_msg: std::cell::RefCell::new(None), source_path: source_path.to_string() };
 
     // Header
     if target_so {
@@ -171,7 +171,8 @@ fn emit_c_impl(prog: &MonoProgram, target_so: bool, uses_http: bool, full_runtim
             .unwrap_or_default();
         out.push_str(&http_section);
     } else {
-        // Normal build: CORE only (before HTTP Server section)
+        // Normal build: CORE_RUNTIME_C_SOURCE (everything before HTTP Server section)
+        // Use RUNTIME_C_SOURCE up to HTTP Server section, which has map helpers etc.
         let core_runtime = RUNTIME_C_SOURCE
             .split("/* ── HTTP Server")
             .next()
@@ -253,6 +254,27 @@ for s in &prog.structs {
     }
 
     // Forward-declare all functions (so call order doesn't matter)
+    // Emit top-level const declarations as C static constants
+    if !prog.global_consts.is_empty() {
+        out.push_str("/* ── Global constants ── */\n");
+        for (name, ty, val_expr) in &prog.global_consts {
+            let cx_tmp = Cx {
+                prog,
+                self_fields: std::cell::RefCell::new(std::collections::HashSet::new()),
+                fn_locals: std::cell::RefCell::new(std::collections::HashSet::new()),
+                mutable_captures: std::cell::RefCell::new(std::collections::HashSet::new()),
+                async_thunks: std::cell::RefCell::new(Vec::new()),
+                current_fn_error_msg: std::cell::RefCell::new(None),
+                source_path: String::new(),
+            };
+            let c_type = cx_tmp.c_ty(ty);
+            let val_str = cx_tmp.emit_expr(val_expr).unwrap_or_else(|_| "0".into());
+            out.push_str(&format!("static const {c_type} {cn} = {val_str};\n",
+                cn = c_name(name)));
+        }
+        out.push('\n');
+    }
+
     out.push_str("/* ── Function prototypes ── */\n");
 
     // extern "c" functions: emit as C forward declarations so call sites compile.
@@ -294,7 +316,15 @@ for s in &prog.structs {
     for f in &prog.fns {
         // In --target so mode, skip main() — we replace it with haki_handle_request
         if target_so && f.name == "main" { continue; }
-        cx.emit_fn(&mut out, f)?;
+        // Emit async thunk definitions before this function:
+        cx.async_thunks.borrow_mut().clear();
+        let mut fn_buf = String::new();
+        cx.emit_fn(&mut fn_buf, f)?;
+        for thunk in cx.async_thunks.borrow().iter() {
+            out.push_str(thunk);
+        }
+        cx.async_thunks.borrow_mut().clear();
+        out.push_str(&fn_buf);
     }
     for s in &prog.structs {
         for m in &s.methods {
@@ -349,6 +379,14 @@ struct Cx<'a> {
     /// Parameter names of fn-type in the current function (closure params).
     /// Used to detect fat-pointer calls vs regular calls.
     fn_locals: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Names of mutable captures in the current closure (let bindings captured by ref).
+    /// Reads emit (*varname) and writes emit (*varname) = rhs.
+    mutable_captures: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Async thunk definitions to emit before the current function body.
+    async_thunks: std::cell::RefCell<Vec<String>>,
+    /// @error message for the current function being emitted (None if no @error attr).
+    /// When set, multi-value returns check the error field and panic rather than return it.
+    current_fn_error_msg: std::cell::RefCell<Option<String>>,
     /// Original Haki source path — used for #line directives (empty = disabled).
     source_path: String,
 }
@@ -377,7 +415,8 @@ impl<'a> Cx<'a> {
                     "Array"  => "void*".into(),  // HakiArray* opaque as void*
                     "Map"    => "void*".into(),  // HakiMap* opaque as void*
                     "Chan"   => "void*".into(),  // HakiChan* opaque as void*
-                    "Task"   => "void*".into(),
+                    "Task"      => "void*".into(),
+                    "TaskGroup" => "void*".into(),
                     "Mutex"  => "void*".into(),
                     // User-defined generic class: mangle to concrete name
                     // e.g. state__State<int> → state__State__int*
@@ -442,9 +481,13 @@ impl<'a> Cx<'a> {
         out.push_str(&format!("struct {} {{\n", cn));
         // ARC refcount first
         out.push_str("    int64_t __arc_count;\n");
-        if let Some(ref sup) = c.superclass {
-            // Inherit superclass fields by value-embedding
-            out.push_str(&format!("    {} __super;\n", c_name(sup)));
+        // Flatten inherited fields directly (no __super embedding — field access uses ptr->field)
+        if let Some(ref sup_name) = c.superclass {
+            if let Some(sup) = self.prog.classes.iter().find(|s| s.name == *sup_name) {
+                for f in &sup.fields {
+                    out.push_str(&format!("    {} {};\n", self.c_ty(&f.ty), c_name(&f.name)));
+                }
+            }
         }
         for f in &c.fields {
             out.push_str(&format!("    {} {};\n", self.c_ty(&f.ty), c_name(&f.name)));
@@ -508,13 +551,27 @@ impl<'a> Cx<'a> {
     }
 
     fn emit_fn(&self, out: &mut String, f: &MonoFn) -> CResult<()> {
-        // Collect fn-type parameter names so emit_call can detect fat-pointer calls
+        // Collect fn-type parameter names so emit_call can detect fat-pointer calls.
+        // Also collect mutable capture names for pointer-indirection emission.
         {
             let mut locals = self.fn_locals.borrow_mut();
             locals.clear();
             for p in &f.params {
                 if matches!(p.ty, SemTy::Fn(_, _) | SemTy::Closure(_, _)) {
                     locals.insert(p.name.clone());
+                }
+            }
+            // Closure variables stored in local scope are also fat-pointer callables
+            // (e.g. `const inc = fn[count]() -> void { ... }` makes `inc` a closure var)
+            // These appear as local vars with Closure type — we detect them in emit_local_let.
+        }
+        // Populate mutable_captures for this function
+        {
+            let mut mut_caps = self.mutable_captures.borrow_mut();
+            mut_caps.clear();
+            for (cap_name, _, _, is_mut) in &f.captures {
+                if *is_mut {
+                    mut_caps.insert(cap_name.clone());
                 }
             }
         }
@@ -526,6 +583,14 @@ impl<'a> Cx<'a> {
             // The exact line is computed in the driver which has the source string.
             // For now emit a comment; full DWARF mapping is done via emit_line_directive.
             out.push_str(&format!("/* haki span:{} */\n", f.span.lo));
+        }
+        // Track @error msg for this function (used in return emitter to panic on non-null errors)
+        {
+            let mut emsg = self.current_fn_error_msg.borrow_mut();
+            *emsg = f.attributes.iter()
+                .find(|a| a.name == "error")
+                .and_then(|a| a.args.first())
+                .map(|s| s.clone());
         }
         // Emit annotations as C attributes/pragmas before the function
         for attr in &f.attributes {
@@ -547,18 +612,33 @@ impl<'a> Cx<'a> {
         if f.name == "main" {
             out.push_str("    haki_runtime_init(argc, argv);\n");
         }
+        // @requires(condition) — emit entry guard immediately after opening brace
+        for attr in &f.attributes {
+            if attr.name == "requires" {
+                if let Some(cond) = attr.args.first() {
+                    out.push_str(&format!(
+                        "    if (!({cond})) {{ haki_panic(\"@requires({cond}) failed\"); }}\n"
+                    ));
+                }
+            }
+        }
         // Closure capture unpacking:
         // For each captured variable, unpack from __env and also expand
         // any class fields of the capture into bare names so the body can
         // access them directly (e.g. `count` from `self.count`).
         if !f.captures.is_empty() {
-            for (cap_name, cap_ty, _is_weak) in &f.captures {
+            for (cap_name, cap_ty, _is_weak, is_mutable) in &f.captures {
                 let c_type = self.c_ty(cap_ty);
-                // Unpack the capture from __env
-                // __env is the first capture cast directly (single-capture fast path)
-                // For multiple captures we'd need a struct; for now handle single capture
-                out.push_str(&format!("    {c_type} {cn} = ({c_type})__env;\n",
-                    cn = c_name(cap_name)));
+                let cn = c_name(cap_name);
+                if *is_mutable {
+                    // Mutable capture: __env is &outer_var (pointer to the outer let binding).
+                    // Declare as T* so every read is (*varname) and every write is (*varname)=rhs.
+                    // No copy — direct pointer indirection eliminates early-return write-back issues.
+                    out.push_str(&format!("    {c_type}* {cn} = ({c_type}*)__env;\n"));
+                } else {
+                    // Immutable capture: __env IS the value cast to void* (by-value fast path).
+                    out.push_str(&format!("    {c_type} {cn} = ({c_type})(intptr_t)__env;\n"));
+                }
                 // If the capture is a class/struct, also inject its fields as bare names
                 let type_name = match cap_ty {
                     SemTy::Named(n) => Some(n.clone()),
@@ -571,7 +651,7 @@ impl<'a> Cx<'a> {
                             out.push_str(&format!(
                                 "    {fty} {fname} = {cn}->{fname};\n",
                                 fname = c_name(&field.name),
-                                cn = c_name(cap_name),
+                                cn = cn.as_str(),
                             ));
                         }
                     }
@@ -652,6 +732,23 @@ impl<'a> Cx<'a> {
                             } else {
                                 // Pointer types: store directly (NULL-safe)
                                 out.push_str(&format!("{indent}__ret->f{i} = (void*)({ve});\n"));
+                            }
+                        }
+                        // @error "msg" — panic before returning a non-null error (f1 slot)
+                        if n >= 2 {
+                            if let Some(ref emsg) = *self.current_fn_error_msg.borrow() {
+                                if emsg.contains("{err}") {
+                                    let prefix = emsg.replace("{err}", "");
+                                    let prefix_escaped = prefix.replace('"', "\\\"");
+                                    out.push_str(&format!(
+                                        "{indent}if (__ret->f1 != NULL) {{ char __err_buf[512]; snprintf(__err_buf, sizeof(__err_buf), \"{prefix_escaped}%s\", (char*)__ret->f1); haki_panic(__err_buf); }}\n"
+                                    ));
+                                } else {
+                                    let escaped = emsg.replace('"', "\\\"");
+                                    out.push_str(&format!(
+                                        "{indent}if (__ret->f1 != NULL) {{ haki_panic(\"{escaped}\"); }}\n"
+                                    ));
+                                }
                             }
                         }
                         out.push_str(&format!("{indent}return __ret;\n"));
@@ -824,55 +921,97 @@ impl<'a> Cx<'a> {
                 let scrutinee = self.emit_expr(&m.scrutinee)?;
                 match m.kind {
                     MonoMatchKind::Int => {
-                        // Integer match → C switch statement
-                        out.push_str(&format!("{indent}switch ((int64_t)({scrutinee})) {{
-"));
-                        let mut has_default = false;
-                        for arm in &m.arms {
-                            match &arm.pattern {
-                                MonoPattern::Int(n) => {
-                                    out.push_str(&format!("{indent}    case {n}LL: {{
-"));
-                                    self.emit_block(out, &arm.body, depth + 2, deferred)?;
-                                    out.push_str(&format!("{indent}    break; }}
-"));
+                        // Use if-else chain when any arm has a guard (guards can't express
+                        // fallthrough in C switch). Use switch when no guards are present.
+                        let has_any_guard = m.arms.iter().any(|a| a.guard.is_some());
+                        if has_any_guard {
+                            // If-else chain: `_ if cond` → `else if (cond)`, `_` → `else`
+                            let sc_var = format!("__sc_int_{}", depth);
+                            out.push_str(&format!("{indent}{{ int64_t {sc_var} = (int64_t)({scrutinee});\n"));
+                            let mut first = true;
+                            for arm in &m.arms {
+                                let kw = if first { "if" } else { "} else if" };
+                                match &arm.pattern {
+                                    MonoPattern::Int(n) => {
+                                        first = false;
+                                        if let Some(g) = &arm.guard {
+                                            let gc = self.emit_expr(g)?;
+                                            out.push_str(&format!("{indent}    {kw} ({sc_var} == {n}LL && ({gc})) {{\n"));
+                                        } else {
+                                            out.push_str(&format!("{indent}    {kw} ({sc_var} == {n}LL) {{\n"));
+                                        }
+                                        self.emit_block(out, &arm.body, depth + 2, deferred)?;
+                                    }
+                                    MonoPattern::Named(s) if s == "_" => {
+                                        if let Some(g) = &arm.guard {
+                                            let gc = self.emit_expr(g)?;
+                                            if first { first = false; out.push_str(&format!("{indent}    if ({gc}) {{\n")); }
+                                            else { out.push_str(&format!("{indent}    }} else if ({gc}) {{\n")); }
+                                        } else {
+                                            if first { first = false; out.push_str(&format!("{indent}    {{\n")); }
+                                            else { out.push_str(&format!("{indent}    }} else {{\n")); }
+                                        }
+                                        self.emit_block(out, &arm.body, depth + 2, deferred)?;
+                                    }
+                                    _ => {}
                                 }
-                                MonoPattern::Named(s) if s == "_" => {
-                                    has_default = true;
-                                    out.push_str(&format!("{indent}    default: {{
-"));
-                                    self.emit_block(out, &arm.body, depth + 2, deferred)?;
-                                    out.push_str(&format!("{indent}    break; }}
-"));
-                                }
-                                _ => {}
                             }
+                            out.push_str(&format!("{indent}    }}\n{indent}}}\n"));
+                        } else {
+                            // No guards — standard C switch statement
+                            out.push_str(&format!("{indent}switch ((int64_t)({scrutinee})) {{\n"));
+                            let mut has_default = false;
+                            for arm in &m.arms {
+                                match &arm.pattern {
+                                    MonoPattern::Int(n) => {
+                                        out.push_str(&format!("{indent}    case {n}LL: {{\n"));
+                                        self.emit_block(out, &arm.body, depth + 2, deferred)?;
+                                        out.push_str(&format!("{indent}    break; }}\n"));
+                                    }
+                                    MonoPattern::Named(s) if s == "_" => {
+                                        has_default = true;
+                                        out.push_str(&format!("{indent}    default: {{\n"));
+                                        self.emit_block(out, &arm.body, depth + 2, deferred)?;
+                                        out.push_str(&format!("{indent}    break; }}\n"));
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            if !has_default {
+                                out.push_str(&format!("{indent}    default: break;\n"));
+                            }
+                            out.push_str(&format!("{indent}}}\n"));
                         }
-                        if !has_default {
-                            out.push_str(&format!("{indent}    default: break;
-"));
-                        }
-                        out.push_str(&format!("{indent}}}
-"));
                     }
                     MonoMatchKind::String => {
-                        // String match → if-else strcmp chain
+                        // String match → if-else strcmp chain (guard merged into condition)
                         let mut first = true;
                         for arm in &m.arms {
                             match &arm.pattern {
                                 MonoPattern::String(s) => {
                                     let kw = if first { "if" } else { "} else if" };
                                     first = false;
-                                    out.push_str(&format!(
-                                        "{indent}{kw} (strcmp((const char*)({scrutinee}), \"{s}\") == 0) {{\n"
-                                    ));
+                                    if let Some(g) = &arm.guard {
+                                        let gc = self.emit_expr(g)?;
+                                        out.push_str(&format!(
+                                            "{indent}{kw} (strcmp((const char*)({scrutinee}), \"{s}\") == 0 && ({gc})) {{\n"
+                                        ));
+                                    } else {
+                                        out.push_str(&format!(
+                                            "{indent}{kw} (strcmp((const char*)({scrutinee}), \"{s}\") == 0) {{\n"
+                                        ));
+                                    }
                                     self.emit_block(out, &arm.body, depth + 1, deferred)?;
                                 }
                                 MonoPattern::Named(s) if s == "_" => {
                                     let kw = if first { "" } else { "} else " };
                                     first = false;
-                                    out.push_str(&format!("{indent}{kw}{{
-"));
+                                    if let Some(g) = &arm.guard {
+                                        let gc = self.emit_expr(g)?;
+                                        out.push_str(&format!("{indent}{kw}if ({gc}) {{\n"));
+                                    } else {
+                                        out.push_str(&format!("{indent}{kw}{{\n"));
+                                    }
                                     self.emit_block(out, &arm.body, depth + 1, deferred)?;
                                 }
                                 _ => {}
@@ -883,53 +1022,119 @@ impl<'a> Cx<'a> {
                     }
                     MonoMatchKind::Enum => {
                         let sc_var = "__sc".to_string();
-                        out.push_str(&format!("{indent}{{ void* {sc_var} = (void*){scrutinee};
-"));
-                        out.push_str(&format!("{indent}    int64_t __tag = ((int64_t*){sc_var})[0];
-"));
-                        out.push_str(&format!("{indent}    void* __payload = ((void**){sc_var})[1];
-"));
-                        for (ai, arm) in m.arms.iter().enumerate() {
-                            let prefix = if ai == 0 { "if".to_string() } else { "} else if".to_string() };
-                            match &arm.pattern {
-                                MonoPattern::Named(s) if s == "_" => {
-                                    out.push_str(&format!("{indent}    }} else {{
-"));
+                        out.push_str(&format!("{indent}{{ void* {sc_var} = (void*){scrutinee};\n"));
+                        out.push_str(&format!("{indent}    int64_t __tag = ((int64_t*){sc_var})[0];\n"));
+                        out.push_str(&format!("{indent}    void* __payload = ((void**){sc_var})[1];\n"));
+
+                        // Group consecutive arms that share the same discriminant so that
+                        // guarded and unguarded arms on the same variant chain correctly:
+                        //   Good(v) if v > 100 { ... }    ← guarded
+                        //   Good(v) { ... }               ← fallthrough unguarded
+                        // Both go inside a single `if (__tag == disc) { ... }` block.
+                        let mut group_start = 0usize;
+                        let mut first_disc_block = true;
+                        while group_start < m.arms.len() {
+                            let disc_key = match &m.arms[group_start].pattern {
+                                MonoPattern::Named(s) if s == "_" => None, // wildcard
+                                MonoPattern::Named(pname) => Some(self.variant_discriminant_by_name(pname)),
+                                _ => Some(0usize), // Int/String shouldn't appear here
+                            };
+                            // Collect all consecutive arms sharing the same discriminant
+                            let group_end = {
+                                let mut end = group_start + 1;
+                                while end < m.arms.len() {
+                                    let next_key = match &m.arms[end].pattern {
+                                        MonoPattern::Named(s) if s == "_" => None,
+                                        MonoPattern::Named(pname) => Some(self.variant_discriminant_by_name(pname)),
+                                        _ => Some(0usize),
+                                    };
+                                    if next_key == disc_key && disc_key.is_some() {
+                                        end += 1;
+                                    } else {
+                                        break;
+                                    }
                                 }
-                                MonoPattern::Named(pname) => {
-                                    let disc = self.variant_discriminant_by_name(pname);
-                                    out.push_str(&format!("{indent}    {prefix} (__tag == {disc}LL) {{
-"));
-                                }
-                                _ => {
-                                    out.push_str(&format!("{indent}    {prefix} (1) {{
-"));
+                                end
+                            };
+
+                            // Emit outer discriminant check
+                            let outer_kw = if first_disc_block { "if" } else { "} else if" };
+                            first_disc_block = false;
+                            match disc_key {
+                                None => { out.push_str(&format!("{indent}    }} else {{\n")); }
+                                Some(disc) => {
+                                    out.push_str(&format!("{indent}    {outer_kw} (__tag == {disc}LL) {{\n"));
                                 }
                             }
-                            if arm.bindings.len() == 1 {
-                                let bt = self.c_ty(&arm.binding_tys[0]);
+
+                            // Emit bindings (shared across all arms in this group)
+                            let first_arm = &m.arms[group_start];
+                            if first_arm.bindings.len() == 1 {
+                                let bt = self.c_ty(&first_arm.binding_tys[0]);
                                 out.push_str(&format!(
-                                    "{indent}        {bt} {} = *({bt}*)__payload;
-",
-                                    c_name(&arm.bindings[0].name)
+                                    "{indent}        {bt} {} = *({bt}*)__payload;\n",
+                                    c_name(&first_arm.bindings[0].name)
                                 ));
-                            } else if arm.bindings.len() > 1 {
-                                // Multi-field: __payload is void** array, each element is type*
-                                // So __payload[i] is a void* pointing to the actual value
-                                for (bi, (binding, bty)) in arm.bindings.iter().zip(arm.binding_tys.iter()).enumerate() {
+                            } else if first_arm.bindings.len() > 1 {
+                                for (bi, (binding, bty)) in first_arm.bindings.iter().zip(first_arm.binding_tys.iter()).enumerate() {
                                     let bt = self.c_ty(bty);
                                     out.push_str(&format!(
-                                        "{indent}        {bt} {} = *({bt}*)(((void**)__payload)[{bi}]);
-",
+                                        "{indent}        {bt} {} = *({bt}*)(((void**)__payload)[{bi}]);\n",
                                         c_name(&binding.name)
                                     ));
                                 }
                             }
-                            self.emit_block(out, &arm.body, depth + 2, deferred)?;
+
+                            let group = &m.arms[group_start..group_end];
+                            if group.len() == 1 {
+                                // Single arm in group — guard wraps just the body
+                                let arm = &group[0];
+                                if let Some(g) = &arm.guard {
+                                    let gc = self.emit_expr(g)?;
+                                    out.push_str(&format!("{indent}        if ({gc}) {{\n"));
+                                    self.emit_block(out, &arm.body, depth + 3, deferred)?;
+                                    out.push_str(&format!("{indent}        }}\n"));
+                                } else {
+                                    self.emit_block(out, &arm.body, depth + 2, deferred)?;
+                                }
+                            } else {
+                                // Multiple arms with same discriminant — chain guards as if-else
+                                let mut inner_first = true;
+                                for arm in group {
+                                    // Re-extract bindings per arm if names differ
+                                    if arm.bindings.len() == 1
+                                        && arm.bindings[0].name != first_arm.bindings.first().map(|b| b.name.as_str()).unwrap_or("")
+                                    {
+                                        let bt = self.c_ty(&arm.binding_tys[0]);
+                                        out.push_str(&format!(
+                                            "{indent}        {bt} {} = *({bt}*)__payload;\n",
+                                            c_name(&arm.bindings[0].name)
+                                        ));
+                                    }
+                                    if let Some(g) = &arm.guard {
+                                        let gc = self.emit_expr(g)?;
+                                        let kw = if inner_first { "if" } else { "} else if" };
+                                        inner_first = false;
+                                        out.push_str(&format!("{indent}        {kw} ({gc}) {{\n"));
+                                        self.emit_block(out, &arm.body, depth + 3, deferred)?;
+                                    } else {
+                                        let kw = if inner_first { "" } else { "} else {" };
+                                        inner_first = false;
+                                        if kw.is_empty() {
+                                            out.push_str(&format!("{indent}        {{\n"));
+                                            self.emit_block(out, &arm.body, depth + 3, deferred)?;
+                                        } else {
+                                            out.push_str(&format!("{indent}        {kw}\n"));
+                                            self.emit_block(out, &arm.body, depth + 3, deferred)?;
+                                        }
+                                    }
+                                }
+                                out.push_str(&format!("{indent}        }}\n")); // close last if/else
+                            }
+
+                            group_start = group_end;
                         }
-                        out.push_str(&format!("{indent}    }}
-{indent}}}
-"));
+                        out.push_str(&format!("{indent}    }}\n{indent}}}\n"));
                     }
                     MonoMatchKind::Class => {
                         // Class hierarchy match — emit first arm as fallback
@@ -971,8 +1176,18 @@ impl<'a> Cx<'a> {
                     ));
 
                     // Fill channel + op arrays
+                    // ch_expr is `ch.recv()` — extract the channel pointer (first arg of recv call)
                     for (i, (_, _, ch_expr, _)) in sel.arms.iter().enumerate() {
-                        let ch = self.emit_expr(ch_expr)?;
+                        let ch = if let MonoExprKind::Call(fname, fargs) = &ch_expr.kind {
+                            if (fname.contains("chan_receive") || fname.contains("__recv") || fname.contains("__receive"))
+                               && !fargs.is_empty() {
+                                self.emit_expr(&fargs[0])?
+                            } else {
+                                self.emit_expr(ch_expr)?
+                            }
+                        } else {
+                            self.emit_expr(ch_expr)?
+                        };
                         out.push_str(&format!(
                             "{indent}    __sel_chans_{uid}[{i}] = (void*)({ch});\n"
                         ));
@@ -984,9 +1199,14 @@ impl<'a> Cx<'a> {
                         ));
                     }
 
-                    // Call haki_select
+                    // Call haki_select — pass timeout_ms (-1 = block forever)
+                    let timeout_ms_str = if let Some((ms_expr, _)) = &sel.timeout {
+                        self.emit_expr(ms_expr).unwrap_or_else(|_| "-1".into())
+                    } else {
+                        "-1".into()
+                    };
                     out.push_str(&format!(
-                        "{indent}    int __sel_ready_{uid} = haki_select({n}, (HakiChan**)__sel_chans_{uid}, __sel_ops_{uid}, __sel_vals_{uid});\n"
+                        "{indent}    int __sel_ready_{uid} = haki_select({n}, (HakiChan**)__sel_chans_{uid}, __sel_ops_{uid}, __sel_vals_{uid}, (int64_t)({timeout_ms_str}));\n"
                     ));
 
                     // Dispatch arms
@@ -1004,16 +1224,10 @@ impl<'a> Cx<'a> {
                         out.push_str(&format!("{indent}    }}\n"));
                     }
 
-                    // Timeout arm
-                    if let Some((ms_expr, timeout_body)) = &sel.timeout {
-                        let ms = self.emit_expr(ms_expr)?;
-                        // Timeout is handled by a separate timer channel in v2.x
-                        // For now emit a comment + the body (full timer support in v2.8)
+                    // Timeout arm — fires when haki_select returns -1
+                    if let Some((_, timeout_body)) = &sel.timeout {
                         out.push_str(&format!(
-                            "{indent}    /* timeout({ms}) — timer channel support in v2.8 */\n"
-                        ));
-                        out.push_str(&format!(
-                            "{indent}    else {{\n"
+                            "{indent}    else if (__sel_ready_{uid} == -1) {{\n"
                         ));
                         self.emit_block(out, timeout_body, depth + 2, deferred)?;
                         out.push_str(&format!("{indent}    }}\n"));
@@ -1148,6 +1362,15 @@ impl<'a> Cx<'a> {
                     out.push_str(&format!("{indent}(void)({init});\n"));
                 } else {
                     out.push_str(&format!("{indent}{ct} {nm} = {init};\n"));
+                    // Register closure-typed locals in fn_locals so calls use fat-pointer emission.
+                    // The binding ty may be void* (from fat-pointer ABI), so also check
+                    // if the init expression is a haki_make_closure call.
+                    if matches!(ty, SemTy::Closure(_, _) | SemTy::Fn(_, _))
+                        || matches!(l.init.ty, SemTy::Closure(_, _) | SemTy::Fn(_, _))
+                        || init.starts_with("haki_make_closure(")
+                    {
+                        self.fn_locals.borrow_mut().insert(id.name.clone());
+                    }
                 }
             }
             bindings if bindings.len() > 1 => {
@@ -1209,6 +1432,27 @@ impl<'a> Cx<'a> {
                     let rs = self.emit_expr(r)?;
                     return Ok(format!("haki_string_concat({ls}, {rs})"));
                 }
+                // Optional<int/bool/float> != null / == null → use 0 as null sentinel
+                // (int64_t values stored as non-pointer, so NULL comparison is wrong)
+                let is_prim_optional = |ty: &SemTy| matches!(ty,
+                    SemTy::Optional(inner) if matches!(inner.as_ref(), SemTy::Int | SemTy::Float | SemTy::Bool)
+                );
+                if (matches!(op, BinaryOp::Eq) || matches!(op, BinaryOp::Ne))
+                    && (matches!(r.kind, MonoExprKind::Null) || matches!(l.kind, MonoExprKind::Null))
+                    && (is_prim_optional(&l.ty) || is_prim_optional(&r.ty))
+                {
+                    let (val_expr, val_ty) = if matches!(r.kind, MonoExprKind::Null) {
+                        (self.emit_expr(l)?, &l.ty)
+                    } else {
+                        (self.emit_expr(r)?, &r.ty)
+                    };
+                    let null_val = match val_ty {
+                        SemTy::Optional(inner) if matches!(inner.as_ref(), SemTy::Float) => "(double)0.0",
+                        _ => "0",
+                    };
+                    let cmp = if matches!(op, BinaryOp::Eq) { "==" } else { "!=" };
+                    return Ok(format!("({val_expr} {cmp} {null_val})"));
+                }
                 // String equality
                 if (matches!(op, BinaryOp::Eq) || matches!(op, BinaryOp::Ne))
                     && matches!(l.ty, SemTy::String) {
@@ -1253,9 +1497,11 @@ impl<'a> Cx<'a> {
                         _         => format!("/* unknown Error field {field} */NULL"),
                     });
                 }
-                // .length on Array or Map → runtime call
+                // .length on string/Array/Map → runtime call
                 if field == "length" {
                     match &recv.ty {
+                        SemTy::String =>
+                            return Ok(format!("((int64_t)strlen({re}))")),
                         SemTy::Generic(n, _) if n == "Array" =>
                             return Ok(format!("haki_array_length({re})")),
                         SemTy::Generic(n, _) if n == "Map" =>
@@ -1267,6 +1513,26 @@ impl<'a> Cx<'a> {
                     }
                 }
                 Ok(format!("{re}->{}", c_name(field)))
+            }
+
+            // Optional chaining: `recv?.field` → `(recv != NULL ? recv->field : NULL)`
+            MonoExprKind::OptionalField(recv, field) => {
+                let re = self.emit_expr(recv)?;
+                let cn = c_name(field);
+                Ok(format!("(({re}) != NULL ? ({re})->{cn} : NULL)"))
+            }
+
+            // Optional chaining: `recv?.method(args)` → `(recv != NULL ? recv->method(args) : NULL)`
+            MonoExprKind::OptionalMethodCall(recv, call_name, args) => {
+                let re = self.emit_expr(recv)?;
+                let cn = c_name(call_name);
+                let arg_strs: CResult<Vec<String>> = args.iter().map(|a| self.emit_expr(a)).collect();
+                let arg_strs = arg_strs?;
+                let args_joined = arg_strs.join(", ");
+                // Method calls go through the regular C function call ABI (receiver as first arg)
+                let full_name = c_name(call_name);
+                Ok(format!("(({re}) != NULL ? {full_name}({re}{}{args_joined}) : NULL)",
+                    if args.is_empty() { "" } else { ", " }))
             }
 
             MonoExprKind::Call(name, args) => self.emit_call(name, args, &e.ty),
@@ -1307,15 +1573,22 @@ impl<'a> Cx<'a> {
                 if is_class {
                     parts.push(format!("__c_{cn}->__arc_count = 1; "));
                 }
-                // Look up the class/struct field types so we can cast pointer→int when needed
-                let class_field_types: std::collections::HashMap<String, SemTy> =
-                    self.prog.classes.iter()
-                        .find(|c| c.name == *name)
-                        .map(|c| c.fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect())
-                        .or_else(|| self.prog.structs.iter()
-                            .find(|s| s.name == *name)
-                            .map(|s| s.fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect()))
-                        .unwrap_or_default();
+                // Look up the class/struct field types (including inherited) for type-correct casting
+                let class_field_types: std::collections::HashMap<String, SemTy> = {
+                    let mut map = std::collections::HashMap::new();
+                    if let Some(cls) = self.prog.classes.iter().find(|c| c.name == *name) {
+                        // Include parent fields first
+                        if let Some(ref sup_name) = cls.superclass {
+                            if let Some(sup) = self.prog.classes.iter().find(|c| c.name == *sup_name) {
+                                for f in &sup.fields { map.insert(f.name.clone(), f.ty.clone()); }
+                            }
+                        }
+                        for f in &cls.fields { map.insert(f.name.clone(), f.ty.clone()); }
+                    } else if let Some(s) = self.prog.structs.iter().find(|s| s.name == *name) {
+                        for f in &s.fields { map.insert(f.name.clone(), f.ty.clone()); }
+                    }
+                    map
+                };
 
                 for na in named_args {
                     let ve = self.emit_expr(&na.value)?;
@@ -1409,19 +1682,35 @@ impl<'a> Cx<'a> {
 
                 for (ai, arm) in m.arms.iter().enumerate() {
                     let prefix = if ai == 0 { "if".to_string() } else { "} else if".to_string() };
+                    // Build pattern condition (guard merged in for String/Int; separate for Enum)
                     match &arm.pattern {
                         MonoPattern::Named(s) if s == "_" => {
-                            parts.push("} else {".into());
+                            if let Some(g) = &arm.guard {
+                                let gc = self.emit_expr(g)?;
+                                parts.push(format!("}} else if ({gc}) {{"));
+                            } else {
+                                parts.push("} else {".into());
+                            }
                         }
                         MonoPattern::Named(pname) => {
                             let disc = self.variant_discriminant_by_name(pname);
                             parts.push(format!("{prefix} (__mtag == {disc}LL) {{"));
                         }
                         MonoPattern::Int(n) => {
-                            parts.push(format!("{prefix} (__msc_int == {n}LL) {{"));
+                            if let Some(g) = &arm.guard {
+                                let gc = self.emit_expr(g)?;
+                                parts.push(format!("{prefix} (__msc_int == {n}LL && ({gc})) {{"));
+                            } else {
+                                parts.push(format!("{prefix} (__msc_int == {n}LL) {{"));
+                            }
                         }
                         MonoPattern::String(s) => {
-                            parts.push(format!("{prefix} (strcmp(__msc_str, \"{s}\") == 0) {{"));
+                            if let Some(g) = &arm.guard {
+                                let gc = self.emit_expr(g)?;
+                                parts.push(format!("{prefix} (strcmp(__msc_str, \"{s}\") == 0 && ({gc})) {{"));
+                            } else {
+                                parts.push(format!("{prefix} (strcmp(__msc_str, \"{s}\") == 0) {{"));
+                            }
                         }
                     }
                     // Unpack payload (enum only)
@@ -1444,8 +1733,16 @@ impl<'a> Cx<'a> {
                             ));
                         }
                     }
-                    // Emit arm body; find yield
-                    if let Some(yv) = self.yield_val(&arm.body) {
+                    // Emit arm body; find yield (wrapped in guard for Enum pattern)
+                    let has_enum_guard = matches!(&arm.pattern, MonoPattern::Named(s) if s != "_")
+                        && arm.guard.is_some()
+                        && matches!(m.kind, MonoMatchKind::Enum);
+                    if has_enum_guard {
+                        let gc = self.emit_expr(arm.guard.as_ref().unwrap())?;
+                        if let Some(yv) = self.yield_val(&arm.body) {
+                            parts.push(format!("if ({gc}) {{ __match_result = {yv}; }}"));
+                        }
+                    } else if let Some(yv) = self.yield_val(&arm.body) {
                         parts.push(format!("__match_result = {yv};"));
                     }
                 }
@@ -1489,19 +1786,72 @@ impl<'a> Cx<'a> {
             }
 
             MonoExprKind::Async(inner) => {
-                // Async: emit a thunk closure and spawn it on the thread pool.
-                // For a call expr like slowCompute(1000), we:
-                //   1. Capture the result in a heap-allocated slot
-                //   2. Wrap in a thunk: void* thunk(void* arg) { *(T*)arg = fn(args); return arg; }
-                //   3. Spawn with haki_task_spawn
-                // Simplified: call haki_task_spawn with a cast of the evaluated expression.
-                // This works for void-return async; return-value async uses await to get result.
-                let ie = self.emit_expr(inner)?;
-                // Wrap the call in a thunk that stores the return value
-                let thunk_id = format!("__async_thunk_{}", inner.span.lo);
-                Ok(format!(
-                    "({{                     void* {thunk_id}_result = NULL;                     HakiTask* {thunk_id}_task = haki_task_spawn((HakiTaskFn)({ie}), NULL);                     {thunk_id}_task;                     }})"
-                ))
+                // Async: generate a thunk + args struct, spawn on the thread pool.
+                let span_id = inner.span.lo;
+                let thunk_id  = format!("__haki_thunk_{span_id}");
+                let args_id   = format!("__haki_args_{span_id}");
+                let struct_id = format!("__HakiThunkArgs_{span_id}");
+
+                if let MonoExprKind::Call(fn_name, fn_args) = &inner.kind {
+                    let arg_fields: Vec<String> = fn_args.iter().enumerate()
+                        .map(|(i, a)| format!("{} arg{i};", self.c_ty(&a.ty)))
+                        .collect();
+                    let arg_unpacks: Vec<String> = fn_args.iter().enumerate()
+                        .map(|(i, a)| {
+                            let ct = self.c_ty(&a.ty);
+                            format!("{ct} __a{i} = __sa->arg{i};")
+                        })
+                        .collect();
+                    let call_args_str: Vec<String> = (0..fn_args.len())
+                        .map(|i| format!("__a{i}"))
+                        .collect();
+
+                    let ret_c_ty = self.c_ty(&inner.ty);
+                    let cast_str = if ret_c_ty == "void" || ret_c_ty.is_empty() {
+                        String::new()
+                    } else {
+                        format!("({ret_c_ty})")
+                    };
+
+                    // Thunk definition emitted before the calling function:
+                    let fields_str = if arg_fields.is_empty() {
+                        "int _dummy;".to_string()
+                    } else {
+                        arg_fields.join(" ")
+                    };
+                    let unpacks_str = arg_unpacks.join(" ");
+                    let call_str = call_args_str.join(", ");
+                    let fn_c = c_name(fn_name);
+
+                    let thunk_def = format!(
+                        "typedef struct {{ {fields_str} }} {struct_id};\n\
+                         static void* {thunk_id}(void* __vargs) {{\n\
+                             {struct_id}* __sa = ({struct_id}*)__vargs;\n\
+                             {unpacks_str}\n\
+                             void* __r = (void*)(intptr_t){cast_str}{fn_c}({call_str});\n\
+                             free(__vargs); return __r;\n\
+                         }}\n"
+                    );
+                    self.async_thunks.borrow_mut().push(thunk_def);
+
+                    // Inline spawn: malloc args struct, fill fields, spawn task
+                    let mut parts = vec![];
+                    parts.push(format!(
+                        "{struct_id}* {args_id} = ({struct_id}*)malloc(sizeof({struct_id}));"
+                    ));
+                    for (i, a) in fn_args.iter().enumerate() {
+                        let av = self.emit_expr(a)?;
+                        parts.push(format!("{args_id}->arg{i} = {av};"));
+                    }
+                    parts.push(format!(
+                        "HakiTask* __task_{span_id} = haki_task_spawn({thunk_id}, {args_id}); __task_{span_id};"
+                    ));
+                    Ok(format!("({{ {} }})", parts.join(" ")))
+                } else {
+                    // Non-call async (edge case)
+                    let ie = self.emit_expr(inner)?;
+                    Ok(format!("({{ (void)({ie}); haki_task_spawn(NULL, NULL); }})"))
+                }
             }
         }
     }
@@ -1523,6 +1873,10 @@ impl<'a> Cx<'a> {
         // In a class method, bare field names are accessed via self->
         if self.self_fields.borrow().contains(name) {
             return format!("self->{}", c_name(name));
+        }
+        // Mutable capture: declared as T* varname = (T*)__env — dereference on read
+        if self.mutable_captures.borrow().contains(name) {
+            return format!("(*{})", c_name(name));
         }
         c_name(name)
     }
@@ -1582,18 +1936,42 @@ impl<'a> Cx<'a> {
             return Ok(format!("haki_chan_new({capacity})"));
         }
 
-        // haki_chan_send(ch, val) — encode primitive as (void*)(intptr_t)val
-        // Pairs with the receive-side (int64_t)(intptr_t) decode.
+        // haki_chan_send(ch, val) — encode value as void*.
+        // Primitives (int/float/bool): pack via intptr_t.
+        // Pointer types (string, structs): cast directly.
         if name == "haki_chan_send" && args.len() == 2 {
             let ch  = self.emit_expr(&args[0])?;
             let val = self.emit_expr(&args[1])?;
-            return Ok(format!("haki_chan_send({ch}, (void*)(intptr_t)({val}))"));
+            let val_ty = &args[1].ty;
+            let encoded = match val_ty {
+                SemTy::String
+                | SemTy::Optional(_)
+                | SemTy::Named(_)
+                | SemTy::Generic(_, _) => format!("(void*)({val})"),
+                _ => format!("(void*)(intptr_t)({val})"),
+            };
+            return Ok(format!("haki_chan_send({ch}, {encoded})"));
         }
-        // haki_chan_receive(ch) — returns void* but must be cast to the element type
-        // Use intptr_t as intermediate to satisfy strict C type-checking on macOS/clang
+        // haki_chan_receive(ch) — returns void* but must be cast to the element type.
+        // Use intptr_t as intermediate for primitives (int/bool/float) to avoid
+        // strict-aliasing UB; for pointer types (string, structs) cast directly.
         if name == "haki_chan_receive" && args.len() == 1 {
             let ch = self.emit_expr(&args[0])?;
-            return Ok(format!("((int64_t)(intptr_t)haki_chan_receive({ch}))"));
+            let cast = match ret_ty {
+                SemTy::String
+                | SemTy::Optional(_)
+                | SemTy::Named(_)
+                | SemTy::Generic(_, _) => {
+                    let c = self.c_ty(ret_ty);
+                    format!("(({c})haki_chan_receive({ch}))")
+                }
+                _ => {
+                    // Int, Bool, Float — pack as intptr_t
+                    let c = self.c_ty(ret_ty);
+                    format!("(({c})(intptr_t)haki_chan_receive({ch}))")
+                }
+            };
+            return Ok(cast);
         }
         if name == "haki_chan_new" {
             let capacity = if args.is_empty() {
@@ -1646,7 +2024,7 @@ impl<'a> Cx<'a> {
 
         // Map getOrDefault — handles monomorphized names like
         // Map__string__T__getOrDefault that the bootstrap generates
-        if name.contains("__getOrDefault") {
+        if name.contains("__getOrDefault") && args.len() == 3 {
             let map = self.emit_expr(&args[0])?;
             let key = self.emit_expr(&args[1])?;
             let def = self.emit_expr(&args[2])?;
@@ -1777,6 +2155,16 @@ impl<'a> Cx<'a> {
             let mutex = self.emit_expr(&args[0])?;
             return Ok(format!("haki_mutex_lock({mutex})"));
         }
+        // TaskGroup<T>.add(task) / .spawn(task) → haki_taskgroup_add(group, task)
+        // The task is a HakiTask* from async fn(...); taskgroup_add just registers it.
+        if (name.contains("haki_taskgroup_spawn") || name.contains("__spawn") || name.contains("__add"))
+            && args.len() == 2
+            && matches!(args[0].ty, SemTy::Generic(ref n, _) if n == "TaskGroup")
+        {
+            let group = self.emit_expr(&args[0])?;
+            let task  = self.emit_expr(&args[1])?;
+            return Ok(format!("haki_taskgroup_add({group}, {task})"));
+        }
 
         if name == "haki_env_get"   { return Ok(format!("haki_env_get({})",   self.emit_expr(&args[0])?)); }
         if name == "haki_env_set"   { return Ok(format!("haki_env_set({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
@@ -1814,7 +2202,7 @@ impl<'a> Cx<'a> {
             }
             return Ok(format!("haki_array_append_val({}, &({}))", arr, val));
         }
-        if name.contains("__length")  { return Ok(format!("haki_array_length({})", self.emit_expr(&args[0])?)); }
+        if name.contains("__length") && !matches!(args[0].ty, SemTy::String) { return Ok(format!("haki_array_length({})", self.emit_expr(&args[0])?)); }
 
         // Array typed method intercepts
         if name.contains("__removeLast") && args.len() == 1 {
@@ -1942,21 +2330,38 @@ impl<'a> Cx<'a> {
         if name.ends_with("__startsWith") { return Ok(format!("haki_string_starts_with({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
         if name.ends_with("__endsWith")   { return Ok(format!("haki_string_ends_with({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
         if name.ends_with("__join") && args.len() == 2 { return Ok(format!("haki_array_join({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?)); }
+        if name.ends_with("__length") && args.len() == 1 && matches!(args[0].ty, SemTy::String) {
+            return Ok(format!("haki_string_length({})", self.emit_expr(&args[0])?));
+        }
+        if name.ends_with("__isEmpty") && args.len() == 1 && matches!(args[0].ty, SemTy::String) {
+            return Ok(format!("haki_string_is_empty({})", self.emit_expr(&args[0])?));
+        }
+        if name.ends_with("__charAt") && args.len() == 2 && matches!(args[0].ty, SemTy::String) {
+            return Ok(format!("haki_string_char_at({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?));
+        }
+        if name.ends_with("__charCodeAt") && args.len() == 2 && matches!(args[0].ty, SemTy::String) {
+            return Ok(format!("haki_string_char_code_at({}, {})", self.emit_expr(&args[0])?, self.emit_expr(&args[1])?));
+        }
 
         // haki_make_closure: env_ptr must be void* — cast int/bool captures
         if name == "haki_make_closure" && args.len() == 2 {
             let fn_ptr = self.emit_expr(&args[0])?;
             let env_raw = self.emit_expr(&args[1])?;
-            // Cast any primitive to void* via intptr_t
-            let needs_cast = matches!(args[1].ty,
-                SemTy::Int | SemTy::Bool | SemTy::Named(_)
-            ) && !matches!(args[1].ty, SemTy::String);
-            let env_cast = if needs_cast {
-                format!("(void*)(intptr_t)({env_raw})")
-            } else if matches!(args[1].ty, SemTy::Float) {
-                format!("(void*)(intptr_t)(*(int64_t*)&({env_raw}))")
+            // Mutable capture: env_raw is "__addr_varname" — emit &varname (address-of)
+            let env_cast = if let Some(var_name) = env_raw.strip_prefix("__addr_") {
+                format!("(void*)(&{var_name})")
             } else {
-                env_raw
+                // Cast any primitive to void* via intptr_t
+                let needs_cast = matches!(args[1].ty,
+                    SemTy::Int | SemTy::Bool | SemTy::Named(_)
+                ) && !matches!(args[1].ty, SemTy::String);
+                if needs_cast {
+                    format!("(void*)(intptr_t)({env_raw})")
+                } else if matches!(args[1].ty, SemTy::Float) {
+                    format!("(void*)(intptr_t)(*(int64_t*)&({env_raw}))")
+                } else {
+                    env_raw
+                }
             };
             return Ok(format!("haki_make_closure((void*){fn_ptr}, {env_cast})"));
         }
@@ -1999,7 +2404,7 @@ impl<'a> Cx<'a> {
             && !name.contains("__")
             && self.fn_locals.borrow().contains(name);
 
-        if is_fn_local_var && !args.is_empty() {
+        if is_fn_local_var {
             // Emit as fat pointer call: ((RetType(*)(void*, ArgTypes))((void**)(name))[0])(((void**)(name))[1], args)
             let ret_c_ty = self.c_ty(ret_ty);
             let ret_c_ty = if ret_c_ty.is_empty() || ret_c_ty == "void" { "void*".to_string() } else { ret_c_ty };
@@ -2140,7 +2545,7 @@ fn ast_ty_to_c(kind: &haki_ast::TyKind) -> String {
     match kind {
         haki_ast::TyKind::Named(id) => match id.name.as_str() {
             "int"    => "int64_t".into(),
-            "float"  => "double".into(),
+            "float" | "f64" => "double".into(),
             "bool"   => "int".into(),
             "string" => "const char*".into(),
             "void"   => "void".into(),

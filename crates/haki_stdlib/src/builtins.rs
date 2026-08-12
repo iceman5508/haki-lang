@@ -270,6 +270,55 @@ pub fn register_builtins(sym: &mut SymbolTable) {
         params: vec![str_param("s"), str_param("pattern")],
         return_ty: Some(ReturnTy::Single(array_ty("string"))),
         span: Span::dummy(), is_extern: false, extern_abi: None });
+    sym.functions.insert("haki_regex_find_groups".into(), FnInfo {
+        name: "haki_regex_find_groups".into(), type_params: vec![],
+        params: vec![str_param("s"), str_param("pattern")],
+        return_ty: Some(ReturnTy::Single(array_ty("string"))),
+        span: Span::dummy(), is_extern: false, extern_abi: None });
+
+    // ── std/template builtins ────────────────────────────────────────────────
+    sym.functions.insert("haki_template_render_full".into(), FnInfo {
+        name: "haki_template_render_full".into(), type_params: vec![],
+        params: vec![str_param("tmpl"), param("data", map_str_str_ty())],
+        return_ty: Some(ReturnTy::Single(str_ty())),
+        span: Span::dummy(), is_extern: false, extern_abi: None });
+    sym.functions.insert("haki_template_html_escape".into(), FnInfo {
+        name: "haki_template_html_escape".into(), type_params: vec![],
+        params: vec![str_param("s")],
+        return_ty: Some(ReturnTy::Single(str_ty())),
+        span: Span::dummy(), is_extern: false, extern_abi: None });
+
+    // ── std/xml builtins ─────────────────────────────────────────────────────
+    sym.functions.insert("haki_xml_get_element".into(), FnInfo {
+        name: "haki_xml_get_element".into(), type_params: vec![],
+        params: vec![str_param("xml"), str_param("tag")],
+        return_ty: Some(ReturnTy::Single(str_ty())),
+        span: Span::dummy(), is_extern: false, extern_abi: None });
+    sym.functions.insert("haki_xml_parse_attrs".into(), FnInfo {
+        name: "haki_xml_parse_attrs".into(), type_params: vec![],
+        params: vec![str_param("attrStr")],
+        return_ty: Some(ReturnTy::Single(map_str_str_ty())),
+        span: Span::dummy(), is_extern: false, extern_abi: None });
+    sym.functions.insert("haki_xml_get_attr".into(), FnInfo {
+        name: "haki_xml_get_attr".into(), type_params: vec![],
+        params: vec![str_param("tagStr"), str_param("attrName")],
+        return_ty: Some(ReturnTy::Single(str_ty())),
+        span: Span::dummy(), is_extern: false, extern_abi: None });
+    sym.functions.insert("haki_xml_emit_element".into(), FnInfo {
+        name: "haki_xml_emit_element".into(), type_params: vec![],
+        params: vec![str_param("tag"), str_param("content")],
+        return_ty: Some(ReturnTy::Single(str_ty())),
+        span: Span::dummy(), is_extern: false, extern_abi: None });
+    sym.functions.insert("haki_xml_escape".into(), FnInfo {
+        name: "haki_xml_escape".into(), type_params: vec![],
+        params: vec![str_param("s")],
+        return_ty: Some(ReturnTy::Single(str_ty())),
+        span: Span::dummy(), is_extern: false, extern_abi: None });
+    sym.functions.insert("haki_xml_emit_tag".into(), FnInfo {
+        name: "haki_xml_emit_tag".into(), type_params: vec![],
+        params: vec![str_param("tag"), param("attrs", map_str_str_ty())],
+        return_ty: Some(ReturnTy::Single(str_ty())),
+        span: Span::dummy(), is_extern: false, extern_abi: None });
 
     // ── std/json additional builtins ───────────────────────────────────────
     sym.functions.insert("jsonEncodeObject".into(), FnInfo {

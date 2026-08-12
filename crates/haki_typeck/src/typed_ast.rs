@@ -198,6 +198,8 @@ pub enum TypedExprKind {
     Unary(UnaryOp, Box<TypedExpr>),
     Binary(BinaryOp, Box<TypedExpr>, Box<TypedExpr>),
     Field(Box<TypedExpr>, Ident),
+    OptionalField(Box<TypedExpr>, Ident),
+    OptionalMethodCall(Box<TypedExpr>, Ident, Vec<TypedExpr>),
     MethodCall(Box<TypedExpr>, Ident, Vec<TypedExpr>),
     Call(Box<TypedExpr>, Vec<TypedExpr>),
     NamedCall(Box<TypedExpr>, Vec<TypedNamedArg>),
@@ -211,7 +213,7 @@ pub enum TypedExprKind {
     Async(Box<TypedExpr>),
     /// `fn(x: A) -> R { body }` or `fn[self, x](args) -> R { body }` — closure literal.
     /// `captures`: (name, type, is_weak) for each captured variable.
-    FnLiteral(TypedFnDef, Vec<(Ident, SemTy, bool)>),
+    FnLiteral(TypedFnDef, Vec<(Ident, SemTy, bool, bool)>),  // (id, ty, weak, mutable)
 }
 
 #[derive(Debug, Clone)]
@@ -335,6 +337,8 @@ pub struct TypedMatchArm {
     pub bindings: Vec<Ident>,
     /// Types of the bindings, in order.
     pub binding_tys: Vec<SemTy>,
+    /// Optional guard condition: `case x if x > 0 { ... }`
+    pub guard: Option<TypedExpr>,
     pub body: TypedBlock,
     pub span: Span,
 }
@@ -366,6 +370,8 @@ pub enum TypedItemKind {
     Fn(TypedFnDef),
     /// `extern "js" fn name(params) -> RetTy` — no body, emits Wasm import.
     ExternFn(ExternFnDef),
+    /// `const NAME = value` at file scope.
+    GlobalConst { name: haki_ast::Ident, ty: SemTy, value: TypedExpr },
 }
 
 #[derive(Debug, Clone)]

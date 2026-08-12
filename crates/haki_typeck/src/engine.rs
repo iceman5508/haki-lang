@@ -723,8 +723,8 @@ impl<'src> MonoEngine<'src> {
                 let mut mono_fn = self.lower_fn(fn_def, subst)?;
                 mono_fn.name = name.clone();
 
-                let mono_captures: Vec<(String, ConcrTy, bool)> = typed_captures.iter()
-                    .map(|(id, ty, weak)| (id.name.clone(), subst.apply_ty(ty), *weak))
+                let mono_captures: Vec<(String, ConcrTy, bool, bool)> = typed_captures.iter()
+                    .map(|(id, ty, weak, is_mut)| (id.name.clone(), subst.apply_ty(ty), *weak, *is_mut))
                     .collect();
                 mono_fn.captures = mono_captures;
 

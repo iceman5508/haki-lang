@@ -151,6 +151,9 @@ pub struct SymbolTable {
 
     /// Module registry: alias → per-module symbol table.
     pub modules: HashMap<String, ModuleSymbols>,
+
+    /// `type Alias = ExistingType` declarations — resolved transparently.
+    pub type_aliases: HashMap<String, haki_ast::Ty>,
 }
 
 /// The symbols exported by a single imported module.
@@ -536,6 +539,22 @@ impl SymbolTable {
                         Param { name: Ident::new("end",   Span::dummy()), ty: Ty { kind: TyKind::Named(Ident::new("int", Span::dummy())), span: Span::dummy() }, span: Span::dummy() },
                     ],
                     return_ty: Some(ReturnTy::Single(str_ty_node.clone())), span: Span::dummy(), is_extern: false, extern_abi: None, },
+                // fn length() -> int
+                FnInfo { name: "length".into(),       type_params: vec![], params: vec![],                    return_ty: Some(ReturnTy::Single(int_ty_node2.clone())), span: Span::dummy(), is_extern: false, extern_abi: None, },
+                // fn isEmpty() -> bool
+                FnInfo { name: "isEmpty".into(),      type_params: vec![], params: vec![],                    return_ty: Some(ReturnTy::Single(bool_ty_node2.clone())), span: Span::dummy(), is_extern: false, extern_abi: None, },
+                // fn charAt(index: int) -> string
+                FnInfo { name: "charAt".into(),       type_params: vec![],
+                    params: vec![
+                        Param { name: Ident::new("index", Span::dummy()), ty: Ty { kind: TyKind::Named(Ident::new("int", Span::dummy())), span: Span::dummy() }, span: Span::dummy() },
+                    ],
+                    return_ty: Some(ReturnTy::Single(str_ty_node.clone())), span: Span::dummy(), is_extern: false, extern_abi: None, },
+                // fn charCodeAt(index: int) -> int
+                FnInfo { name: "charCodeAt".into(),   type_params: vec![],
+                    params: vec![
+                        Param { name: Ident::new("index", Span::dummy()), ty: Ty { kind: TyKind::Named(Ident::new("int", Span::dummy())), span: Span::dummy() }, span: Span::dummy() },
+                    ],
+                    return_ty: Some(ReturnTy::Single(int_ty_node2.clone())), span: Span::dummy(), is_extern: false, extern_abi: None, },
             ],
             superclass: None,
             span: Span::dummy(),
@@ -1227,6 +1246,10 @@ impl SymbolTable {
             ItemKind::Protocol(p) => self.collect_protocol(p),
             ItemKind::Impl(i)     => self.collect_impl(i),
             ItemKind::Fn(f)       => self.collect_fn(f),
+            ItemKind::GlobalConst { .. } => {
+                // Global consts are registered into scope during infer_item.
+                Ok(())
+            }
             ItemKind::ExternFn(f) => {
                 self.functions.insert(f.name.name.clone(), FnInfo::from_extern_fn_def(f));
                 Ok(())
@@ -1234,6 +1257,11 @@ impl SymbolTable {
             // AnnotationDef items are erased by apply_annotations() before typecheck.
             // Any that reach here are ignored — they have no runtime representation.
             ItemKind::AnnotationDef(_) => Ok(()),
+            // `type Alias = ExistingType` — store for transparent resolution.
+            ItemKind::TypeAlias { name, ty, .. } => {
+                self.type_aliases.insert(name.name.clone(), ty.clone());
+                Ok(())
+            }
         }
     }
 
@@ -1532,6 +1560,10 @@ if let Some(m) = typedef.methods.iter().find(|m| m.name == prefixed) {
                     "Self"   => Ok(SemTy::Named("Self".into())),
                     "void"   => Ok(SemTy::Void),
                     _ => {
+                        // Check type aliases first — resolve transparently
+                        if let Some(aliased) = self.type_aliases.get(name.as_str()) {
+                            return self.resolve_ty(aliased, type_args);
+                        }
                         if self.types.contains_key(name.as_str()) {
                             Ok(SemTy::Named(name.clone()))
                         } else {

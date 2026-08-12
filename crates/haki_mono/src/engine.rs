@@ -161,6 +161,11 @@ impl<'src> MonoEngine<'src> {
                 // backend to emit as imports. Other backends ignore them.
                 self.program.extern_fns.push(f.clone());
             }
+            TypedItemKind::GlobalConst { name, ty, value } => {
+                // Lower global const to a MonoExpr and store for C emission.
+                let mono_val = self.lower_expr(value, &Subst::new())?;
+                self.program.global_consts.push((name.name.clone(), ty.clone(), mono_val));
+            }
         }
         Ok(())
     }
@@ -563,10 +568,16 @@ impl<'src> MonoEngine<'src> {
                 MatchPattern::Int(n)       => MonoPattern::Int(*n),
                 MatchPattern::String(s)    => MonoPattern::String(s.clone()),
             };
+            let guard = if let Some(g) = &arm.guard {
+                Some(self.lower_expr(g, subst)?)
+            } else {
+                None
+            };
             Ok(MonoArm {
                 pattern,
                 bindings: arm.bindings.clone(),
                 binding_tys: arm.binding_tys.iter().map(|t| subst.apply_ty(t)).collect(),
+                guard,
                 body,
                 span: arm.span,
             })
@@ -627,6 +638,28 @@ impl<'src> MonoEngine<'src> {
                 MonoExprKind::Field(
                     Box::new(self.lower_expr(recv, subst)?),
                     field.name.clone(),
+                )
+            }
+
+            // Optional chaining: lower to MonoExprKind::OptionalField / OptionalMethodCall
+            TypedExprKind::OptionalField(recv, field) => {
+                MonoExprKind::OptionalField(
+                    Box::new(self.lower_expr(recv, subst)?),
+                    field.name.clone(),
+                )
+            }
+
+            TypedExprKind::OptionalMethodCall(recv, method, args) => {
+                let mono_recv = self.lower_expr(recv, subst)?;
+                let recv_ty = mono_recv.ty.clone();
+                let call_name = method_call_name(&recv_ty, &method.name);
+                let mono_args: MonoResult<Vec<MonoExpr>> = args.iter()
+                    .map(|a| self.lower_expr(a, subst))
+                    .collect();
+                MonoExprKind::OptionalMethodCall(
+                    Box::new(mono_recv),
+                    call_name,
+                    mono_args?,
                 )
             }
 
@@ -809,8 +842,8 @@ impl<'src> MonoEngine<'src> {
                 let mut mono_fn = self.lower_fn(fn_def, subst)?;
                 mono_fn.name = name.clone();
 
-                let mono_captures: Vec<(String, ConcrTy, bool)> = typed_captures.iter()
-                    .map(|(id, ty, weak)| (id.name.clone(), subst.apply_ty(ty), *weak))
+                let mono_captures: Vec<(String, ConcrTy, bool, bool)> = typed_captures.iter()
+                    .map(|(id, ty, weak, is_mut)| (id.name.clone(), subst.apply_ty(ty), *weak, *is_mut))
                     .collect();
                 mono_fn.captures = mono_captures.clone();
 
@@ -829,10 +862,15 @@ impl<'src> MonoEngine<'src> {
 
                 if has_captures {
                     // Build a fat pointer: haki_make_closure(fn_ptr, env_ptr)
-                    // For single-capture closures (the common case), env_ptr = the capture value.
-                    // The capture is always the first element of typed_captures.
-                    // We emit: haki_make_closure(&fn_name, capture_value)
-                    let cap_expr = typed_captures[0].0.name.clone();
+                    // For mutable captures (let bindings), pass address-of the outer variable
+                    // so mutations inside the closure write through to the outer scope.
+                    let (cap_name, _cap_ty, _weak, cap_is_mut) = &typed_captures[0];
+                    let env_var_name: String = if *cap_is_mut {
+                        // Sentinel prefix "__addr_" tells cemit to emit &var
+                        format!("__addr_{}", cap_name.name)
+                    } else {
+                        cap_name.name.clone()
+                    };
                     MonoExprKind::Call(
                         "haki_make_closure".into(),
                         vec![
@@ -842,7 +880,7 @@ impl<'src> MonoEngine<'src> {
                                 span: expr.span,
                             },
                             MonoExpr {
-                                kind: MonoExprKind::Var(cap_expr),
+                                kind: MonoExprKind::Var(env_var_name),
                                 ty: SemTy::Named("__env_ptr".into()),
                                 span: expr.span,
                             },

@@ -140,6 +140,28 @@ impl Inferer {
                 path: "__annotation_erased__".into(),
                 alias: "__annotation_erased__".into(),
             },
+            // TypeAlias: already registered in sym.type_aliases during collect phase.
+            // Emit a harmless placeholder — the alias has no runtime representation.
+            ItemKind::TypeAlias { .. } => TypedItemKind::Import {
+                path: "__type_alias_erased__".into(),
+                alias: "__type_alias_erased__".into(),
+            },
+            // Top-level const: infer value, register in scope for subsequent items.
+            ItemKind::GlobalConst { name, ty, value } => {
+                let typed_val = self.infer_expr(value, &HashMap::new())?;
+                let sem_ty = if let Some(t) = ty {
+                    self.sym.resolve_ty(t, &HashMap::new()).unwrap_or(typed_val.ty.clone())
+                } else {
+                    typed_val.ty.clone()
+                };
+                // Register in global scope so functions in this file can see it.
+                self.define(&name.name, sem_ty.clone(), haki_ast::Mut::Const);
+                TypedItemKind::GlobalConst {
+                    name: name.clone(),
+                    ty: sem_ty,
+                    value: typed_val,
+                }
+            }
         };
         Ok(TypedItem { kind, span: item.span })
     }
@@ -329,7 +351,34 @@ impl Inferer {
         self.push_scope();
         let mut stmts = Vec::new();
         for stmt in &block.stmts {
-            stmts.push(self.infer_stmt(stmt, type_args)?);
+            let typed = self.infer_stmt(stmt, type_args)?;
+
+            // Guard-clause narrowing: after `if x == null { return/break/panic }`,
+            // narrow x from Optional<T> to T in the remaining statements.
+            if let TypedStmtKind::If(ref if_expr) = typed.kind {
+                if if_expr.else_branch.is_none() && block_always_terminates(&if_expr.then_block) {
+                    if let TypedExprKind::Binary(op, lhs, rhs) = &if_expr.cond.kind {
+                        // `x == null { return }` → narrow x to T after the if
+                        if matches!(op, BinaryOp::Eq) {
+                            let var_expr =
+                                if matches!(rhs.kind, TypedExprKind::Null) { Some(lhs.as_ref()) }
+                                else if matches!(lhs.kind, TypedExprKind::Null) { Some(rhs.as_ref()) }
+                                else { None };
+                            if let Some(e) = var_expr {
+                                if let TypedExprKind::Ident(ref id) = e.kind {
+                                    if let Some((ty, _mut)) = self.lookup_var(&id.name) {
+                                        if let SemTy::Optional(inner) = ty {
+                                            self.define(&id.name, inner.as_ref().clone(), Mut::Const);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            stmts.push(typed);
         }
         self.pop_scope();
         Ok(TypedBlock { stmts, span: block.span })
@@ -381,28 +430,28 @@ impl Inferer {
         // `let x: Array<int> = []` should bind `x` as `Array<int>`.
         let binding_ty = if let Some(ref ann) = l.ty {
             let ann_ty = self.sym.resolve_ty(ann, type_args)?;
-            // Special case: empty array `Array<void>` is assignable to any `Array<T>`
-            let is_empty_array = matches!(&init_ty,
-                SemTy::Generic(n, args) if n == "Array" && args.len() == 1 && args[0] == SemTy::Void);
-            if is_empty_array {
-                if let SemTy::Generic(ref n, _) = ann_ty {
-                    if n == "Array" {
-                        // Use annotation type directly — don't check assignability
-                        // for empty literal since Array<void> wouldn't pass.
-                        let typed_bindings = self.destructure_bindings(&l.bindings, &ann_ty, l.span)?;
-                        for (binding, ty) in &typed_bindings {
-                            if let Binding::Name(ident) = binding {
-                                self.define(&ident.name, ty.clone(), l.mutability);
-                            }
-                        }
-                        return Ok(TypedLetStmt {
-                            mutability: l.mutability,
-                            bindings: typed_bindings,
-                            init: Box::new(init),
-                            span: l.span,
-                        });
+            // Generic constructors returning void-param variants (e.g. Chan<void>, TaskGroup<void>)
+            // are coercible to annotated concrete types: `const ch: Chan<int> = Chan(1)`.
+            // Also handles empty array literals: `[]` → Array<void> → Array<T>.
+            let init_has_void_params = if let SemTy::Generic(ref n, ref args) = init_ty {
+                args.iter().any(|a| *a == SemTy::Void) &&
+                if let SemTy::Generic(ref ann_n, _) = ann_ty { ann_n == n } else { false }
+            } else { false };
+
+            if init_has_void_params {
+                // Use annotation type — constructor's void type params are replaced by annotation.
+                let typed_bindings = self.destructure_bindings(&l.bindings, &ann_ty, l.span)?;
+                for (binding, ty) in &typed_bindings {
+                    if let Binding::Name(ident) = binding {
+                        self.define(&ident.name, ty.clone(), l.mutability);
                     }
                 }
+                return Ok(TypedLetStmt {
+                    mutability: l.mutability,
+                    bindings: typed_bindings,
+                    init: Box::new(init),
+                    span: l.span,
+                });
             }
             self.expect_assignable(&ann_ty, &init_ty, l.init.span)?;
             ann_ty
@@ -569,6 +618,8 @@ impl Inferer {
             let elem_ty = match &typed_chan.ty {
                 SemTy::Tuple(ts) if !ts.is_empty() => ts[0].clone(),
                 SemTy::Generic(n, args) if n == "Chan" && !args.is_empty() => args[0].clone(),
+                // ch.recv() returns Optional<T> — unwrap to T for the binding
+                SemTy::Optional(inner) => *inner.clone(),
                 other => other.clone(),
             };
             self.push_scope();
@@ -598,7 +649,37 @@ impl Inferer {
     ) -> TypeResult<TypedIfExpr> {
         let cond = self.infer_expr(&i.cond, type_args)?;
         self.expect_ty(&cond.ty, &SemTy::Bool, cond.span)?;
+
+        // Optional narrowing: if condition is `x != null` or `null != x`,
+        // narrow x from Optional(T) to T inside the then branch.
+        let narrowed_var: Option<(String, SemTy, SemTy)> = // (name, narrowed_ty, original_ty)
+            if let ExprKind::Binary(op, lhs, rhs) = &i.cond.kind {
+                if matches!(op, haki_ast::BinaryOp::Ne) {
+                    // Determine which side is Null and which is the variable:
+                    let var_expr = if matches!(rhs.kind, ExprKind::Null) { Some(lhs.as_ref()) }
+                                   else if matches!(lhs.kind, ExprKind::Null) { Some(rhs.as_ref()) }
+                                   else { None };
+                    if let Some(e) = var_expr {
+                        if let ExprKind::Ident(id) = &e.kind {
+                            if let Some((ty, mut_)) = self.lookup_var(&id.name) {
+                                if let SemTy::Optional(inner) = ty.clone() {
+                                    Some((id.name.clone(), *inner, ty.clone()))
+                                } else { None }
+                            } else { None }
+                        } else { None }
+                    } else { None }
+                } else { None }
+            } else { None };
+
+        // Push narrowing scope if applicable
+        if let Some((ref name, ref narrowed, _)) = narrowed_var {
+            self.push_scope();
+            self.define(name, narrowed.clone(), haki_ast::Mut::Const);
+        }
         let then_block = self.infer_block(&i.then_block, type_args)?;
+        if narrowed_var.is_some() {
+            self.pop_scope();
+        }
 
         // Determine the yield type of the then branch.
         let then_yield = block_yield_ty(&then_block);
@@ -751,6 +832,14 @@ impl Inferer {
                 }
             };
 
+            // Infer optional guard: `case x if x > 0 { ... }`
+            let typed_guard = if let Some(g) = &arm.guard {
+                let tg = self.infer_expr(g, type_args)?;
+                Some(tg)
+            } else {
+                None
+            };
+
             let body = self.infer_block(&arm.body, type_args)?;
             self.pop_scope();
 
@@ -766,6 +855,7 @@ impl Inferer {
                 pattern: arm.pattern.clone(),
                 bindings: arm.bindings.clone(),
                 binding_tys: binding_tys_computed,
+                guard: typed_guard,
                 body,
                 span: arm.span,
             });
@@ -816,6 +906,53 @@ impl Inferer {
             ExprKind::Binary(op, lhs, rhs) => self.infer_binary(*op, lhs, rhs, type_args, expr.span),
 
             ExprKind::Field(recv, field) => self.infer_field(recv, field, type_args, expr.span),
+
+            // Optional chaining: `recv?.field`
+            // If recv is null → null; otherwise recv.field. Result type is Optional<field_ty>.
+            ExprKind::OptionalField(recv, field) => {
+                // Infer the inner field access to get the result type
+                let typed_recv = self.infer_expr(recv, type_args)?;
+                // Strip optional wrapper from receiver to infer field type
+                let recv_inner_ty = match &typed_recv.ty {
+                    SemTy::Optional(inner) => *inner.clone(),
+                    other => other.clone(),
+                };
+                let dummy_recv = TypedExpr { kind: typed_recv.kind.clone(), ty: recv_inner_ty, span: typed_recv.span };
+                let field_ty = if let Ok(ft) = self.infer_field_ty(&dummy_recv, field, type_args, expr.span) {
+                    ft
+                } else {
+                    SemTy::Void
+                };
+                let result_ty = SemTy::Optional(Box::new(field_ty));
+                Ok(TypedExpr {
+                    kind: TypedExprKind::OptionalField(Box::new(typed_recv), field.clone()),
+                    ty: result_ty,
+                    span: expr.span,
+                })
+            }
+
+            // Optional chaining: `recv?.method(args)`
+            // If recv is null → null; otherwise recv.method(args). Result type is Optional<ret_ty>.
+            ExprKind::OptionalMethodCall(recv, method, args) => {
+                let typed_recv = self.infer_expr(recv, type_args)?;
+                let recv_inner_ty = match &typed_recv.ty {
+                    SemTy::Optional(inner) => *inner.clone(),
+                    other => other.clone(),
+                };
+                let typed_args: TypeResult<Vec<TypedExpr>> = args.iter()
+                    .map(|a| self.infer_expr(a, type_args))
+                    .collect();
+                let typed_args = typed_args?;
+                // Approximate return type by resolving method in the inner type
+                let ret_ty = self.lookup_method_return_ty(&recv_inner_ty, &method.name)
+                    .unwrap_or(SemTy::Void);
+                let result_ty = SemTy::Optional(Box::new(ret_ty));
+                Ok(TypedExpr {
+                    kind: TypedExprKind::OptionalMethodCall(Box::new(typed_recv), method.clone(), typed_args),
+                    ty: result_ty,
+                    span: expr.span,
+                })
+            }
 
             ExprKind::MethodCall(recv, method, args) =>
                 self.infer_method_call(recv, method, args, type_args, expr.span),
@@ -874,24 +1011,55 @@ impl Inferer {
                 let ret_sem_ty = self.sym.resolve_return_ty(return_ty, type_args)
                     .unwrap_or(SemTy::Void);
 
-                // Resolve captured variable types from the current scope.
-                let typed_captures: Vec<(Ident, SemTy, bool)> = captures.iter()
+                // Resolve captured variable types from the current scope,
+                // preserving the outer binding's mutability so `let` captures
+                // can be mutated inside the closure (cross-scope mutation).
+                let mut typed_captures: Vec<(Ident, SemTy, bool, bool)> = captures.iter()
                     .map(|c| {
-                        let ty = if let Some((t, _)) = self.lookup_var(&c.name.name) {
-                            t.clone()
+                        let (ty, is_mut) = if let Some((t, m)) = self.lookup_var(&c.name.name) {
+                            (t.clone(), matches!(m, haki_ast::Mut::Let))
                         } else if c.name.name == "self" {
-                            self.self_ty.clone().unwrap_or(SemTy::Void)
+                            (self.self_ty.clone().unwrap_or(SemTy::Void), false)
                         } else {
-                            SemTy::Void
+                            (SemTy::Void, false)
                         };
-                        (c.name.clone(), ty, c.weak)
+                        (c.name.clone(), ty, c.weak, is_mut)
                     })
                     .collect();
 
+                // Auto-detect implicit captures: scan body for free variables that
+                // are not params or explicit captures but exist in the outer scope.
+                // This enables `fn() -> T { outer_let_var = ... }` without explicit [capture].
+                {
+                    let explicit_names: HashSet<String> = captures.iter()
+                        .map(|c| c.name.name.clone()).collect();
+                    let param_names: HashSet<String> = params.iter()
+                        .map(|p| p.name.name.clone()).collect();
+                    let mut bound = explicit_names.clone();
+                    bound.extend(param_names.iter().cloned());
+                    let mut free_names: Vec<String> = Vec::new();
+                    collect_free_idents_block(body, &mut bound, &mut free_names);
+                    for free_name in free_names {
+                        if explicit_names.contains(&free_name) { continue; }
+                        if let Some((ty, mut_)) = self.lookup_var(&free_name) {
+                            let is_mut = matches!(mut_, haki_ast::Mut::Let);
+                            typed_captures.push((
+                                Ident::new(&free_name, expr.span),
+                                ty.clone(),
+                                false,
+                                is_mut,
+                            ));
+                        }
+                    }
+                }
+
                 // Type-check the body in a scope that includes params AND captures.
+                // Captured variables inherit the outer binding's mutability:
+                // a `let` capture can be mutated inside the closure.
                 self.push_scope();
-                for c in &typed_captures {
-                    self.define(&c.0.name, c.1.clone(), haki_ast::Mut::Const);
+                for (cap_id, cap_ty, _weak, is_mut) in &typed_captures {
+                    let mutability = if *is_mut { haki_ast::Mut::Let } else { haki_ast::Mut::Const };
+                    self.define(&cap_id.name, cap_ty.clone(), mutability);
                 }
                 for p in params {
                     let pty = self.sym.resolve_ty(&p.ty, type_args).unwrap_or(SemTy::Void);
@@ -1134,6 +1302,36 @@ impl Inferer {
         })
     }
 
+    /// Extract just the field type from a typed receiver — used by optional chaining.
+    fn infer_field_ty(&self, typed_recv: &TypedExpr, field: &Ident, _type_args: &HashMap<String, SemTy>, _span: Span) -> TypeResult<SemTy> {
+        let type_name = match &typed_recv.ty {
+            SemTy::Named(n) => n.clone(),
+            SemTy::Generic(n, _) => n.clone(),
+            _ => return Ok(SemTy::Void),
+        };
+        if let Some(td) = self.sym.types.get(&type_name).cloned() {
+            if let Some(f) = td.fields.iter().find(|f| f.name == field.name).cloned() {
+                return self.sym.resolve_ty(&f.ty, &HashMap::new());
+            }
+        }
+        Ok(SemTy::Void)
+    }
+
+    /// Look up the return type of a method on a named type — used by optional chaining.
+    fn lookup_method_return_ty(&self, recv_ty: &SemTy, method_name: &str) -> Option<SemTy> {
+        let type_name = match recv_ty {
+            SemTy::Named(n) => n.clone(),
+            SemTy::Generic(n, _) => n.clone(),
+            _ => return None,
+        };
+        let td = self.sym.types.get(&type_name)?;
+        let m = td.methods.iter().find(|m| m.name == method_name)?;
+        match &m.return_ty {
+            Some(haki_ast::ReturnTy::Single(ty)) => self.sym.resolve_ty(ty, &HashMap::new()).ok(),
+            _ => Some(SemTy::Void),
+        }
+    }
+
     fn infer_field(
         &mut self,
         recv: &Expr,
@@ -1198,6 +1396,17 @@ impl Inferer {
                     field_type_args.insert(param_name.clone(), conc_ty.clone());
                 }
             }
+        } else if let SemTy::Named(_) = &typed_recv.ty {
+            // For bare named types (e.g. Pair without <A,B> instantiation),
+            // inject type params as opaque self-mapping so resolve_ty doesn't fail.
+            // The mono engine will substitute concrete types at call sites.
+            if let Some(type_def) = self.sym.types.get(&ty_name) {
+                for param_name in &type_def.type_params {
+                    if !field_type_args.contains_key(param_name) {
+                        field_type_args.insert(param_name.clone(), SemTy::Named(param_name.clone()));
+                    }
+                }
+            }
         }
 
         // ── Enum variant dot-construction: Direction.North ──────────────────────
@@ -1260,6 +1469,81 @@ impl Inferer {
         type_args: &HashMap<String, SemTy>,
         span: Span,
     ) -> TypeResult<TypedExpr> {
+        // Pre-process: if method name encodes generic type args like "chan<string>",
+        // extract the base name and inject the type args.
+        let (base_method_name, method_type_args): (String, HashMap<String, SemTy>) =
+            if let Some(lt) = method.name.find('<') {
+                let base = method.name[..lt].to_string();
+                let inner = method.name[lt+1..].trim_end_matches('>');
+                let mut ta = type_args.clone();
+                // Parse comma-separated type names and map to T, U, V, ...
+                let type_param_names = ["T", "U", "V", "W"];
+                for (i, ty_str) in inner.split(',').enumerate() {
+                    let sem = match ty_str.trim() {
+                        "int"    => SemTy::Int,
+                        "float"  => SemTy::Float,
+                        "bool"   => SemTy::Bool,
+                        "string" => SemTy::String,
+                        "void"   => SemTy::Void,
+                        name     => SemTy::Named(name.to_string()),
+                    };
+                    if let Some(tp) = type_param_names.get(i) {
+                        ta.insert(tp.to_string(), sem);
+                    }
+                }
+                (base, ta)
+            } else {
+                (method.name.clone(), type_args.clone())
+            };
+        let method = &Ident::new(&base_method_name, method.span);
+        let type_args = &method_type_args;
+
+        // ── sync.chan<T>(n) / sync.group<T>() builtins ────────────────────────
+        // `sync` is a builtin concurrency namespace.
+        // sync.chan<T>(n)   → Chan<T>(n)   (channel with capacity n)
+        // sync.group<T>()   → TaskGroup<T>()
+        if let ExprKind::Ident(recv_ident) = &recv.kind {
+            if recv_ident.name == "sync" {
+                match method.name.as_str() {
+                    "chan" => {
+                        let capacity_arg = args.first().map(|a| self.infer_expr(a, type_args));
+                        let capacity = if let Some(Ok(a)) = capacity_arg {
+                            a
+                        } else {
+                            TypedExpr { kind: TypedExprKind::Int(0), ty: SemTy::Int, span }
+                        };
+                        let elem_ty = type_args.get("T").cloned().unwrap_or(SemTy::Void);
+                        let ret_ty = SemTy::Generic("Chan".into(), vec![elem_ty]);
+                        let callee_expr = TypedExpr {
+                            kind: TypedExprKind::Ident(Ident::new("haki_chan_new", span)),
+                            ty: SemTy::Fn(vec![SemTy::Int, SemTy::Int], Box::new(ret_ty.clone())),
+                            span,
+                        };
+                        return Ok(TypedExpr {
+                            kind: TypedExprKind::Call(Box::new(callee_expr), vec![capacity]),
+                            ty: ret_ty,
+                            span,
+                        });
+                    }
+                    "group" => {
+                        let elem_ty = type_args.get("T").cloned().unwrap_or(SemTy::Void);
+                        let ret_ty = SemTy::Generic("TaskGroup".into(), vec![elem_ty]);
+                        let callee_expr = TypedExpr {
+                            kind: TypedExprKind::Ident(Ident::new("haki_taskgroup_new", span)),
+                            ty: SemTy::Fn(vec![], Box::new(ret_ty.clone())),
+                            span,
+                        };
+                        return Ok(TypedExpr {
+                            kind: TypedExprKind::Call(Box::new(callee_expr), vec![]),
+                            ty: ret_ty,
+                            span,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         // Module-qualified call: `math.add(1, 2)`.
         // Receiver is a bare identifier that is a module alias.
         if let ExprKind::Ident(recv_ident) = &recv.kind {
@@ -1297,6 +1581,29 @@ impl Inferer {
                     span,
                 });
             }
+
+            // ── Enum variant dot-construction with payload: `Result.Ok("hello")` ──
+            // `EnumName.Variant(args)` is parsed as MethodCall(Ident("EnumName"), "Variant", args).
+            // Intercept here before falling through to receiver-type inference.
+            if let Some(edef) = self.sym.enum_defs.get(&recv_ident.name).cloned() {
+                if edef.variants.iter().any(|v| v.name.name == method.name) {
+                    let variant_name = method.name.clone();
+                    let enum_name   = recv_ident.name.clone();
+                    let typed_args  = args.iter()
+                        .map(|a| self.infer_expr(a, type_args))
+                        .collect::<TypeResult<Vec<_>>>()?;
+                    let callee_expr = TypedExpr {
+                        kind: TypedExprKind::Ident(Ident::new(&variant_name, method.span)),
+                        ty:   SemTy::Named(enum_name.clone()),
+                        span: method.span,
+                    };
+                    return Ok(TypedExpr {
+                        kind: TypedExprKind::Call(Box::new(callee_expr), typed_args),
+                        ty:   SemTy::Named(enum_name),
+                        span,
+                    });
+                }
+            }
         }
 
         let typed_recv = self.infer_expr(recv, type_args)?;
@@ -1314,7 +1621,8 @@ impl Inferer {
                 .collect::<TypeResult<Vec<_>>>()?;
             let (ret_ty, c_name) = match method.name.as_str() {
                 "send"     => (SemTy::Int, "haki_chan_send"),   // 0=ok 1=closed
-                "receive"  => (SemTy::Optional(Box::new(elem_ty)), "haki_chan_receive"),
+                "receive"  => (SemTy::Optional(Box::new(elem_ty.clone())), "haki_chan_receive"),
+                "recv"     => (SemTy::Optional(Box::new(elem_ty)), "haki_chan_receive"),
                 "close"    => (SemTy::Void, "haki_chan_close"),
                 "isClosed" => (SemTy::Bool, "haki_chan_is_closed"),
                 _ => return Err(TypeError::NoSuchMethod {
@@ -1346,7 +1654,9 @@ impl Inferer {
                 .collect::<TypeResult<Vec<_>>>()?;
             let (ret_ty, c_name) = match method.name.as_str() {
                 "spawn"    => (SemTy::Void, "haki_taskgroup_spawn"),
-                "awaitAll" => (SemTy::Generic("Array".into(), vec![elem_ty]), "haki_taskgroup_await_all"),
+                "add"      => (SemTy::Void, "haki_taskgroup_spawn"),
+                "awaitAll" => (SemTy::Generic("Array".into(), vec![elem_ty.clone()]), "haki_taskgroup_await_all"),
+                "waitAll"  => (SemTy::Generic("Array".into(), vec![elem_ty]), "haki_taskgroup_await_all"),
                 _ => return Err(TypeError::NoSuchMethod {
                     ty: "TaskGroup".into(), method: method.name.clone(), span
                 }),
@@ -1404,10 +1714,10 @@ impl Inferer {
                     .params.clone(),
                 args, &method.name, type_args, span)?;
             let ret_ty = match method.name.as_str() {
-                "contains" | "startsWith" | "endsWith" => SemTy::Bool,
-                "indexOf"  | "length"                  => SemTy::Int,
-                "split"                                => SemTy::Generic("Array".into(), vec![SemTy::String]),
-                _                                      => SemTy::String,
+                "contains" | "startsWith" | "endsWith" | "isEmpty" => SemTy::Bool,
+                "indexOf"  | "length" | "charCodeAt"               => SemTy::Int,
+                "split"                                             => SemTy::Generic("Array".into(), vec![SemTy::String]),
+                _                                                   => SemTy::String,
             };
             return Ok(TypedExpr {
                 kind: TypedExprKind::MethodCall(Box::new(typed_recv), method.clone(), typed_args),
@@ -1591,13 +1901,7 @@ impl Inferer {
                 };
             // Extract the element type from explicit type_args context
             // e.g. Chan<int> has T=int, Chan<string> has T=string
-            let elem_ty = type_args.get("T").cloned()
-                .or_else(|| {
-                    // Try to infer from context — for now default to Void
-                    // User must write Chan<int>(...) with explicit type
-                    None
-                })
-                .unwrap_or(SemTy::Void);
+            let elem_ty = type_args.get("T").cloned().unwrap_or(SemTy::Void);
             let ret_ty = SemTy::Generic("Chan".into(), vec![elem_ty]);
             let callee_expr = TypedExpr {
                 kind: TypedExprKind::Ident(Ident::new("haki_chan_new", span)),
@@ -1910,11 +2214,37 @@ impl Inferer {
             vec![]
         };
 
-        let ret_ty = if self.sym.lookup_type(&callee_name).is_some() {
-            if generic_type_args.is_empty() {
-                SemTy::Named(callee_name.clone())
-            } else {
+        let ret_ty = if let Some(type_def) = self.sym.lookup_type(&callee_name).cloned() {
+            if !generic_type_args.is_empty() {
+                // Explicit type args provided: Pair<string, int>(...)
                 SemTy::Generic(callee_name.clone(), generic_type_args.clone())
+            } else if !type_def.type_params.is_empty() {
+                // Class has type params but no explicit args — infer from constructor args.
+                // Match named args against fields to infer each type param.
+                let mut inferred: HashMap<String, SemTy> = HashMap::new();
+                for named_arg in args {
+                    if let Some(field) = type_def.fields.iter().find(|f| f.name == named_arg.name.name) {
+                        if let TyKind::Named(ref tp_ident) = field.ty.kind {
+                            if type_def.type_params.contains(&tp_ident.name) && !inferred.contains_key(&tp_ident.name) {
+                                let arg_ty = self.infer_expr(&named_arg.value, type_args)
+                                    .map(|e| e.ty)
+                                    .unwrap_or(SemTy::Void);
+                                inferred.insert(tp_ident.name.clone(), arg_ty);
+                            }
+                        }
+                    }
+                }
+                // Build concrete type args in type_param order
+                let conc: Vec<SemTy> = type_def.type_params.iter()
+                    .map(|p| inferred.get(p).cloned().unwrap_or(SemTy::Void))
+                    .collect();
+                if conc.iter().all(|t| !matches!(t, SemTy::Void)) {
+                    SemTy::Generic(callee_name.clone(), conc)
+                } else {
+                    SemTy::Named(callee_name.clone())
+                }
+            } else {
+                SemTy::Named(callee_name.clone())
             }
         } else if let Some(fn_info) = self.sym.lookup_fn(&callee_name).cloned() {
             self.sym.resolve_return_ty(&fn_info.return_ty, type_args)?
@@ -2155,6 +2485,17 @@ impl Inferer {
 // ── Free functions ────────────────────────────────────────────────────────────
 
 /// Extract the type produced by a `yield` in a block, if present.
+/// Returns true if a block always exits — last statement is Return, Panic, Break, or Continue.
+/// Used for guard-clause narrowing: `if x == null { return }` narrows x after the if.
+fn block_always_terminates(block: &TypedBlock) -> bool {
+    match block.stmts.last() {
+        Some(s) => matches!(s.kind,
+            TypedStmtKind::Return(_) | TypedStmtKind::Panic(_) |
+            TypedStmtKind::Break     | TypedStmtKind::Continue),
+        None => false,
+    }
+}
+
 fn block_yield_ty(block: &TypedBlock) -> Option<SemTy> {
     for stmt in &block.stmts {
         if let TypedStmtKind::Yield(e) = &stmt.kind {
@@ -2226,6 +2567,11 @@ fn types_eq_or_null_compat(a: &SemTy, b: &SemTy) -> bool {
     }
     // Never
     if *a == SemTy::Never || *b == SemTy::Never { return true; }
+    // Pointer types (string, class references, void*) can be compared to null.
+    // This handles `if msg != null` when msg is a string from a select arm binding.
+    let is_null = |t: &SemTy| matches!(t, SemTy::Optional(inner) if **inner == SemTy::Void);
+    let is_ptr  = |t: &SemTy| matches!(t, SemTy::String | SemTy::Named(_) | SemTy::Generic(_, _));
+    if (is_null(a) && is_ptr(b)) || (is_null(b) && is_ptr(a)) { return true; }
     false
 }
 
@@ -2355,6 +2701,11 @@ fn subst_expr(expr: &mut Expr, concrete: &str) {
             for a in args { subst_expr(a, concrete); }
         }
         ExprKind::Field(recv, _)     => subst_expr(recv, concrete),
+        ExprKind::OptionalField(recv, _) => subst_expr(recv, concrete),
+        ExprKind::OptionalMethodCall(recv, _, args) => {
+            subst_expr(recv, concrete);
+            for a in args { subst_expr(a, concrete); }
+        }
         ExprKind::Binary(_, l, r)    => { subst_expr(l, concrete); subst_expr(r, concrete); }
         ExprKind::Unary(_, e)        => subst_expr(e, concrete),
         ExprKind::Assign(t, v)       => { subst_expr(t, concrete); subst_expr(v, concrete); }
@@ -2380,6 +2731,192 @@ fn subst_expr(expr: &mut Expr, concrete: &str) {
         ExprKind::Index(a,i) => { subst_expr(a, concrete); subst_expr(i, concrete); }
         ExprKind::Async(e)   => subst_expr(e, concrete),
         ExprKind::FnLiteral { body, .. } => subst_block(body, concrete),
+        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::String(_)
+        | ExprKind::Bool(_) | ExprKind::Null => {}
+    }
+}
+
+// ── Free-variable scanner for implicit closure capture detection ───────────────
+//
+// These standalone functions walk a raw AST block/expr and collect all
+// identifier names that are referenced but NOT in `bound`.
+// Used in the FnLiteral type-inference handler to detect implicit captures.
+
+fn collect_free_idents_block(
+    block: &Block,
+    bound: &mut HashSet<String>,
+    free: &mut Vec<String>,
+) {
+    for stmt in &block.stmts {
+        collect_free_idents_stmt(stmt, bound, free);
+    }
+}
+
+fn collect_free_idents_stmt(
+    stmt: &Stmt,
+    bound: &mut HashSet<String>,
+    free: &mut Vec<String>,
+) {
+    match &stmt.kind {
+        StmtKind::Let(l) => {
+            collect_free_idents_expr(&l.init, bound, free);
+            for b in &l.bindings {
+                if let Binding::Name(id) = b {
+                    bound.insert(id.name.clone());
+                }
+            }
+        }
+        StmtKind::Return(r) => {
+            for v in &r.values {
+                collect_free_idents_expr(v, bound, free);
+            }
+        }
+        StmtKind::Expr(e) => collect_free_idents_expr(e, bound, free),
+        StmtKind::Yield(e) => collect_free_idents_expr(e, bound, free),
+        StmtKind::Panic(e) => collect_free_idents_expr(e, bound, free),
+        StmtKind::Defer(e) => collect_free_idents_expr(e, bound, free),
+        StmtKind::If(i) => {
+            collect_free_idents_expr(&i.cond, bound, free);
+            let mut tb = bound.clone();
+            collect_free_idents_block(&i.then_block, &mut tb, free);
+            match &i.else_branch {
+                Some(ElseBranch::Block(eb)) => {
+                    let mut eb2 = bound.clone();
+                    collect_free_idents_block(eb, &mut eb2, free);
+                }
+                Some(ElseBranch::If(inner)) => {
+                    collect_free_idents_expr(
+                        &Expr { kind: ExprKind::If(Box::new(*inner.clone())), span: stmt.span },
+                        bound,
+                        free,
+                    );
+                }
+                None => {}
+            }
+        }
+        StmtKind::While(w) => {
+            collect_free_idents_expr(&w.cond, bound, free);
+            let mut wb = bound.clone();
+            collect_free_idents_block(&w.body, &mut wb, free);
+        }
+        StmtKind::For(f) => {
+            collect_free_idents_expr(&f.iter, bound, free);
+            let mut fb = bound.clone();
+            if let Some(ref iv) = f.index_var { fb.insert(iv.name.clone()); }
+            fb.insert(f.var.name.clone());
+            collect_free_idents_block(&f.body, &mut fb, free);
+        }
+        StmtKind::Match(m) => {
+            collect_free_idents_expr(&m.scrutinee, bound, free);
+            for arm in &m.arms {
+                let mut ab = bound.clone();
+                // Pattern-bound names (simplified — just skip arm body scan for now)
+                collect_free_idents_block(&arm.body, &mut ab, free);
+            }
+        }
+        StmtKind::Continue | StmtKind::Break => {}
+        StmtKind::Select(_) => {}
+    }
+}
+
+fn collect_free_idents_expr(
+    expr: &Expr,
+    bound: &HashSet<String>,
+    free: &mut Vec<String>,
+) {
+    match &expr.kind {
+        ExprKind::Ident(id) => {
+            let name = &id.name;
+            if !bound.contains(name) && !free.contains(name) {
+                free.push(name.clone());
+            }
+        }
+        ExprKind::Binary(_, l, r) => {
+            collect_free_idents_expr(l, bound, free);
+            collect_free_idents_expr(r, bound, free);
+        }
+        ExprKind::Unary(_, e) => collect_free_idents_expr(e, bound, free),
+        ExprKind::Assign(t, v) => {
+            collect_free_idents_expr(t, bound, free);
+            collect_free_idents_expr(v, bound, free);
+        }
+        ExprKind::Field(e, _) => collect_free_idents_expr(e, bound, free),
+        ExprKind::OptionalField(e, _) => collect_free_idents_expr(e, bound, free),
+        ExprKind::OptionalMethodCall(recv, _, args) => {
+            collect_free_idents_expr(recv, bound, free);
+            for a in args { collect_free_idents_expr(a, bound, free); }
+        }
+        ExprKind::MethodCall(recv, _, args) => {
+            collect_free_idents_expr(recv, bound, free);
+            for a in args { collect_free_idents_expr(a, bound, free); }
+        }
+        ExprKind::Call(callee, args) => {
+            collect_free_idents_expr(callee, bound, free);
+            for a in args { collect_free_idents_expr(a, bound, free); }
+        }
+        ExprKind::NamedCall(callee, args) => {
+            collect_free_idents_expr(callee, bound, free);
+            for a in args { collect_free_idents_expr(&a.value, bound, free); }
+        }
+        ExprKind::Index(arr, idx) => {
+            collect_free_idents_expr(arr, bound, free);
+            collect_free_idents_expr(idx, bound, free);
+        }
+        ExprKind::Array(elems) => {
+            for e in elems { collect_free_idents_expr(e, bound, free); }
+        }
+        ExprKind::Block(b) => {
+            let mut ib = bound.clone();
+            // Use a local mutable copy for inner block to track inner lets
+            let mut inner_free: Vec<String> = Vec::new();
+            collect_free_idents_block(b, &mut ib, &mut inner_free);
+            for n in inner_free {
+                if !bound.contains(&n) && !free.contains(&n) {
+                    free.push(n);
+                }
+            }
+        }
+        ExprKind::If(i) => {
+            collect_free_idents_expr(&i.cond, bound, free);
+            let mut tb = bound.clone();
+            collect_free_idents_block(&i.then_block, &mut tb, free);
+            match &i.else_branch {
+                Some(ElseBranch::Block(eb)) => {
+                    let mut eb2 = bound.clone();
+                    collect_free_idents_block(eb, &mut eb2, free);
+                }
+                Some(ElseBranch::If(inner)) => {
+                    collect_free_idents_expr(
+                        &Expr { kind: ExprKind::If(Box::new(*inner.clone())), span: expr.span },
+                        bound,
+                        free,
+                    );
+                }
+                None => {}
+            }
+        }
+        ExprKind::Match(m) => {
+            collect_free_idents_expr(&m.scrutinee, bound, free);
+            for arm in &m.arms {
+                let mut ab = bound.clone();
+                collect_free_idents_block(&arm.body, &mut ab, free);
+            }
+        }
+        ExprKind::Async(e) => collect_free_idents_expr(e, bound, free),
+        ExprKind::FnLiteral { params, captures, body, .. } => {
+            // Inner fn literal — its params and explicit captures are bound inside
+            let mut ib = bound.clone();
+            for p in params { ib.insert(p.name.name.clone()); }
+            for c in captures { ib.insert(c.name.name.clone()); }
+            let mut inner_free: Vec<String> = Vec::new();
+            collect_free_idents_block(body, &mut ib, &mut inner_free);
+            for n in inner_free {
+                if !bound.contains(&n) && !free.contains(&n) {
+                    free.push(n);
+                }
+            }
+        }
+        // Literals — no free variables
         ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::String(_)
         | ExprKind::Bool(_) | ExprKind::Null => {}
     }

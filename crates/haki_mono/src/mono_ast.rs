@@ -33,6 +33,8 @@ pub struct MonoProgram {
     pub enum_defs: HashMap<String, EnumDef>,
     /// Extern function declarations — emitted as Wasm imports.
     pub extern_fns: Vec<haki_ast::ExternFnDef>,
+    /// Top-level const declarations: (name, type, value_expr).
+    pub global_consts: Vec<(String, SemTy, MonoExpr)>,
 }
 
 impl MonoProgram {
@@ -44,6 +46,7 @@ impl MonoProgram {
             impls: Vec::new(),
             enum_defs: HashMap::new(),
             extern_fns: Vec::new(),
+            global_consts: Vec::new(),
         }
     }
 }
@@ -113,7 +116,7 @@ pub struct MonoFn {
     pub span: Span,
     /// Captured variables for closures: (name, type, is_weak).
     /// Empty for plain function pointers.
-    pub captures: Vec<(String, ConcrTy, bool)>,
+    pub captures: Vec<(String, ConcrTy, bool, bool)>,  // (name, ty, weak, mutable)
     /// Attributes from the source declaration (threaded through for codegen).
     pub attributes: Vec<haki_ast::Attribute>,
 }
@@ -252,6 +255,8 @@ pub struct MonoArm {
     pub pattern: MonoPattern,
     pub bindings: Vec<Ident>,
     pub binding_tys: Vec<ConcrTy>,
+    /// Optional guard: `case x if x > 0 { ... }`
+    pub guard: Option<MonoExpr>,
     pub body: MonoBlock,
     pub span: Span,
 }
@@ -276,6 +281,10 @@ pub enum MonoExprKind {
     Unary(UnaryOp, Box<MonoExpr>),
     Binary(BinaryOp, Box<MonoExpr>, Box<MonoExpr>),
     Field(Box<MonoExpr>, String),
+    /// `recv?.field` — null-safe field access
+    OptionalField(Box<MonoExpr>, String),
+    /// `recv?.method(args)` — null-safe method call
+    OptionalMethodCall(Box<MonoExpr>, String, Vec<MonoExpr>),
     /// Call a concrete (possibly mangled) function.
     Call(String, Vec<MonoExpr>),
     /// Construct a type with named arguments.

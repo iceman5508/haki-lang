@@ -306,6 +306,28 @@ impl Parser {
             TokenKind::Fn       => ItemKind::Fn(self.parse_fn_def_with_attrs(attributes)?),
             TokenKind::Extern   => ItemKind::ExternFn(self.parse_extern_fn_with_attrs(attributes)?),
             TokenKind::Annotation => ItemKind::AnnotationDef(self.parse_annotation_def()?),
+            TokenKind::Const | TokenKind::Let => {
+                // Top-level const/let declaration: `const VERSION = "4.0.0"`
+                self.advance(); // consume `const` or `let`
+                let name = self.expect_ident()?;
+                let ty = if matches!(self.peek_kind(), TokenKind::Colon) {
+                    self.advance(); // consume `:`
+                    Some(self.parse_ty()?)
+                } else {
+                    None
+                };
+                self.expect(&TokenKind::Eq)?;
+                let value = self.parse_expr(0)?;
+                ItemKind::GlobalConst { name, ty, value }
+            }
+            TokenKind::Ident(ref s) if s == "type" => {
+                // `type Alias = ExistingType` — transparent type alias
+                self.advance(); // consume `type`
+                let name = self.expect_ident()?;
+                self.expect(&TokenKind::Eq)?;
+                let ty = self.parse_ty()?;
+                ItemKind::TypeAlias { name, ty, span: Span::new(lo, self.current_span().lo) }
+            }
             _ => {
                 if !attributes.is_empty() {
                     return Err(ParseError::expected(
@@ -327,31 +349,99 @@ impl Parser {
             let lo = self.current_span().lo;
             self.advance(); // consume `@`
 
-            // Attribute name must be an identifier
-            let name_ident = self.expect_ident()?;
-            let name = name_ident.name;
+            // Attribute name: identifier or keyword (e.g. @timeout, @skip, @link).
+            // Keywords are valid annotation names — extract their text.
+            let name = match self.peek_kind().clone() {
+                TokenKind::Ident(s) => { self.advance(); s }
+                // Storage modifiers / control flow keywords used as annotation names:
+                TokenKind::Timeout  => { self.advance(); "timeout".into() }
+                TokenKind::Async    => { self.advance(); "async".into() }
+                TokenKind::Await    => { self.advance(); "await".into() }
+                TokenKind::Select   => { self.advance(); "select".into() }
+                TokenKind::Const    => { self.advance(); "const".into() }
+                TokenKind::Let      => { self.advance(); "let".into() }
+                TokenKind::Weak     => { self.advance(); "weak".into() }
+                // Declaration keywords that might be used as annotations:
+                TokenKind::Extern   => { self.advance(); "extern".into() }
+                _ => return Err(ParseError::expected("annotation name", self.peek_kind(), self.current_span())),
+            };
 
-            // Optional argument list: `("arg1", "arg2")`
+            // Optional argument list: `("arg1", "arg2")`, `(ms: 100)`, `(100)`,
+            // or expression args like `(x > 0)`.
+            // Also accept bare string literal without parens: `@error "msg"`.
             let mut args = Vec::new();
-            if matches!(self.peek_kind(), TokenKind::LParen) {
+            if matches!(self.peek_kind(), TokenKind::String(_)) {
+                // `@name "string"` — bare string literal shorthand
+                if let TokenKind::String(s) = self.peek_kind().clone() {
+                    self.advance();
+                    args.push(s);
+                }
+            } else if matches!(self.peek_kind(), TokenKind::LParen) {
                 self.advance(); // consume `(`
-                while !matches!(self.peek_kind(), TokenKind::RParen | TokenKind::Eof) {
-                    // Arguments must be string literals
+                // Collect all tokens up to matching `)`, building each comma-separated
+                // argument as a raw source string. This supports expressions like `x > 0`.
+                let mut depth = 0i32;
+                let mut current_arg = String::new();
+                loop {
                     match self.peek_kind().clone() {
-                        TokenKind::String(s) => {
+                        TokenKind::Eof => break,
+                        TokenKind::RParen if depth == 0 => {
                             self.advance();
-                            args.push(s);
+                            let trimmed = current_arg.trim().to_string();
+                            if !trimmed.is_empty() { args.push(trimmed); }
+                            break;
                         }
-                        _ => return Err(ParseError::expected(
-                            "string literal in attribute arguments",
-                            self.peek_kind(), self.current_span()
-                        )),
-                    }
-                    if !matches!(self.peek_kind(), TokenKind::RParen) {
-                        self.expect(&TokenKind::Comma)?;
+                        TokenKind::Comma if depth == 0 => {
+                            self.advance();
+                            let trimmed = current_arg.trim().to_string();
+                            if !trimmed.is_empty() { args.push(trimmed); }
+                            current_arg.clear();
+                        }
+                        tok => {
+                            // Track nested parens depth
+                            match &tok {
+                                TokenKind::LParen => depth += 1,
+                                TokenKind::RParen => depth -= 1,
+                                _ => {}
+                            }
+                            // Convert token back to source text
+                            let tok_text = match tok {
+                                TokenKind::Ident(s) => s,
+                                TokenKind::String(s) => format!("\"{}\"", s),
+                                TokenKind::Int(n) => n.to_string(),
+                                TokenKind::Float(f) => f.to_string(),
+                                TokenKind::True => "true".into(),
+                                TokenKind::False => "false".into(),
+                                TokenKind::Plus => "+".into(),
+                                TokenKind::Minus => "-".into(),
+                                TokenKind::Star => "*".into(),
+                                TokenKind::Slash => "/".into(),
+                                TokenKind::Percent => "%".into(),
+                                TokenKind::Lt => "<".into(),
+                                TokenKind::Gt => ">".into(),
+                                TokenKind::LtEq => "<=".into(),
+                                TokenKind::GtEq => ">=".into(),
+                                TokenKind::EqEq => "==".into(),
+                                TokenKind::BangEq => "!=".into(),
+                                TokenKind::Amp => "&".into(),
+                                TokenKind::AndAnd => "&&".into(),
+                                TokenKind::OrOr => "||".into(),
+                                TokenKind::Bang => "!".into(),
+                                TokenKind::Dot => ".".into(),
+                                TokenKind::LParen => "(".into(),
+                                TokenKind::RParen => ")".into(),
+                                TokenKind::Colon => ": ".into(),
+                                TokenKind::Null => "NULL".into(),
+                                _ => String::new(), // skip unrecognised tokens
+                            };
+                            if !current_arg.is_empty() && !tok_text.starts_with(':') {
+                                current_arg.push(' ');
+                            }
+                            current_arg.push_str(&tok_text);
+                            self.advance();
+                        }
                     }
                 }
-                self.expect(&TokenKind::RParen)?;
             }
 
             let hi = self.current_span().lo;
@@ -1311,9 +1401,17 @@ impl Parser {
                 }
             };
 
+            // Optional guard: `if condition` before the body block
+            let guard = if matches!(self.peek_kind(), TokenKind::If) {
+                self.advance(); // consume `if`
+                Some(self.parse_expr(0)?)
+            } else {
+                None
+            };
+
             let body = self.parse_block()?;
             let arm_hi = self.current_span().lo;
-            arms.push(MatchArm { pattern, bindings, body, span: Span::new(arm_lo, arm_hi) });
+            arms.push(MatchArm { pattern, bindings, guard, body, span: Span::new(arm_lo, arm_hi) });
         }
 
         let hi = self.current_span().hi;
@@ -1362,7 +1460,10 @@ impl Parser {
 
             // Ternary operator: cond ? then : else
             // Lowers to ExprKind::If with a mandatory else branch.
-            if matches!(kind, TokenKind::Question) {
+            // NOTE: `?.` is optional chaining (handled in parse_expr_postfix), NOT ternary.
+            if matches!(kind, TokenKind::Question)
+                && !matches!(self.tokens.get(self.pos + 1).map(|t| &t.kind), Some(TokenKind::Dot))
+            {
                 let (l_bp, _r_bp) = infix_bp(&kind).unwrap();
                 if l_bp < min_bp { break; }
                 self.advance(); // consume `?`
@@ -1398,6 +1499,10 @@ impl Parser {
             }
 
             // Binary operator?
+            // Skip `?` when it's optional chaining `?.` — that's handled below in postfix.
+            let is_optional_chain = matches!(kind, TokenKind::Question)
+                && matches!(self.tokens.get(self.pos + 1).map(|t| &t.kind), Some(TokenKind::Dot));
+            if !is_optional_chain {
             if let Some((l_bp, r_bp)) = infix_bp(&kind) {
                 if l_bp < min_bp {
                     break;
@@ -1413,6 +1518,7 @@ impl Parser {
                 };
                 continue;
             }
+            } // end !is_optional_chain guard
 
             // Postfix: field access / method call / index / call
             match self.peek_kind() {
@@ -1435,9 +1541,44 @@ impl Parser {
                         _ => self.expect_ident()?,
                     };
                     // Is it a method call or named-arg constructor call?
-                    // `obj.method(a, b)` → MethodCall
+                    // `obj.method(a, b)`        → MethodCall
+                    // `obj.method<T>(a, b)`     → MethodCall with type-param encoded in field name
                     // `module.Type(field: val)` → NamedCall on Field expr
-                    if matches!(self.peek_kind(), TokenKind::LParen) {
+                    if matches!(self.peek_kind(), TokenKind::Lt) {
+                        // Speculatively try to parse `<type_args>` before `(args)`
+                        let saved_pos = self.pos;
+                        if let Ok(type_args) = self.try_parse_type_args_for_constructor() {
+                            if matches!(self.peek_kind(), TokenKind::LParen) {
+                                self.advance(); // consume `(`
+                                let (named, positional) = self.parse_call_args_mixed()?;
+                                self.expect(&TokenKind::RParen)?;
+                                let hi = self.current_span().lo;
+                                // Encode the type args in the field name: `chan<string>`
+                                let generic_field_name = format!("{}<{}>",
+                                    field.name,
+                                    type_args.iter().map(|t| t.as_str()).collect::<Vec<_>>().join(","));
+                                let generic_field = Ident::new(&generic_field_name, field.span);
+                                lhs = Expr {
+                                    kind: ExprKind::MethodCall(Box::new(lhs), generic_field, positional),
+                                    span: Span::new(lo, hi),
+                                };
+                            } else {
+                                self.pos = saved_pos;
+                                let hi = field.span.hi;
+                                lhs = Expr {
+                                    kind: ExprKind::Field(Box::new(lhs), field),
+                                    span: Span::new(lo, hi),
+                                };
+                            }
+                        } else {
+                            self.pos = saved_pos;
+                            let hi = field.span.hi;
+                            lhs = Expr {
+                                kind: ExprKind::Field(Box::new(lhs), field),
+                                span: Span::new(lo, hi),
+                            };
+                        }
+                    } else if matches!(self.peek_kind(), TokenKind::LParen) {
                         self.advance(); // consume `(`
                         let (named, positional) = self.parse_call_args_mixed()?;
                         self.expect(&TokenKind::RParen)?;
@@ -1496,6 +1637,34 @@ impl Parser {
                             kind: ExprKind::NamedCall(Box::new(lhs), named),
                             span: Span::new(lo, hi),
                         };
+                    }
+                    continue;
+                }
+                // Optional chaining: `expr?.field` or `expr?.method(args)`
+                TokenKind::Question if matches!(self.tokens.get(self.pos + 1).map(|t| &t.kind), Some(TokenKind::Dot)) => {
+                    self.advance(); // consume `?`
+                    self.advance(); // consume `.`
+                    let field = match self.peek_kind().clone() {
+                        TokenKind::Ident(name) => { let sp = self.current_span(); self.advance(); Ident::new(name, sp) }
+                        TokenKind::Await => { let sp = self.current_span(); self.advance(); Ident::new("await", sp) }
+                        _ => return Err(ParseError::expected("field or method name after `?.`", self.peek_kind(), self.current_span())),
+                    };
+                    let hi = self.current_span().lo;
+                    // Check for generic type args before method call parens
+                    let saved_pos = self.pos;
+                    let has_generic = if matches!(self.peek_kind(), TokenKind::Lt) {
+                        self.try_parse_type_args_for_constructor().is_ok()
+                            && matches!(self.peek_kind(), TokenKind::LParen)
+                    } else { false };
+                    self.pos = saved_pos;
+                    if matches!(self.peek_kind(), TokenKind::LParen) {
+                        self.advance(); // consume `(`
+                        let (_, positional) = self.parse_call_args_mixed()?;
+                        self.expect(&TokenKind::RParen)?;
+                        let hi = self.current_span().lo;
+                        lhs = Expr { kind: ExprKind::OptionalMethodCall(Box::new(lhs), field, positional), span: Span::new(lo, hi) };
+                    } else {
+                        lhs = Expr { kind: ExprKind::OptionalField(Box::new(lhs), field), span: Span::new(lo, hi) };
                     }
                     continue;
                 }
@@ -1653,7 +1822,7 @@ impl Parser {
                         } else { false };
                         let name = self.expect_ident()?;
                         let cap_hi = self.current_span().lo;
-                        caps.push(Capture { name, weak, span: Span::new(cap_lo, cap_hi) });
+                        caps.push(Capture { name, weak, mutable: false, span: Span::new(cap_lo, cap_hi) });
                         self.eat(&TokenKind::Comma);
                     }
                     self.expect(&TokenKind::RBracket)?;
