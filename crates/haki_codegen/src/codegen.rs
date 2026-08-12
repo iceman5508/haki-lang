@@ -221,7 +221,7 @@ impl<'ctx> CodeGen<'ctx> {
             ("haki_render_template_map", void.fn_type(&[ptr.into(), ptr.into(), ptr.into(), ptr.into()], false)),
             ("haki_serve_file",      ptr.fn_type(&[ptr.into()], false)),
             // Phase 5: JSON decode
-            ("haki_json_decode",     void.fn_type(&[ptr.into(), ptr.into(), ptr.into()], false)),
+            ("haki_json_decode",     ptr.fn_type(&[ptr.into()], false)),
             ("haki_json_decode_get", ptr.fn_type(&[ptr.into(), ptr.into()], false)),
             // Error type
             ("haki_error_new",            ptr.fn_type(&[ptr.into()], false)),
@@ -296,10 +296,10 @@ impl<'ctx> CodeGen<'ctx> {
                 .map(|p| {
                     match &p.ty.kind {
                         haki_ast::TyKind::Named(id) => match id.name.as_str() {
-                            "int"   => self.ctx.i64_type().into(),
-                            "float" => self.ctx.f64_type().into(),
-                            "bool"  => self.ctx.bool_type().into(),
-                            _       => self.tmap.ptr().into(),
+                            "int"          => self.ctx.i64_type().into(),
+                            "float" | "f64" => self.ctx.f64_type().into(),
+                            "bool"         => self.ctx.bool_type().into(),
+                            _              => self.tmap.ptr().into(),
                         },
                         _ => self.tmap.ptr().into(),
                     }
@@ -314,7 +314,7 @@ impl<'ctx> CodeGen<'ctx> {
                             self.ctx.void_type().fn_type(&params, false),
                         haki_ast::TyKind::Named(id) if id.name == "int" =>
                             self.ctx.i64_type().fn_type(&params, false),
-                        haki_ast::TyKind::Named(id) if id.name == "float" =>
+                        haki_ast::TyKind::Named(id) if id.name == "float" || id.name == "f64" =>
                             self.ctx.f64_type().fn_type(&params, false),
                         haki_ast::TyKind::Named(id) if id.name == "bool" =>
                             self.ctx.bool_type().fn_type(&params, false),
@@ -442,12 +442,12 @@ impl<'ctx> CodeGen<'ctx> {
 
                         // Build the env struct type from capture types.
                         let cap_tys: Vec<_> = f.captures.iter()
-                            .map(|(_, ty, _)| self.tmap.basic(ty).unwrap_or(ptr.into()))
+                            .map(|(_, ty, _, _)| self.tmap.basic(ty).unwrap_or(ptr.into()))
                             .collect();
                         let env_struct_ty = self.ctx.struct_type(&cap_tys, false);
 
                         // GEP each field and store as a named local.
-                        for (i, (cap_name, cap_ty, _)) in f.captures.iter().enumerate() {
+                        for (i, (cap_name, cap_ty, _, _)) in f.captures.iter().enumerate() {
                             if let Ok(field_ty) = self.tmap.basic(cap_ty) {
                                 let fp = self.builder.build_struct_gep(
                                     env_struct_ty, env_ptr, i as u32, &format!("env_{i}")
@@ -860,9 +860,157 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
+    /// Emit `for k, v in map { }` using haki_map_capacity / entry_key / entry_value.
+    fn emit_for_map(&mut self, f: &MonoFor) -> CodeGenResult<()> {
+        let fv  = self.current_fn.unwrap();
+        let i64_ty = self.ctx.i64_type();
+        let ptr_ty = self.tmap.ptr();
+
+        let map_val = self.emit_expr(&f.iter)?.unwrap();
+        let map_ptr = map_val.into_pointer_value();
+
+        // ── Get or declare runtime helpers ──────────────────────────────────
+        let cap_fn = self.module.get_function("haki_map_capacity").unwrap_or_else(|| {
+            let ft = i64_ty.fn_type(&[ptr_ty.into()], false);
+            self.module.add_function("haki_map_capacity", ft, None)
+        });
+        let entry_key_fn = self.module.get_function("haki_map_entry_key").unwrap_or_else(|| {
+            let ft = ptr_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false);
+            self.module.add_function("haki_map_entry_key", ft, None)
+        });
+        let entry_val_fn = self.module.get_function("haki_map_entry_value").unwrap_or_else(|| {
+            let ft = ptr_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false);
+            self.module.add_function("haki_map_entry_value", ft, None)
+        });
+
+        // ── Compute capacity ────────────────────────────────────────────────
+        let cap_call = self.builder.build_call(cap_fn, &[map_ptr.into()], "map_cap")
+            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+        let cap_val = cap_call.try_as_basic_value().left().unwrap().into_int_value();
+
+        // ── Allocate loop counter i ─────────────────────────────────────────
+        let i_slot = self.builder.build_alloca(i64_ty, "fmap.i")
+            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+        self.builder.build_store(i_slot, i64_ty.const_int(0, false))
+            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+
+        let cond_bb  = self.ctx.append_basic_block(fv, "fmap.cond");
+        let check_bb = self.ctx.append_basic_block(fv, "fmap.check"); // null key?
+        let body_bb  = self.ctx.append_basic_block(fv, "fmap.body");
+        let incr_bb  = self.ctx.append_basic_block(fv, "fmap.incr");
+        let exit_bb  = self.ctx.append_basic_block(fv, "fmap.exit");
+
+        self.loop_stack.push((incr_bb, exit_bb));
+        self.builder.build_unconditional_branch(cond_bb)
+            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+
+        // ── cond: i < capacity ──────────────────────────────────────────────
+        self.builder.position_at_end(cond_bb);
+        let i_val = self.builder.build_load(i64_ty, i_slot, "fmap.i")
+            .map_err(|e| CodeGenError::BuildError(e.to_string()))?.into_int_value();
+        let in_range = self.builder.build_int_compare(
+            inkwell::IntPredicate::SLT, i_val, cap_val, "fmap.cmp"
+        ).map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+        self.builder.build_conditional_branch(in_range, check_bb, exit_bb)
+            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+
+        // ── check: skip null (deleted) slots ────────────────────────────────
+        self.builder.position_at_end(check_bb);
+        let i_cur = self.builder.build_load(i64_ty, i_slot, "i_cur")
+            .map_err(|e| CodeGenError::BuildError(e.to_string()))?.into_int_value();
+        let key_call = self.builder.build_call(
+            entry_key_fn, &[map_ptr.into(), i_cur.into()], "map_key"
+        ).map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+        let key_ptr = key_call.try_as_basic_value().left().unwrap().into_pointer_value();
+        let is_null = self.builder.build_is_null(key_ptr, "key_null")
+            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+        self.builder.build_conditional_branch(is_null, incr_bb, body_bb)
+            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+
+        // ── body ────────────────────────────────────────────────────────────
+        self.builder.position_at_end(body_bb);
+        self.scopes.push(Scope::new());
+
+        // Bind key variable (index_var = k in `for k, v in map`)
+        if let Some(ref kv) = f.index_var {
+            let k_slot = self.builder.build_alloca(ptr_ty, &kv.name)
+                .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+            self.builder.build_store(k_slot, key_ptr)
+                .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+            self.scopes.last_mut().unwrap().vars.insert(
+                kv.name.clone(),
+                VarSlot { ptr: k_slot, ty: SemTy::String, mutability: Mut::Const,
+                           field_gep: None, is_closure: false },
+            );
+        }
+
+        // Bind value variable (var = v in `for k, v in map`)
+        let val_call = self.builder.build_call(
+            entry_val_fn, &[map_ptr.into(), i_cur.into()], "map_val"
+        ).map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+        let val_ptr_raw = val_call.try_as_basic_value().left().unwrap().into_pointer_value();
+
+        // Cast/load value based on its type
+        let val_basic_ty = self.tmap.basic(&f.var_ty).unwrap_or(ptr_ty.into());
+        let v_slot = self.builder.build_alloca(val_basic_ty, &f.var.name)
+            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+
+        match &f.var_ty {
+            SemTy::Int | SemTy::Bool => {
+                // Stored as intptr, recover via ptrtoint
+                let as_int = self.builder.build_ptr_to_int(val_ptr_raw, i64_ty, "val_int")
+                    .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+                self.builder.build_store(v_slot, as_int)
+                    .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+            }
+            _ => {
+                // Pointer types (string, struct, etc.) — value IS the pointer
+                self.builder.build_store(v_slot, val_ptr_raw)
+                    .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+            }
+        }
+        self.scopes.last_mut().unwrap().vars.insert(
+            f.var.name.clone(),
+            VarSlot { ptr: v_slot, ty: f.var_ty.clone(), mutability: Mut::Const,
+                       field_gep: None, is_closure: false },
+        );
+
+        for stmt in &f.body.stmts { self.emit_stmt(stmt)?; }
+        self.emit_scope_release();
+        self.scopes.pop();
+
+        if let Some(bb) = self.builder.get_insert_block() {
+            if bb.get_terminator().is_none() {
+                self.builder.build_unconditional_branch(incr_bb)
+                    .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+            }
+        }
+
+        // ── incr ────────────────────────────────────────────────────────────
+        self.builder.position_at_end(incr_bb);
+        let i_load = self.builder.build_load(i64_ty, i_slot, "i_inc")
+            .map_err(|e| CodeGenError::BuildError(e.to_string()))?.into_int_value();
+        let i_next = self.builder.build_int_add(i_load, i64_ty.const_int(1, false), "i_next")
+            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+        self.builder.build_store(i_slot, i_next)
+            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+        self.builder.build_unconditional_branch(cond_bb)
+            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+
+        self.loop_stack.pop();
+        self.builder.position_at_end(exit_bb);
+        Ok(())
+    }
+
     fn emit_for(&mut self, f: &MonoFor) -> CodeGenResult<()> {
         let fv = self.current_fn.unwrap();
         let i64_ty = self.ctx.i64_type();
+
+        // ── Map iteration: `for k, v in map { }` ────────────────────────────
+        let is_map = matches!(&f.iter.ty, SemTy::Generic(n, _) if n == "Map");
+        if is_map {
+            return self.emit_for_map(f);
+        }
 
         let arr_val = self.emit_expr(&f.iter)?.unwrap();
         let arr_ptr = arr_val.into_pointer_value();
@@ -1081,6 +1229,12 @@ impl<'ctx> CodeGen<'ctx> {
     // ── Match ─────────────────────────────────────────────────────────────
 
     fn emit_match(&mut self, m: &MonoMatch) -> CodeGenResult<Option<BasicValueEnum<'ctx>>> {
+        // Match guards are not yet supported in LLVM codegen — fall back to C emitter.
+        if m.arms.iter().any(|a| a.guard.is_some()) {
+            return Err(CodeGenError::BuildError(
+                "match guard conditions not supported in LLVM backend (using C emitter)".into()
+            ));
+        }
         let fv = self.current_fn.unwrap();
         let scrutinee = self.emit_expr(&m.scrutinee)?;
         let merge_bb = self.ctx.append_basic_block(fv, "match.merge");
@@ -1413,6 +1567,13 @@ impl<'ctx> CodeGen<'ctx> {
             MonoExprKind::Unary(op, operand) => self.emit_unary(*op, operand),
             MonoExprKind::Binary(op, lhs, rhs) => self.emit_binary(*op, lhs, rhs, &expr.ty),
             MonoExprKind::Field(recv, fname)   => self.emit_field(recv, fname, &expr.ty),
+            // Optional chaining — not yet implemented in LLVM backend; fall back to C emitter.
+            MonoExprKind::OptionalField(_, _) |
+            MonoExprKind::OptionalMethodCall(_, _, _) => {
+                Err(CodeGenError::BuildError(
+                    "optional chaining not supported in LLVM backend (using C emitter)".into()
+                ))
+            }
             MonoExprKind::Call(name, args)     => self.emit_call(name, args),
             MonoExprKind::Construct(name, args)=> self.emit_construct(name, args),
             MonoExprKind::Index(recv, idx)     => self.emit_index(recv, idx),
@@ -1502,7 +1663,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         // Allocate env struct: { cap0_ty, cap1_ty, ... }
         let mut cap_tys: Vec<inkwell::types::BasicTypeEnum> = Vec::new();
-        for (_, ty, _) in &mono_fn.captures {
+        for (_, ty, _, _) in &mono_fn.captures {
             cap_tys.push(self.tmap.basic(ty).unwrap_or(ptr.into()));
         }
         let env_struct_ty = self.ctx.struct_type(&cap_tys, false);
@@ -1519,7 +1680,7 @@ impl<'ctx> CodeGen<'ctx> {
         // Store each captured variable into the env struct.
         let fn_name = mono_fn.name.clone();
         let captures = mono_fn.captures.clone();
-        for (i, (cap_name, cap_ty, _weak)) in captures.iter().enumerate() {
+        for (i, (cap_name, cap_ty, _weak, _is_mut)) in captures.iter().enumerate() {
             let cap_val = self.emit_load(cap_name)?;
             if let Some(v) = cap_val {
                 let fp = self.builder.build_struct_gep(
@@ -1578,6 +1739,59 @@ impl<'ctx> CodeGen<'ctx> {
         if op == BinaryOp::Add && lhs.ty == SemTy::String {
             return self.emit_concat(lhs, rhs);
         }
+
+        // Short-circuit &&: evaluate LHS; if false, skip RHS entirely.
+        if op == BinaryOp::And {
+            let fv = self.current_fn.unwrap();
+            let lv       = self.emit_expr(lhs)?.unwrap().into_int_value();
+            let lhs_bb   = self.builder.get_insert_block().unwrap();
+            let rhs_bb   = self.ctx.append_basic_block(fv, "and.rhs");
+            let merge_bb = self.ctx.append_basic_block(fv, "and.merge");
+            self.builder.build_conditional_branch(lv, rhs_bb, merge_bb)
+                .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+            self.builder.position_at_end(rhs_bb);
+            let rv           = self.emit_expr(rhs)?.unwrap().into_int_value();
+            let rhs_exit_bb  = self.builder.get_insert_block().unwrap();
+            self.builder.build_unconditional_branch(merge_bb)
+                .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+            self.builder.position_at_end(merge_bb);
+            let bool_ty  = self.ctx.bool_type();
+            let phi = self.builder.build_phi(bool_ty, "and.phi")
+                .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+            let false_val = bool_ty.const_int(0, false);
+            phi.add_incoming(&[
+                (&false_val as &dyn BasicValue, lhs_bb),
+                (&rv        as &dyn BasicValue, rhs_exit_bb),
+            ]);
+            return Ok(Some(phi.as_basic_value()));
+        }
+
+        // Short-circuit ||: evaluate LHS; if true, skip RHS entirely.
+        if op == BinaryOp::Or {
+            let fv = self.current_fn.unwrap();
+            let lv       = self.emit_expr(lhs)?.unwrap().into_int_value();
+            let lhs_bb   = self.builder.get_insert_block().unwrap();
+            let rhs_bb   = self.ctx.append_basic_block(fv, "or.rhs");
+            let merge_bb = self.ctx.append_basic_block(fv, "or.merge");
+            self.builder.build_conditional_branch(lv, merge_bb, rhs_bb)
+                .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+            self.builder.position_at_end(rhs_bb);
+            let rv           = self.emit_expr(rhs)?.unwrap().into_int_value();
+            let rhs_exit_bb  = self.builder.get_insert_block().unwrap();
+            self.builder.build_unconditional_branch(merge_bb)
+                .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+            self.builder.position_at_end(merge_bb);
+            let bool_ty  = self.ctx.bool_type();
+            let phi = self.builder.build_phi(bool_ty, "or.phi")
+                .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+            let true_val = bool_ty.const_int(1, false);
+            phi.add_incoming(&[
+                (&true_val as &dyn BasicValue, lhs_bb),
+                (&rv       as &dyn BasicValue, rhs_exit_bb),
+            ]);
+            return Ok(Some(phi.as_basic_value()));
+        }
+
         let lv = self.emit_expr(lhs)?.unwrap();
         let rv = self.emit_expr(rhs)?.unwrap();
         let _ = ty;
@@ -1621,10 +1835,7 @@ impl<'ctx> CodeGen<'ctx> {
             BinaryOp::Le => self.cmp_int_or_float(lv, rv, IntPredicate::SLE, FloatPredicate::OLE)?,
             BinaryOp::Gt => self.cmp_int_or_float(lv, rv, IntPredicate::SGT, FloatPredicate::OGT)?,
             BinaryOp::Ge => self.cmp_int_or_float(lv, rv, IntPredicate::SGE, FloatPredicate::OGE)?,
-            BinaryOp::And => self.builder.build_and(lv.into_int_value(), rv.into_int_value(), "and")
-                .map_err(|e| CodeGenError::BuildError(e.to_string()))?.into(),
-            BinaryOp::Or  => self.builder.build_or(lv.into_int_value(), rv.into_int_value(), "or")
-                .map_err(|e| CodeGenError::BuildError(e.to_string()))?.into(),
+            BinaryOp::And | BinaryOp::Or => unreachable!("handled above with short-circuit"),
         };
         Ok(Some(r))
     }
@@ -2288,31 +2499,66 @@ impl<'ctx> CodeGen<'ctx> {
         let god_fn = *self.fns.get("haki_map_get_or_default")
             .ok_or_else(|| CodeGenError::UnknownFn("haki_map_get_or_default".into()))?;
 
-        // Store default into a slot so we can pass a pointer.
         let val_sem = match &args[0].ty {
             SemTy::Generic(_, type_args) if type_args.len() >= 2 => type_args[1].clone(),
             _ => SemTy::String,
         };
-        let val_ll = self.tmap.basic(&val_sem)?;
 
-        let default_ptr = if let Some(dv) = default_val {
-            let slot = self.builder.build_alloca(dv.get_type(), "god_default")
-                .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
-            self.builder.build_store(slot, dv)
-                .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
-            slot.into()
-        } else {
-            self.tmap.ptr().const_null().into()
+        // haki_map_get_or_default(map, key, default_as_void_ptr) → void*
+        // The map stores values directly as void* (not pointer-to-value).
+        // We must pass the default as a void* with the SAME encoding:
+        //   strings/pointers: cast char* → void*
+        //   int/bool: (void*)(intptr_t)value
+        // The returned void* is the value directly, so cast it back — NO load.
+        let ptr_ty = self.tmap.ptr();
+        let default_as_ptr: inkwell::values::BasicMetadataValueEnum = match &val_sem {
+            SemTy::Int => {
+                if let Some(dv) = default_val {
+                    let int_val = dv.into_int_value();
+                    let as_ptr = self.builder.build_int_to_ptr(int_val, ptr_ty, "god_def_ptr")
+                        .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+                    as_ptr.into()
+                } else { ptr_ty.const_null().into() }
+            }
+            SemTy::Bool => {
+                if let Some(dv) = default_val {
+                    let i64_ty = self.ctx.i64_type();
+                    let ext = self.builder.build_int_z_extend(dv.into_int_value(), i64_ty, "god_bool_ext")
+                        .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+                    let as_ptr = self.builder.build_int_to_ptr(ext, ptr_ty, "god_def_ptr")
+                        .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+                    as_ptr.into()
+                } else { ptr_ty.const_null().into() }
+            }
+            _ => {
+                // Strings and other pointer types: default is already a char*, pass directly.
+                if let Some(dv) = default_val { dv.into() }
+                else { ptr_ty.const_null().into() }
+            }
         };
 
         let result = self.builder.build_call(
-            god_fn, &[map_ptr.into(), key_val.into(), default_ptr], "god"
+            god_fn, &[map_ptr.into(), key_val.into(), default_as_ptr], "god"
         ).map_err(|e| CodeGenError::BuildError(e.to_string()))?;
 
-        // Load the actual value from the returned pointer.
-        let result_ptr = result.try_as_basic_value().left().unwrap().into_pointer_value();
-        let val = self.builder.build_load(val_ll, result_ptr, "god_val")
-            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+        // The return value IS the value (void* = char* for strings, void* = (intptr_t)int for ints).
+        // Cast back to the expected type — no extra load needed.
+        let raw = result.try_as_basic_value().left().unwrap().into_pointer_value();
+        let val: inkwell::values::BasicValueEnum = match &val_sem {
+            SemTy::Int => {
+                let i64_ty = self.ctx.i64_type();
+                self.builder.build_ptr_to_int(raw, i64_ty, "god_int")
+                    .map_err(|e| CodeGenError::BuildError(e.to_string()))?.into()
+            }
+            SemTy::Bool => {
+                let i1_ty = self.ctx.bool_type();
+                let as_i64 = self.builder.build_ptr_to_int(raw, self.ctx.i64_type(), "god_bool_i64")
+                    .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+                self.builder.build_int_truncate(as_i64, i1_ty, "god_bool")
+                    .map_err(|e| CodeGenError::BuildError(e.to_string()))?.into()
+            }
+            _ => raw.into(), // string/pointer: void* is already the char*
+        };
         Ok(Some(val))
     }
 
@@ -2352,12 +2598,35 @@ impl<'ctx> CodeGen<'ctx> {
         let set_fn = *self.fns.get("haki_map_set")
             .ok_or_else(|| CodeGenError::UnknownFn("haki_map_set".into()))?;
         if let Some(v) = val_val {
-            // Store value in a temp slot to pass by pointer.
-            let val_slot = self.builder.build_alloca(v.get_type(), "map_val")
-                .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
-            self.builder.build_store(val_slot, v)
-                .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
-            self.builder.build_call(set_fn, &[map_ptr.into(), key_val.into(), val_slot.into()], "map_set")
+            // haki_map_set(map, key, void*) stores the value directly as a void*.
+            // For pointer types (string, struct, etc.) pass the ptr directly.
+            // For integer/bool types, convert via inttoptr so they survive roundtrip.
+            let ptr_ty = self.tmap.ptr();
+            let val_as_ptr: inkwell::values::PointerValue<'ctx> = match v {
+                inkwell::values::BasicValueEnum::PointerValue(p) => p,
+                inkwell::values::BasicValueEnum::IntValue(i) => {
+                    self.builder.build_int_to_ptr(i, ptr_ty, "map_val_ptr")
+                        .map_err(|e| CodeGenError::BuildError(e.to_string()))?
+                }
+                inkwell::values::BasicValueEnum::FloatValue(f) => {
+                    // Bitcast float bits to i64 then inttoptr
+                    let i64_ty = self.ctx.i64_type();
+                    let as_int = self.builder.build_bitcast(f, i64_ty, "flt_bits")
+                        .map_err(|e| CodeGenError::BuildError(e.to_string()))?
+                        .into_int_value();
+                    self.builder.build_int_to_ptr(as_int, ptr_ty, "map_val_ptr")
+                        .map_err(|e| CodeGenError::BuildError(e.to_string()))?
+                }
+                other => {
+                    // Fallback: store in alloca and pass address (old behaviour)
+                    let val_slot = self.builder.build_alloca(other.get_type(), "map_val")
+                        .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+                    self.builder.build_store(val_slot, other)
+                        .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+                    val_slot
+                }
+            };
+            self.builder.build_call(set_fn, &[map_ptr.into(), key_val.into(), val_as_ptr.into()], "map_set")
                 .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
         }
         Ok(None)
@@ -3033,24 +3302,16 @@ impl<'ctx> CodeGen<'ctx> {
         let ptr = self.tmap.ptr();
         let tuple_ty = self.ctx.struct_type(&[ptr.into(), ptr.into()], false);
 
-        let out_map   = self.builder.build_alloca(ptr, "json_map")
-            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
-        let out_error = self.builder.build_alloca(ptr, "json_err")
-            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
-        self.builder.build_store(out_map,   ptr.const_null())
-            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
-        self.builder.build_store(out_error, ptr.const_null())
-            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
-
+        // haki_json_decode(const char* s) -> void*  (returns the map, or NULL on error)
         let f = *self.fns.get("haki_json_decode")
             .ok_or_else(|| CodeGenError::UnknownFn("haki_json_decode".into()))?;
-        self.builder.build_call(f, &[s.into(), out_map.into(), out_error.into()], "jdecode")
+        let call = self.builder.build_call(f, &[s.into()], "jdecode")
             .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+        let map_val = call.try_as_basic_value().left()
+            .unwrap_or_else(|| ptr.const_null().into());
 
-        let map_val = self.builder.build_load(ptr, out_map,   "jmap")
-            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
-        let err_val = self.builder.build_load(ptr, out_error, "jerr")
-            .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+        // error = NULL (decode never surfaces an Error? in Haki — callers check null map)
+        let err_val: inkwell::values::BasicValueEnum<'ctx> = ptr.const_null().into();
 
         let tuple = self.builder.build_alloca(tuple_ty, "json_tuple")
             .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
@@ -3630,6 +3891,23 @@ impl<'ctx> CodeGen<'ctx> {
                 let fp = self.builder.build_struct_gep(struct_ty3, recv_val, idx, fname)
                     .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
                 self.builder.build_store(fp, new_val)
+                    .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+            }
+            MonoExprKind::Index(arr_expr, idx_expr) => {
+                // arr[idx] = value  — call haki_array_get to get the element pointer,
+                // then store the new value through it (write-through to heap storage).
+                let arr_ptr = self.emit_expr(arr_expr)?.unwrap().into_pointer_value();
+                let idx_val = self.emit_expr(idx_expr)?.unwrap().into_int_value();
+                let get_fn = *self.fns.get("haki_array_get")
+                    .ok_or_else(|| CodeGenError::UnknownFn("haki_array_get".into()))?;
+                let elem_ptr_result = self.builder.build_call(
+                    get_fn,
+                    &[arr_ptr.into(), idx_val.into()],
+                    "arr_set_ptr",
+                ).map_err(|e| CodeGenError::BuildError(e.to_string()))?;
+                let elem_ptr = elem_ptr_result.try_as_basic_value()
+                    .left().unwrap().into_pointer_value();
+                self.builder.build_store(elem_ptr, new_val)
                     .map_err(|e| CodeGenError::BuildError(e.to_string()))?;
             }
             _ => {}
