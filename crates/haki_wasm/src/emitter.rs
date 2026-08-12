@@ -481,6 +481,8 @@ impl WasmEmitter {
             }
             // Unsupported in v0.1 Wasm — emit nop and return false.
             MonoExprKind::Field(_, _)
+            | MonoExprKind::OptionalField(_, _)
+            | MonoExprKind::OptionalMethodCall(_, _, _)
             | MonoExprKind::Construct(_, _)
             | MonoExprKind::Index(_, _)
             | MonoExprKind::Array(_)
