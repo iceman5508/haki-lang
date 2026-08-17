@@ -383,11 +383,6 @@ fn main() {
         return
     }
 
-    const src, _mainErr = readFile(srcPath)
-    print("[lex+parse]")
-    const items, _pe4 = compiler__parse(src)
-    print("[typecheck]")
-    const sym, _te4 = typeck__typecheck(src)
-    print("")
-    print("✓  ok")
+    // Legacy bare invocation: hakic file.haki — run like `hakic run file.haki`
+    doRun(srcPath)
 }

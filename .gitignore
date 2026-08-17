@@ -19,3 +19,8 @@ haki_bootstrap/hakic
 # mod_haki compiled binaries
 mod_haki/haki_fastcgi
 mod_haki/test_harness
+haki_bootstrap/hakic_a
+haki_bootstrap/hakic_b
+haki_bootstrap/hakic_s3
+haki_bootstrap/hakic_s4
+haki_bootstrap/hakic_v500

@@ -3110,19 +3110,8 @@ int main(int argc, char** argv) {
         doEmitC(srcPath, outPath);
         return 0;
     }
-    void* __mr_src = (void*)(haki_read_file(srcPath));
-    void* src = (void*)((intptr_t)((void**)(__mr_src))[0]);
-    void* _mainErr = (void*)((intptr_t)((void**)(__mr_src))[1]);
-    haki_print("[lex+parse]");
-    void* __mr_items = (void*)(compiler__parse(src));
-    void* items = (void*)((intptr_t)((void**)(__mr_items))[0]);
-    void* _pe4 = (void*)((intptr_t)((void**)(__mr_items))[1]);
-    haki_print("[typecheck]");
-    void* __mr_sym = (void*)(typeck__typecheck(src));
-    SymTable* sym = (SymTable*)((intptr_t)((void**)(__mr_sym))[0]);
-    void* _te4 = (void*)((intptr_t)((void**)(__mr_sym))[1]);
-    haki_print("");
-    haki_print("✓  ok");
+    /* Legacy bare invocation: hakic file.haki — run like `hakic run file.haki` */
+    doRun(srcPath);
     return 0;
 }
 
