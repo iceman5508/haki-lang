@@ -54,14 +54,85 @@ struct SymTable {
     let fns:    Map<string, FnInfo>
     let structs: Map<string, int>   // name → field count
     let errors: Array<string>
+    // Generic instantiations discovered while walking call sites.
+    // Parallel arrays: base template name, and the comma-separated type tags
+    // chosen for it (e.g. "identity" / "string"). The C emitter drains these
+    // between its discovery pass and its real emit pass.
+    let genericBase: Array<string>
+    let genericTags: Array<string>
+    // Enum variant constructor names, so call-site checking does not report
+    // `Some(x)` as an unknown function (and does not offer a typo hint for it).
+    let variants: Array<string>
+    // Capture lists for lifted function literals, recorded when the literal is
+    // walked in its enclosing scope and read back when the lifted function
+    // itself is emitted. Parallel arrays: lifted name, "name:cty,name:cty".
+    let capLit:  Array<string>
+    let capList: Array<string>
 }
 
 fn symNew() -> SymTable {
     return SymTable(
         fns:    Map(),
         structs: Map(),
-        errors: []
+        errors: [],
+        genericBase: [],
+        genericTags: [],
+        variants: [],
+        capLit: [],
+        capList: []
     )
+}
+
+fn symGenericCount(sym: SymTable) -> int {
+    return sym.genericBase.length
+}
+
+fn symGenericBaseAt(sym: SymTable, i: int) -> string {
+    if i < 0 || i >= sym.genericBase.length { return "" }
+    return sym.genericBase[i]
+}
+
+fn symGenericTagsAt(sym: SymTable, i: int) -> string {
+    if i < 0 || i >= sym.genericTags.length { return "" }
+    return sym.genericTags[i]
+}
+
+fn symClearErrors(sym: SymTable) {
+    let fresh: Array<string> = []
+    sym.errors = fresh
+}
+
+/// Record one instantiation, ignoring duplicates.
+fn symRecordGeneric(sym: SymTable, base: string, tags: string) {
+    let i = 0
+    while i < sym.genericBase.length {
+        if sym.genericBase[i] == base && sym.genericTags[i] == tags { return }
+        i = i + 1
+    }
+    sym.genericBase.append(base)
+    sym.genericTags.append(tags)
+}
+
+fn symRecordCaptures(sym: SymTable, lit: string, list: string) {
+    let i = 0
+    while i < sym.capLit.length {
+        if sym.capLit[i] == lit {
+            sym.capList[i] = list
+            return
+        }
+        i = i + 1
+    }
+    sym.capLit.append(lit)
+    sym.capList.append(list)
+}
+
+fn symCapturesFor(sym: SymTable, lit: string) -> string {
+    let i = 0
+    while i < sym.capLit.length {
+        if sym.capLit[i] == lit { return sym.capList[i] }
+        i = i + 1
+    }
+    return ""
 }
 
 fn symError(sym: SymTable, msg: string) {
@@ -128,8 +199,31 @@ fn collectItem(sym: SymTable, item: compiler.Item) {
             yield false
         }
         IImport(p, a) { yield false }
+        IEnum(en, evs) {
+            // Variants may be stored as "Name:PayloadTy" — keep just the name.
+            for v in evs {
+                let vname = v
+                let ci = 0
+                while ci < string_length(v) {
+                    if v.substring(ci, ci + 1) == ":" {
+                        vname = v.substring(0, ci)
+                        ci = string_length(v)
+                    }
+                    ci = ci + 1
+                }
+                sym.variants.append(vname)
+            }
+            yield false
+        }
     }
     const _ = isFn
+}
+
+fn isEnumVariant(sym: SymTable, name: string) -> bool {
+    for v in sym.variants {
+        if v == name { return true }
+    }
+    return false
 }
 
 fn collectItems(sym: SymTable, items: Array<compiler.Item>) {
@@ -162,6 +256,7 @@ fn inferExprInner(sym: SymTable, e: compiler.Expr) -> SemTy {
         EMatch(s, arms)     { yield "match" }
         EBlock(stmts)       { yield "block" }
         EAsync(inner)       { yield "async" }
+        EFnLit(lf)          { yield "fnlit" }
     }
     if tag == "int"    { return TyInt }
     if tag == "bool"   { return TyBool }
@@ -181,6 +276,53 @@ fn inferBinary(sym: SymTable, e: compiler.Expr) -> SemTy {
     return TyBool
 }
 
+// Check if two strings differ by at most 2 characters (simple edit-distance approx)
+fn isTypo(a: string, b: string) -> bool {
+    const la = string_length(a)
+    const lb = string_length(b)
+    if la == 0 || lb == 0 { return false }
+    // Must be similar length: within 2
+    let diff = la - lb
+    if diff < 0 { diff = lb - la }
+    if diff > 2 { return false }
+    // Count mismatched chars up to shorter length
+    const minLen = if la < lb { la } else { lb }
+    let mismatches = 0
+    let i = 0
+    while i < minLen {
+        if a.substring(i, i + 1) != b.substring(i, i + 1) { mismatches = mismatches + 1 }
+        i = i + 1
+    }
+    mismatches = mismatches + diff
+    return mismatches <= 2
+}
+
+fn builtinNames() -> Array<string> {
+    return ["print", "print_int", "print_float", "print_bool",
+            "int_to_string", "string_to_int", "bool_to_string",
+            "string_length", "float_to_string", "string_to_float",
+            "int_to_float", "float_to_int",
+            "argv", "readFile", "writeFile", "fileExists", "runCmd", "panic",
+            "Map", "Array", "Error", "append", "println", "printf"]
+}
+
+fn isKnownBuiltin(name: string) -> bool {
+    for b in builtinNames() {
+        if b == name { return true }
+    }
+    return false
+}
+
+fn findTypoSuggestion(sym: SymTable, name: string) -> string {
+    // A name that IS a builtin is not a typo of itself — without this guard the
+    // checker reports "unknown function 'print' — did you mean 'print'?".
+    if isKnownBuiltin(name) { return "" }
+    for b in builtinNames() {
+        if b != name && isTypo(name, b) { return b }
+    }
+    return ""
+}
+
 fn inferCall(sym: SymTable, e: compiler.Expr) -> SemTy {
     const name = match e { ECall(n, args) { yield n } _ { yield "" } }
     const args = match e { ECall(n, args) { yield args } _ { yield [] } }
@@ -192,6 +334,23 @@ fn inferCall(sym: SymTable, e: compiler.Expr) -> SemTy {
                 int_to_string(args.length))
         }
         return info.retTy
+    }
+    // Builtins are resolved by the emitter, not the symbol table.
+    if isKnownBuiltin(name) { return TyNamed(name) }
+    // Enum variant constructors are calls syntactically but are not functions.
+    if isEnumVariant(sym, name) { return TyNamed(name) }
+    // A capitalized callee is a type or variant constructor (Some(x), Point(...)),
+    // not a misspelled function. `hakic check` runs on a single file and cannot
+    // see enums declared in imported modules, so without this it reports every
+    // cross-module constructor as an unknown function.
+    if string_length(name) > 0 {
+        const c0 = name.substring(0, 1)
+        if c0 == c0.toUpper() && c0 != c0.toLower() { return TyNamed(name) }
+    }
+    // Unknown function — check for typo suggestion
+    const suggestion = findTypoSuggestion(sym, name)
+    if string_length(suggestion) > 0 {
+        symError(sym, "unknown function '" + name + "' — did you mean '" + suggestion + "'?")
     }
     return TyNamed(name)
 }
@@ -254,6 +413,7 @@ fn checkItems(sym: SymTable, items: Array<compiler.Item>) {
             IFn(f)     { checkFn(sym, f)  yield 0 }
             IStruct(s) { yield 0 }
             IImport(p, a) { yield 0 }
+            IEnum(en, evs) { yield 0 }
         }
     }
 }

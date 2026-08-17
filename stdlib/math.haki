@@ -90,6 +90,11 @@ fn roundInt(x: f64) -> int {
     return haki_math_round_to_int(x)
 }
 
+/// Round x to nearest float (half-away-from-zero).
+fn round(x: f64) -> f64 {
+    return haki_math_round(x)
+}
+
 // ── Extern declarations ───────────────────────────────────────────────────────
 extern "c" fn haki_math_sqrt(x: f64) -> f64
 extern "c" fn haki_math_floor(x: f64) -> f64

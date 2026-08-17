@@ -51,6 +51,7 @@ enum TokenKind {
     TkDot
     TkColon
     TkSemicolon
+    TkAt           // @  (annotation prefix)
     TkArrow        // ->
     TkFatArrow     // =>
     TkQuestion     // ?
@@ -293,6 +294,8 @@ fn tokenize(src: string) -> Array<Token> {
         if ch == "," { tokens.append(Token(kind: TkComma,     lo: lo, hi: l.pos))  continue }
         if ch == "." { tokens.append(Token(kind: TkDot,       lo: lo, hi: l.pos))  continue }
         if ch == ":" { tokens.append(Token(kind: TkColon,     lo: lo, hi: l.pos))  continue }
+        if ch == ";" { tokens.append(Token(kind: TkSemicolon, lo: lo, hi: l.pos))  continue }
+        if ch == "@" { tokens.append(Token(kind: TkAt,        lo: lo, hi: l.pos))  continue }
         if ch == "?" { tokens.append(Token(kind: TkQuestion,  lo: lo, hi: l.pos))  continue }
         if ch == "_" { tokens.append(Token(kind: TkUnder,     lo: lo, hi: l.pos))  continue }
         if ch == "!" { tokens.append(Token(kind: TkBang,      lo: lo, hi: l.pos))  continue }
@@ -349,6 +352,7 @@ fn showKind(k: TokenKind) -> string {
         TkSlash     { yield "/" }        TkPercent { yield "%" }
         TkAmpAmp    { yield "&&" }       TkPipePipe{ yield "||" }
         TkEof       { yield "EOF" }      TkSemicolon{ yield ";" }
+        TkAt        { yield "@" }
         TkFloat(n)  { yield "Float(" + int_to_string(n) + ")" }
     }
     return s
@@ -377,6 +381,7 @@ enum Expr {
     EBool(bool)
     ENull
     EString(string)
+    EFloat(string)
     EFStr(Array<Expr>)
     ETry(Expr)
     ENamedCall(string, Array<Expr>)
@@ -392,6 +397,7 @@ enum Expr {
     EMatch(Expr, Array<MatchArm>)
     EBlock(Array<Stmt>)
     EAsync(Expr)
+    EFnLit(FnDef)       // fn(params) -> Ret { body } in expression position
 }
 
 enum Stmt {
@@ -426,6 +432,7 @@ struct FnDef {
 struct MatchArm {
     const pattern:  string
     const bindings: Array<string>
+    const guard:    Expr     // ENull means no guard
     const body:     Array<Stmt>
 }
 
@@ -444,12 +451,31 @@ enum Item {
 // ── Parser state ──────────────────────────────────────────────────────────────
 
 struct Parser {
-    const tokens: Array<Token>
-    let pos:      int
+    const tokens:      Array<Token>
+    let pos:           int
+    let litCount:      int
+    let aliasNames:    Array<string>
+    let aliasTargets:  Array<string>
+    let pendingItems:  Array<Item>
+    let methodFnDefs:  Array<FnDef>
+    let methodOwner:   Array<string>
 }
 
 fn parserNew(tokens: Array<Token>) -> Parser {
-    return Parser(tokens: tokens, pos: 0)
+    let emptyFnDefs: Array<FnDef> = []
+    let emptyOwners: Array<string> = []
+    let emptyItems:  Array<Item> = []
+    return Parser(tokens: tokens, pos: 0, litCount: 0, aliasNames: [], aliasTargets: [],
+        pendingItems: emptyItems, methodFnDefs: emptyFnDefs, methodOwner: emptyOwners)
+}
+
+fn resolveAlias(p: Parser, name: string) -> string {
+    let i = 0
+    while i < p.aliasNames.length {
+        if p.aliasNames[i] == name { return p.aliasTargets[i] }
+        i = i + 1
+    }
+    return ""
 }
 
 fn peek(p: Parser) -> Token {
@@ -588,6 +614,8 @@ fn parseSimpleTyStr(p: Parser) -> (string, Error?) {
             const _ = advance(p)
             return baseName + "?", null
         }
+        const __aliasR = resolveAlias(p, baseName)
+        if string_length(__aliasR) > 0 { return __aliasR, null }
         return baseName, null
     }
     // Builtin named types
@@ -605,7 +633,55 @@ fn parseSimpleTyStr(p: Parser) -> (string, Error?) {
 // ── Expression parsing ────────────────────────────────────────────────────────
 
 fn parseExpr(p: Parser) -> (Expr, Error?) {
-    return parseOr(p)
+    const cond, ce = parseNilCoalesce(p)
+    if ce != null { return cond, ce }
+    // Ternary: cond ? a : b. "??" is consumed by parseNilCoalesce and "?." by
+    // the postfix parser, so a "?" still sitting here can only be a ternary.
+    // Lowered to an if-expression, which the emitter already renders as a C
+    // conditional.
+    if peekKind(p) == "?" {
+        const _ = advance(p)
+        const thenE, te = parseExpr(p)
+        if te != null { return thenE, te }
+        const _, cle = expect(p, ":")
+        if cle != null { return thenE, cle }
+        const elseE, ee = parseExpr(p)
+        if ee != null { return elseE, ee }
+        let thenB: Array<Stmt> = []
+        thenB.append(SYield(thenE))
+        let elseB: Array<Stmt> = []
+        elseB.append(SYield(elseE))
+        return EIf(cond, thenB, elseB), null
+    }
+    return cond, null
+}
+
+// Nil-coalesce: expr ?? expr
+// Two consecutive "?" tokens = "??" operator
+fn parseNilCoalesce(p: Parser) -> (Expr, Error?) {
+    const left, le = parseOr(p)
+    if le != null { return left, le }
+    let result = left
+    let going = true
+    while going {
+        if peekKind(p) == "?" {
+            const savedPos = p.pos
+            const _ = advance(p)   // consume first "?"
+            if peekKind(p) == "?" {
+                const _ = advance(p)   // consume second "?"
+                const right, re = parseOr(p)
+                if re != null { return result, re }
+                result = EBinary("??", result, right)
+            } else {
+                // Single "?", put it back
+                p.pos = savedPos
+                going = false
+            }
+        } else {
+            going = false
+        }
+    }
+    return result, null
 }
 
 fn parseOr(p: Parser) -> (Expr, Error?) {
@@ -712,6 +788,12 @@ fn parseMulDiv(p: Parser) -> (Expr, Error?) {
 
 fn parseUnary(p: Parser) -> (Expr, Error?) {
     const k = peekKind(p)
+    // `await e` — with sequential async lowering an async call has already
+    // produced its value by the time await sees it, so await is the identity.
+    if k == "await" {
+        const _ = advance(p)
+        return parseUnary(p)
+    }
     if k == "-" || k == "!" {
         const _ = advance(p)
         const operand, oe = parsePostfix(p)
@@ -731,8 +813,14 @@ fn parsePostfix(p: Parser) -> (Expr, Error?) {
         if k == "." {
             const _ = advance(p)
             const fieldK = peekKind(p)
+            let dotName = ""
             if string_length(fieldK) > 6 && fieldK.substring(0, 6) == "Ident(" {
-                const field = fieldK.substring(6, string_length(fieldK) - 1)
+                dotName = fieldK.substring(6, string_length(fieldK) - 1)
+            } else {
+                dotName = keywordAsName(fieldK)
+            }
+            if string_length(dotName) > 0 {
+                const field = dotName
                 const _ = advance(p)
                 if peekKind(p) == "(" {
                     const _ = advance(p)
@@ -754,6 +842,41 @@ fn parsePostfix(p: Parser) -> (Expr, Error?) {
             const _, be2 = expect(p, "]")
             if be2 != null { return result, be2 }
             result = EIndex(result, idx)
+        } else if k == "?" {
+            // Optional chain: ?. (two tokens: "?" then ".")
+            const savedPos2 = p.pos
+            const _ = advance(p)   // consume "?"
+            if peekKind(p) == "." {
+                const _ = advance(p)   // consume "."
+                const fieldK2 = peekKind(p)
+                let dotName2 = ""
+                if string_length(fieldK2) > 6 && fieldK2.substring(0, 6) == "Ident(" {
+                    dotName2 = fieldK2.substring(6, string_length(fieldK2) - 1)
+                } else {
+                    dotName2 = keywordAsName(fieldK2)
+                }
+                if string_length(dotName2) > 0 {
+                    const field2 = dotName2
+                    const _ = advance(p)
+                    if peekKind(p) == "(" {
+                        const _ = advance(p)
+                        const args2, ae2 = parseArgList(p)
+                        if ae2 != null { return result, ae2 }
+                        const _, pe2 = expect(p, ")")
+                        if pe2 != null { return result, pe2 }
+                        result = EMethodCall(result, "__optchain__" + field2, args2)
+                    } else {
+                        result = EMethodCall(result, "__optchain__" + field2, emptyExprs())
+                    }
+                } else {
+                    p.pos = savedPos2
+                    going = false
+                }
+            } else {
+                // Single "?" without "." — not optional chain, put it back
+                p.pos = savedPos2
+                going = false
+            }
         } else {
             going = false
         }
@@ -761,9 +884,70 @@ fn parsePostfix(p: Parser) -> (Expr, Error?) {
     return result, null
 }
 
+/// After a "." a name is always expected, so a reserved word there is a member
+/// name, not a keyword. The lexer emits keywords as their bare text ("match",
+/// "type", "in"), identifiers as "Ident(x)" and punctuation as itself — so a
+/// token whose kind is all lowercase letters is a keyword being used as a name.
+/// Without this, `r.match(text)` parsed as a match expression and the rest of
+/// the file was lost.
+fn keywordAsName(kind: string) -> string {
+    // Matched against an explicit list rather than a character-class test.
+    // A character test would need charCodeAt, and older stage compilers do not
+    // intercept it — they emit `kind->charCodeAt(...)`, which does not compile.
+    // Keeping this dependency-free means the previous stage can still build
+    // this file, which is what makes the bootstrap ladder work.
+    if kind == "match"    { return kind }
+    if kind == "type"     { return kind }
+    if kind == "in"       { return kind }
+    if kind == "for"      { return kind }
+    if kind == "if"       { return kind }
+    if kind == "else"     { return kind }
+    if kind == "while"    { return kind }
+    if kind == "return"   { return kind }
+    if kind == "break"    { return kind }
+    if kind == "continue" { return kind }
+    if kind == "yield"    { return kind }
+    if kind == "defer"    { return kind }
+    if kind == "import"   { return kind }
+    if kind == "as"       { return kind }
+    if kind == "fn"       { return kind }
+    if kind == "let"      { return kind }
+    if kind == "const"    { return kind }
+    if kind == "struct"   { return kind }
+    if kind == "class"    { return kind }
+    if kind == "enum"     { return kind }
+    if kind == "protocol" { return kind }
+    if kind == "impl"     { return kind }
+    if kind == "async"    { return kind }
+    if kind == "await"    { return kind }
+    if kind == "extern"   { return kind }
+    if kind == "weak"     { return kind }
+    if kind == "try"      { return kind }
+    if kind == "spawn"    { return kind }
+    return ""
+}
+
 fn parseArgList(p: Parser) -> (Array<Expr>, Error?) {
     let args: Array<Expr> = []
     while peekKind(p) != ")" && peekKind(p) != "EOF" {
+        // Named-arg call through dot-call syntax: recv.Method(field: val, ...)
+        // e.g. http.Server(port: 0). The bare-Ident(field: val) constructor
+        // path already skips "field:" labels; dot-calls never got the same
+        // treatment, so a label here parsed as a bare ident, then choked on
+        // the following ":" — an error that silently truncated the rest of
+        // the file (the caller stops parsing on the first error). Same
+        // lookahead-and-restore technique as the constructor path: peek past
+        // "Ident" for a following ":" and, if present, consume both before
+        // parsing the value.
+        if string_length(peekKind(p)) > 6 && peekKind(p).substring(0, 6) == "Ident(" {
+            let savedPos = p.pos
+            const _ = advance(p)
+            if peekKind(p) == ":" {
+                const _ = advance(p)
+            } else {
+                p.pos = savedPos
+            }
+        }
         const arg, ae = parseExpr(p)
         if ae != null { return args, ae }
         args.append(arg)
@@ -802,6 +986,20 @@ fn parsePrimary(p: Parser) -> (Expr, Error?) {
             i = i + 1
         }
         if neg { n = -n }
+        // Check for float literal: integer followed by "." then another integer (e.g. 3.14)
+        if peekKind(p) == "." {
+            const dotPos = p.pos
+            const _ = advance(p)   // consume "."
+            const afterDot = peekKind(p)
+            if string_length(afterDot) > 4 && afterDot.substring(0, 4) == "Int(" {
+                const mStr = afterDot.substring(4, string_length(afterDot) - 1)
+                const _ = advance(p)   // consume decimal part
+                return EFloat(nStr + "." + mStr), null
+            } else {
+                // Not a float — put the "." back
+                p.pos = dotPos
+            }
+        }
         return EInt(n), null
     }
 
@@ -880,6 +1078,14 @@ fn parsePrimary(p: Parser) -> (Expr, Error?) {
             } else if string_length(pk) > 6 && pk.substring(0, 6) == "Ident(" {
                 pat = pk.substring(6, string_length(pk) - 1)
                 const _ = advance(p)
+            } else if string_length(pk) > 4 && pk.substring(0, 4) == "Str(" {
+                // String literal pattern: "Saturday" → pat = "Str(Saturday)"
+                pat = pk
+                const _ = advance(p)
+            } else if string_length(pk) > 4 && pk.substring(0, 4) == "Int(" {
+                // Integer literal pattern: 42 → pat = "Int(42)"
+                pat = pk
+                const _ = advance(p)
             }
             // Optional bindings: Pattern(a, b, c)
             let bindings: Array<string> = []
@@ -899,10 +1105,18 @@ fn parsePrimary(p: Parser) -> (Expr, Error?) {
                 const _, rpe = expect(p, ")")
                 if rpe != null { return scrutinee, rpe }
             }
+            // Optional guard: if <expr>
+            let guardExpr: Expr = ENull
+            if peekKind(p) == "if" {
+                const _ = advance(p)   // consume "if"
+                const ge, gee = parseExpr(p)
+                if gee != null { return scrutinee, gee }
+                guardExpr = ge
+            }
             // Arm body
             const body, be = parseBlock(p)
             if be != null { return scrutinee, be }
-            arms.append(MatchArm(pattern: pat, bindings: bindings, body: body))
+            arms.append(MatchArm(pattern: pat, bindings: bindings, guard: guardExpr, body: body))
         }
         const _, rbe = expect(p, "}")
         if rbe != null { return scrutinee, rbe }
@@ -957,6 +1171,21 @@ fn parsePrimary(p: Parser) -> (Expr, Error?) {
         return EArray(elems), null
     }
 
+    // Lambda expression: fn(params) -> retTy { body }
+    // parseFn already tolerates a missing name, so the literal keeps its full
+    // signature and body; the emitter lifts it to a top-level C function.
+    if kind == "fn" {
+        const lf, lfe = parseFn(p)
+        // Give every literal a name that is unique within this parse. Both the
+        // lifting pass and the emitter key off it, so neither has to reproduce
+        // the other's traversal order to agree on which function is which.
+        const litName = "__fn_lit_" + int_to_string(p.litCount)
+        p.litCount = p.litCount + 1
+        const named = makeFnDef(litName, lf.params, lf.retTy, lf.body)
+        if lfe != null { return EFnLit(named), lfe }
+        return EFnLit(named), null
+    }
+
     return EIdent("__error__"), Error(message: "unexpected token in expr: " + kind)
 }
 
@@ -978,6 +1207,19 @@ fn parseBlock(p: Parser) -> (Array<Stmt>, Error?) {
 
 fn parseStmt(p: Parser) -> (Stmt, Error?) {
     const kind = peekKind(p)
+
+    // Semicolons are statement terminators/separators; skip as no-ops
+    if kind == ";" { const _ = advance(p)  return SExpr(EInt(0)), null }
+
+    // `spawn <expr>` — sequential lowering runs the closure immediately.
+    if kind == "spawn" || kind == "Ident(spawn)" {
+        const _ = advance(p)
+        const se2, spe = parseExpr(p)
+        if spe != null { return SExpr(se2), spe }
+        let spArgs: Array<Expr> = []
+        spArgs.append(se2)
+        return SExpr(ECall("__spawn__", spArgs)), null
+    }
 
     if kind == "return" {
         const _ = advance(p)
@@ -1021,11 +1263,13 @@ fn parseStmt(p: Parser) -> (Stmt, Error?) {
         if string_length(firstK) > 6 && firstK.substring(0, 6) == "Ident(" {
             const firstName = firstK.substring(6, string_length(firstK) - 1)
             const _ = advance(p)
+            let declaredTy = ""
             // Check for type annotation (single binding only)
             if peekKind(p) == ":" {
                 const _ = advance(p)
-                const _, te = parseSimpleTyStr(p)
+                const tyStr, te = parseSimpleTyStr(p)
                 if te != null { return SLet(isMut, firstName, ENull), te }
+                declaredTy = tyStr
             } else if peekKind(p) == "," {
                 // Multi-binding: const a, b, c = expr
                 let names: Array<string> = [firstName]
@@ -1072,7 +1316,32 @@ fn parseStmt(p: Parser) -> (Stmt, Error?) {
             if eqe != null { return SLet(isMut, firstName, ENull), eqe }
             const init, ie = parseExpr(p)
             if ie != null { return SLet(isMut, firstName, ENull), ie }
-            return SLet(isMut, firstName, init), null
+            let finalInit = init
+            if string_length(declaredTy) > 6 && declaredTy.substring(0, 6) == "Array<" {
+                const isEmptyArr = match init { EArray(elems) { yield elems.length == 0 } _ { yield false } }
+                if isEmptyArr {
+                    const elemTy = declaredTy.substring(6, string_length(declaredTy) - 1)
+                    finalInit = ECall("__typed_array__" + elemTy, [])
+                }
+            }
+            if string_length(declaredTy) > 4 && declaredTy.substring(0, 4) == "Map<" {
+                const isMapCtor = match init { ECall(n, args) { yield n == "Map" } _ { yield false } }
+                if isMapCtor {
+                    finalInit = ECall("__typed_map__" + declaredTy, [])
+                }
+            }
+            // Generic zero-arg constructors carry no type argument of their own
+            // (`Chan()`, `TaskGroup()`), so fold the declared type into the call
+            // and let the emitter recover the element type from it.
+            if string_length(declaredTy) > 5 && declaredTy.substring(0, 5) == "Chan<" {
+                const isChanCtor = match init { ECall(n, args) { yield n == "Chan" } _ { yield false } }
+                if isChanCtor { finalInit = ECall("__typed_ctor__" + declaredTy, []) }
+            }
+            if string_length(declaredTy) > 10 && declaredTy.substring(0, 10) == "TaskGroup<" {
+                const isTgCtor = match init { ECall(n, args) { yield n == "TaskGroup" } _ { yield false } }
+                if isTgCtor { finalInit = ECall("__typed_ctor__" + declaredTy, []) }
+            }
+            return SLet(isMut, firstName, finalInit), null
         }
         // Underscore sink: const _ = expr  OR  const _, rbe = expr (multi-binding starting with _)
         if peekKind(p) == "_" {
@@ -1164,6 +1433,43 @@ fn parseStmt(p: Parser) -> (Stmt, Error?) {
         return SFor(varName, iter, body), null
     }
 
+    // Statement-level @ annotation
+    if kind == "@" {
+        const _ = advance(p)
+        let annName = ""
+        if string_length(peekKind(p)) > 6 && peekKind(p).substring(0, 6) == "Ident(" {
+            annName = peekKind(p).substring(6, string_length(peekKind(p)) - 1)
+            const _ = advance(p)
+        }
+        if peekKind(p) == "(" {
+            let ad = 0
+            while peekKind(p) != "EOF" {
+                const atk = peekKind(p)
+                const _ = advance(p)
+                if atk == "(" { ad = ad + 1 }
+                if atk == ")" { ad = ad - 1 }
+                if ad <= 0 { break }
+            }
+        }
+        // @skip: consume and discard the next statement
+        if annName == "skip" {
+            const _s, _se = parseStmt(p)
+            return SExpr(EInt(0)), null
+        }
+        // Other annotations: ignore annotation, parse next statement normally
+        const ns, nse = parseStmt(p)
+        if nse != null { return SExpr(EInt(0)), null }
+        return ns, null
+    }
+
+    // Statement-level import (e.g. import math inside a fn): treat as no-op
+    if kind == "import" {
+        const _ = advance(p)
+        const _ = advance(p)  // skip path/name
+        if peekKind(p) == "as" { const _ = advance(p)  const _ = advance(p) }
+        return SExpr(EInt(0)), null
+    }
+
     // Expression statement or assignment
     const e, ee = parseExpr(p)
     if ee != null { return SExpr(e), ee }
@@ -1213,6 +1519,11 @@ fn parseFn(p: Parser) -> (FnDef, Error?) {
         name = nameK.substring(6, string_length(nameK) - 1)
         const _ = advance(p)
     }
+    // Skip optional generic type params <T, U, ...>
+    if peekKind(p) == "<" {
+        while peekKind(p) != ">" && peekKind(p) != "EOF" { const _ = advance(p) }
+        if peekKind(p) == ">" { const _ = advance(p) }
+    }
 
     const _, lpe = expect(p, "(")
     if lpe != null { return FnDef(name: name, params: [], retTy: "void", body: []), lpe }
@@ -1225,10 +1536,19 @@ fn parseFn(p: Parser) -> (FnDef, Error?) {
             pname = pk.substring(6, string_length(pk) - 1)
             const _ = advance(p)
         }
-        const _, ce = expect(p, ":")
-        if ce != null { return FnDef(name: name, params: params, retTy: "void", body: []), ce }
-        const ty, te = parseSimpleTyStr(p)
-        if te != null { return FnDef(name: name, params: params, retTy: "void", body: []), te }
+        // Type annotation is optional — fn-literal params in this corpus are
+        // routinely written untyped (fn(req, res) {...}), and requiring ":"
+        // here made that a hard parse error that silently truncated the rest
+        // of the item list (the caller stops on the first parse error, with
+        // no diagnostic). Default to "void*", this codebase's convention for
+        // opaque/unresolved types, when no annotation is given.
+        let ty = "void*"
+        if peekKind(p) == ":" {
+            const _ = advance(p)
+            const parsedTy, te = parseSimpleTyStr(p)
+            if te != null { return FnDef(name: name, params: params, retTy: "void", body: []), te }
+            ty = parsedTy
+        }
         params.append(Param(name: pname, ty: ty))
         const _ = eat(p, ",")
     }
@@ -1244,6 +1564,9 @@ fn parseFn(p: Parser) -> (FnDef, Error?) {
         retTy = ty
     }
 
+    if peekKind(p) != "{" {
+        return FnDef(name: name, params: params, retTy: retTy, body: []), null
+    }
     const body, be = parseBlock(p)
     if be != null { return FnDef(name: name, params: params, retTy: retTy, body: []), be }
 
@@ -1259,6 +1582,9 @@ fn parseItem(p: Parser) -> (Item, Error?) {
         let path = ""
         if string_length(pathK) > 4 && pathK.substring(0, 4) == "Str(" {
             path = pathK.substring(4, string_length(pathK) - 1)
+            const _ = advance(p)
+        } else if string_length(pathK) > 6 && pathK.substring(0, 6) == "Ident(" {
+            path = pathK.substring(6, string_length(pathK) - 1)
             const _ = advance(p)
         }
         let alias = path
@@ -1388,7 +1714,7 @@ fn parseItem(p: Parser) -> (Item, Error?) {
         return IEnum(ename, variants), null
     }
 
-    // class: parse like struct but also has methods — skip the whole body
+    // class: parse fields and methods, emit struct + method functions
     if kind == "class" {
         const _ = advance(p)
         const nk = peekKind(p)
@@ -1397,26 +1723,124 @@ fn parseItem(p: Parser) -> (Item, Error?) {
             cname = nk.substring(6, string_length(nk) - 1)
             const _ = advance(p)
         }
-        // Skip optional extends clause
-        if peekKind(p) == "extends" {
+        // Collect inherited fields if "extends ParentClass"
+        let fields: Array<Param> = []
+        let cfInfoStr = ""
+        // "extends" is not a reserved word in the lexer, so it arrives as an
+        // identifier token. Accept both spellings.
+        if peekKind(p) == "extends" || peekKind(p) == "Ident(extends)" {
             const _ = advance(p)
-            const _ = advance(p)  // skip superclass name
-        }
-        // Skip entire class body
-        let depth = 0
-        while peekKind(p) != "EOF" {
-            const tok = peekKind(p)
-            if tok == "{" { depth = depth + 1 }
-            if tok == "}" {
-                depth = depth - 1
-                if depth <= 0 {
-                    const _ = advance(p)
-                    break
+            const epk = peekKind(p)
+            if string_length(epk) > 6 && epk.substring(0, 6) == "Ident(" {
+                const parentName = epk.substring(6, string_length(epk) - 1)
+                const _ = advance(p)
+                // Load parent field info: "name:type,name:type,..."
+                const pfStr = resolveAlias(p, "__classfields__" + parentName)
+                if string_length(pfStr) > 0 {
+                    // Inherit the parent cfInfoStr as a prefix
+                    cfInfoStr = pfStr
+                    let pi3 = 0
+                    let seg3 = ""
+                    while pi3 <= string_length(pfStr) {
+                        let ch3 = if pi3 < string_length(pfStr) { yield pfStr.substring(pi3, pi3 + 1) } else { yield "," }
+                        if ch3 == "," {
+                            // segment = "fname:fty"
+                            let colonPos3 = 0
+                            let sj3 = 0
+                            while sj3 < string_length(seg3) {
+                                if seg3.substring(sj3, sj3 + 1) == ":" { colonPos3 = sj3 }
+                                sj3 = sj3 + 1
+                            }
+                            if colonPos3 > 0 {
+                                const pfname3 = seg3.substring(0, colonPos3)
+                                const pfty3 = seg3.substring(colonPos3 + 1, string_length(seg3))
+                                if string_length(pfname3) > 0 {
+                                    fields.append(Param(name: pfname3, ty: pfty3))
+                                }
+                            }
+                            seg3 = ""
+                        } else {
+                            seg3 = seg3 + ch3
+                        }
+                        pi3 = pi3 + 1
+                    }
+                }
+                // Also inherit parent methods: copy with child class prefix
+                // Use for-loop so pmf is properly typed as FnDef (not void*)
+                let mdi = 0
+                for pmf in p.methodFnDefs {
+                    if p.methodOwner[mdi] == parentName {
+                        // Extract method name: strip "ParentName__" prefix
+                        const prefixLen = string_length(parentName) + 2
+                        const mshortName = pmf.name.substring(prefixLen, string_length(pmf.name))
+                        // Build new params: self: cname first, then skip original self param
+                        let cprams: Array<Param> = []
+                        cprams.append(Param(name: "self", ty: cname))
+                        let cpri = 0
+                        for cp in pmf.params {
+                            if cpri > 0 { cprams.append(cp) }
+                            cpri = cpri + 1
+                        }
+                        const childMethodFn = FnDef(name: cname + "__" + mshortName, params: cprams, retTy: pmf.retTy, body: pmf.body)
+                        p.pendingItems.append(IFn(childMethodFn))
+                        p.methodFnDefs.append(childMethodFn)
+                        p.methodOwner.append(cname)
+                    }
+                    mdi = mdi + 1
                 }
             }
-            const _ = advance(p)
         }
-        return IStruct(StructDef(name: cname, fields: [])), null
+        // Parse opening brace
+        const _, cobe = expect(p, "{")
+        if cobe != null { return IStruct(StructDef(name: cname, fields: fields)), cobe }
+        // Parse class body: const/let field declarations and fn method declarations
+        // cfInfoStr is built incrementally here to avoid indexing void* arrays later
+        while peekKind(p) != "}" && peekKind(p) != "EOF" {
+            const ctok = peekKind(p)
+            if ctok == "const" || ctok == "let" {
+                // Field: const/let fieldname: type
+                const _ = advance(p)
+                const fnk2 = peekKind(p)
+                let fname2 = ""
+                if string_length(fnk2) > 6 && fnk2.substring(0, 6) == "Ident(" {
+                    fname2 = fnk2.substring(6, string_length(fnk2) - 1)
+                    const _ = advance(p)
+                }
+                if peekKind(p) == ":" {
+                    const _ = advance(p)
+                    const fty2, fte2 = parseSimpleTyStr(p)
+                    if fte2 != null { return IStruct(StructDef(name: cname, fields: fields)), fte2 }
+                    if string_length(fname2) > 0 {
+                        fields.append(Param(name: fname2, ty: fty2))
+                        if string_length(cfInfoStr) > 0 { cfInfoStr = cfInfoStr + "," }
+                        cfInfoStr = cfInfoStr + fname2 + ":" + fty2
+                    }
+                }
+            } else if ctok == "fn" {
+                // Method: fn methodName(params) -> retTy { body }
+                const mf2, mfe2 = parseFn(p)
+                if mfe2 != null { return IStruct(StructDef(name: cname, fields: fields)), mfe2 }
+                // Build mangled params: self first, then original params
+                // Use for-loop so mp2 is properly typed as Param (not void*)
+                let mprams2: Array<Param> = []
+                mprams2.append(Param(name: "self", ty: cname))
+                for mp2 in mf2.params {
+                    mprams2.append(mp2)
+                }
+                const mangledFn2 = FnDef(name: cname + "__" + mf2.name, params: mprams2, retTy: mf2.retTy, body: mf2.body)
+                p.pendingItems.append(IFn(mangledFn2))
+                p.methodFnDefs.append(mangledFn2)
+                p.methodOwner.append(cname)
+            } else {
+                const _ = advance(p)
+            }
+        }
+        const _, crbe = expect(p, "}")
+        if crbe != null { return IStruct(StructDef(name: cname, fields: fields)), crbe }
+        // Store field info for inheritance lookup (built incrementally above, no indexing needed)
+        p.aliasNames.append("__classfields__" + cname)
+        p.aliasTargets.append(cfInfoStr)
+        return IStruct(StructDef(name: cname, fields: fields)), null
     }
 
     // protocol / impl: skip entirely
@@ -1438,6 +1862,84 @@ fn parseItem(p: Parser) -> (Item, Error?) {
         return IImport("__skip__", "__skip__"), null
     }
 
+    // Top-level @ annotation: consume and parse the underlying item
+    if kind == "@" {
+        const _ = advance(p)
+        // consume annotation name (could be Ident or a keyword like "extern", "inline")
+        const annK = peekKind(p)
+        const isAnnotIdent = string_length(annK) > 6 && annK.substring(0, 6) == "Ident("
+        const isAnnotKw = annK != "(" && annK != "EOF" && annK != "{" && annK != "fn" && annK != "}"
+        if isAnnotIdent || isAnnotKw {
+            const _ = advance(p)
+        }
+        // consume optional argument list (...)
+        if peekKind(p) == "(" {
+            let ad = 0
+            while peekKind(p) != "EOF" {
+                const atk = peekKind(p)
+                const _ = advance(p)
+                if atk == "(" { ad = ad + 1 }
+                if atk == ")" { ad = ad - 1 }
+                if ad <= 0 { break }
+            }
+        }
+        return parseItem(p)
+    }
+
+    // async fn: consume async keyword, then parse the underlying fn item
+    if kind == "async" {
+        const _ = advance(p)
+        return parseItem(p)
+    }
+
+    // type alias: parse name and target, store in parser, return a no-op import
+    // Note: "type" is NOT a keyword so it lexes as Ident(type) → kind == "Ident(type)"
+    if kind == "Ident(type)" {
+        const _ = advance(p)
+        let aliasName = ""
+        if string_length(peekKind(p)) > 6 && peekKind(p).substring(0, 6) == "Ident(" {
+            const nk = peekKind(p)
+            aliasName = nk.substring(6, string_length(nk) - 1)
+            const _ = advance(p)
+        }
+        if peekKind(p) == "=" { const _ = advance(p) }
+        const targetTy, _ae = parseSimpleTyStr(p)
+        if string_length(aliasName) > 0 && string_length(targetTy) > 0 {
+            p.aliasNames.append(aliasName)
+            p.aliasTargets.append(targetTy)
+        }
+        return IImport("__skip__", "__skip__"), null
+    }
+
+    // extern declaration: skip ABI string and optional fn declaration, treat as no-op
+    if kind == "extern" {
+        const _ = advance(p)
+        const ek = peekKind(p)
+        if string_length(ek) > 4 && ek.substring(0, 4) == "Str(" { const _ = advance(p) }
+        // If followed by fn, consume the full fn declaration (name, params, retTy) — no body
+        if peekKind(p) == "fn" {
+            const _ = advance(p)
+            if string_length(peekKind(p)) > 6 && peekKind(p).substring(0, 6) == "Ident(" {
+                const _ = advance(p)
+            }
+            if peekKind(p) == "(" {
+                let epd = 0
+                while peekKind(p) != "EOF" {
+                    const etk = peekKind(p)
+                    const _ = advance(p)
+                    if etk == "(" { epd = epd + 1 }
+                    if etk == ")" { epd = epd - 1 }
+                    if epd <= 0 { break }
+                }
+            }
+            if peekKind(p) == "->" {
+                const _ = advance(p)
+                const _ety, _ete = parseSimpleTyStr(p)
+            }
+        }
+        return IImport("__skip__", "__skip__"), null
+    }
+
     return IFn(FnDef(name: "__error__", params: [], retTy: "void", body: [])),
         Error(message: "unexpected top-level token: " + kind)
 }
@@ -1453,6 +1955,14 @@ fn parse(src: string) -> (Array<Item>, Error?) {
         const item, ie = parseItem(p)
         if ie != null { return items, ie }
         items.append(item)
+        // Drain items queued by the class parser (methods become IFn items)
+        let pdi = 0
+        while pdi < p.pendingItems.length {
+            items.append(p.pendingItems[pdi])
+            pdi = pdi + 1
+        }
+        let emptyItems2: Array<Item> = []
+        p.pendingItems = emptyItems2
     }
 
     return items, null
@@ -1481,6 +1991,7 @@ fn showExpr(e: Expr) -> string {
         EMatch(s, arms)     { yield "match " + showExpr(s) + " {...}" }
         EBlock(bstmts)      { yield "{...}" }
         EAsync(inner)       { yield "async " + showExpr(inner) }
+        EFnLit(lf)          { yield "fn(...) {...}" }
     }
     return s
 }
@@ -1589,6 +2100,51 @@ fn emptyStructDef() -> StructDef {
 
 fn makeFnDef(name: string, params: Array<Param>, retTy: string, body: Array<Stmt>) -> FnDef {
     return FnDef(name: name, params: params, retTy: retTy, body: body)
+}
+
+fn makeParam(name: string, ty: string) -> Param {
+    return Param(name: name, ty: ty)
+}
+
+fn fnDefName(f: FnDef) -> string {
+    return f.name
+}
+
+fn fnDefParams(f: FnDef) -> Array<Param> {
+    return f.params
+}
+
+fn fnDefRetTy(f: FnDef) -> string {
+    return f.retTy
+}
+
+fn fnDefBody(f: FnDef) -> Array<Stmt> {
+    return f.body
+}
+
+fn armBindings(a: MatchArm) -> Array<string> {
+    return a.bindings
+}
+
+fn paramName(p: Param) -> string {
+    return p.name
+}
+
+fn armBody(a: MatchArm) -> Array<Stmt> {
+    return a.body
+}
+
+/// Render a FnDef's signature as the type string the rest of the compiler uses
+/// for first-class function values: "fn(int, string) -> bool".
+fn fnDefTyStr(f: FnDef) -> string {
+    let s = "fn("
+    let i = 0
+    while i < f.params.length {
+        if i > 0 { s = s + ", " }
+        s = s + f.params[i].ty
+        i = i + 1
+    }
+    return s + ") -> " + f.retTy
 }
 
 // Sentinel null expression for use in other modules

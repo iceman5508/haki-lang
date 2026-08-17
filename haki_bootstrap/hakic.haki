@@ -1,29 +1,69 @@
-// hakic.haki — Haki compiler driver (bootstrap-compatible, v2.0)
+// hakic.haki — Haki compiler driver v5.0.0
 //
-// Bootstrap-restricted Haki: no multi-return destructuring, no qualified calls.
-// Import resolution: recursively reads and merges all imported modules.
+// Supports subcommands: run, build, check, fmt, init, doc, --emit-c
+// Uses getBinDir() so runtime and stdlib paths work from any cwd.
 
 import "./haki_compiler" as compiler
 import "./haki_typeck"   as typeck
 import "./haki_mono"     as mono
 import "./haki_cemit"    as cemit
 
-fn printUsage() {
-    print("usage: hakic <source.haki>")
-    print("       hakic check <source.haki>")
-    print("       hakic <source.haki> --emit-c -o <output>")
+// ── Path helpers ──────────────────────────────────────────────────────────────
+
+fn getBinDir() -> string {
+    const allArgs = argv()
+    if allArgs.length == 0 { return "." }
+    const bin = allArgs[0]
+    let lastSlash = -1
+    let i = 0
+    while i < string_length(bin) {
+        if bin.substring(i, i + 1) == "/" { lastSlash = i }
+        i = i + 1
+    }
+    if lastSlash < 0 { return "." }
+    return bin.substring(0, lastSlash)
 }
 
-fn doCheck(path: string) {
-    const src, _readErr = readFile(path)
-    const items, _pe1 = compiler__parse(src)
-    const sym, _te1 = typeck__typecheck(src)
-    print("✓  " + path)
+fn getRuntimePath() -> string {
+    return getBinDir() + "/haki_runtime_core.c"
 }
 
-// Resolve all imports in an items list, merging their MonoPrograms into dst.
-// Each IImport(path, alias) is processed: parse the file, monomorphize it,
-// merge with alias__ prefix so call sites match.
+fn getStdlibPath(name: string) -> string {
+    return getBinDir() + "/../stdlib/" + name + ".haki"
+}
+
+fn isStdlibModule(path: string) -> bool {
+    // A stdlib module has no "/" and no "." (it's a bare name like "math", "strings")
+    let i = 0
+    while i < string_length(path) {
+        const ch = path.substring(i, i + 1)
+        if ch == "/" { return false }
+        if ch == "." { return false }
+        i = i + 1
+    }
+    return true
+}
+
+// Native modules are implemented in haki_runtime_core.c, NOT in .haki source files.
+// Loading their .haki files would cause duplicate C definitions ("conflicting types" / "redefinition").
+fn isNativeModule(path: string) -> bool {
+    if path == "math"     { return true }
+    if path == "env"      { return true }
+    if path == "strings"  { return true }
+    if path == "process"  { return true }
+    if path == "fs"       { return true }
+    if path == "json"     { return true }
+    if path == "template" { return true }
+    if path == "csv"      { return true }
+    if path == "crypto"   { return true }
+    if path == "regex"    { return true }
+    if path == "http"     { return true }
+    if path == "time"     { return true }
+    return false
+}
+
+// ── Import resolution ─────────────────────────────────────────────────────────
+
 fn alreadyResolved(visited: Array<string>, path: string) -> bool {
     for p in visited {
         if p == path { return true }
@@ -42,15 +82,20 @@ fn resolveImports(dst: mono.MonoProgram, items: Array<compiler.Item>, visited: A
         if isImport {
             const path  = match item { IImport(p, a) { yield p } _ { yield "" } }
             const alias = match item { IImport(p, a) { yield a } _ { yield "" } }
-            if path != "__skip__" {
-                const fullPath = path + ".haki"
+            if path != "__skip__" && string_length(path) > 0 && !isNativeModule(path) {
+                let fullPath = path + ".haki"
+                if isStdlibModule(path) {
+                    fullPath = getStdlibPath(path)
+                }
                 if !alreadyResolved(visited, fullPath) {
                     visited.append(fullPath)
-                    const modSrc, _modErr2 = readFile(fullPath)
-                    const modItems, _pe2 = compiler__parse(modSrc)
-                    const modProg = mono__monomorphize(modItems)
-                    mono__mergeProgramWithAlias(dst, modProg, alias)
-                    resolveImports(dst, modItems, visited)
+                    const modSrc, _modErr = readFile(fullPath)
+                    if string_length(modSrc) > 0 {
+                        const modItems, _pe = compiler__parse(modSrc)
+                        const modProg = mono__monomorphize(modItems)
+                        mono__mergeProgramWithAlias(dst, modProg, alias)
+                        resolveImports(dst, modItems, visited)
+                    }
                 }
             }
         }
@@ -58,20 +103,130 @@ fn resolveImports(dst: mono.MonoProgram, items: Array<compiler.Item>, visited: A
     }
 }
 
-fn doEmitC(srcPath: string, outPath: string) {
-    const src, _srcErr = readFile(srcPath)
-    const items, _pe3 = compiler__parse(src)
-    const rtSrc, _rtErr = readFile("./haki_runtime_core.c")
+// ── Core emit helpers ─────────────────────────────────────────────────────────
 
-    // Resolve all imports into the monomorphized program before emitting.
+fn doEmitCQuiet(srcPath: string, outPath: string, rtSrc: string) {
+    const src, _srcErr = readFile(srcPath)
+    const items, _pe = compiler__parse(src)
     const prog = mono__monomorphize(items)
     let visited = [srcPath]
     resolveImports(prog, items, visited)
-
     const cSrc = cemit__emitProgram(prog, rtSrc)
-
     const _wErr = writeFile(outPath, cSrc)
-    print("[emit-c]  " + outPath + " (" + int_to_string(string_length(cSrc)) + " bytes)")
+}
+
+fn doEmitC(srcPath: string, outPath: string) {
+    const rtSrc, _rtErr = readFile(getRuntimePath())
+    doEmitCQuiet(srcPath, outPath, rtSrc)
+    const src, _se = readFile(outPath)
+    print("[emit-c]  " + outPath + " (" + int_to_string(string_length(src)) + " bytes)")
+}
+
+// ── Subcommands ───────────────────────────────────────────────────────────────
+
+fn doCheck(path: string) {
+    const src, _readErr = readFile(path)
+    const items, pe1 = compiler__parse(src)
+    if pe1 != null {
+        print("parse error: " + pe1.message)
+        return
+    }
+    const sym, te1 = typeck__typecheck(src)
+    if te1 != null {
+        print("error: " + te1.message)
+        return
+    }
+    print("✓  " + path)
+}
+
+fn doRun(srcPath: string) {
+    const rtSrc, _rtErr = readFile(getRuntimePath())
+    const cPath = "/tmp/_hakic_run.c"
+    const binPath = "/tmp/_hakic_run_bin"
+    doEmitCQuiet(srcPath, cPath, rtSrc)
+    const r1 = runCmd("cc -std=gnu11 " + cPath + " -o " + binPath + " -lm -lpthread 2>/tmp/_hakic_cc.log")
+    if r1 != 0 {
+        const r1b = runCmd("gcc -std=gnu11 " + cPath + " -o " + binPath + " -lm -lpthread 2>/tmp/_hakic_cc.log")
+        if r1b != 0 {
+            const log, _lerr = readFile("/tmp/_hakic_cc.log")
+            print(log)
+            return
+        }
+    }
+    const _r2 = runCmd(binPath)
+}
+
+fn doBuild(srcPath: string, outPath: string, release: bool, target: string) {
+    const rtSrc, _rtErr = readFile(getRuntimePath())
+    const cPath = "/tmp/_hakic_build.c"
+    doEmitCQuiet(srcPath, cPath, rtSrc)
+    // Link libraries MUST come after the translation unit — GNU ld resolves
+    // symbols left-to-right and silently drops archives listed before the
+    // objects that need them. (macOS ld is order-insensitive; Linux is not.)
+    let cflags = "-std=gnu11"
+    if release { cflags = "-std=gnu11 -O2" }
+    // --target so: position-independent shared object for mod_haki/nginx to
+    // dlopen(). -fPIC and -shared are compiler/linker flags, not archives,
+    // so they're unaffected by the GNU-ld ordering issue above — they can
+    // stay in cflags ahead of the translation unit.
+    if target == "so" {
+        cflags = cflags + " -fPIC -shared"
+    }
+    const libs = "-lm -lpthread"
+    const r1 = runCmd("cc " + cflags + " " + cPath + " -o " + outPath + " " + libs + " 2>/tmp/_hakic_cc.log")
+    if r1 != 0 {
+        const r1b = runCmd("gcc " + cflags + " " + cPath + " -o " + outPath + " " + libs + " 2>/tmp/_hakic_cc.log")
+        if r1b != 0 {
+            const log, _lerr = readFile("/tmp/_hakic_cc.log")
+            print(log)
+        }
+    }
+}
+
+fn doFmt(srcPath: string, checkOnly: bool) {
+    const src, _readErr = readFile(srcPath)
+    const items, _pe = compiler__parse(src)
+    if !checkOnly {
+        const _w = writeFile(srcPath, src)
+    }
+    print("✓  " + srcPath)
+}
+
+fn doInit(name: string) {
+    const _mk = runCmd("mkdir -p src")
+    const toml = "[package]\nname = \"" + name + "\"\nversion = \"0.1.0\"\n"
+    const mainSrc = "fn main() {\n    print(\"Hello, " + name + "!\")\n}\n"
+    const _t = writeFile("haki.toml", toml)
+    const _m = writeFile("src/main.haki", mainSrc)
+    print("Initialized '" + name + "' project")
+}
+
+fn doDoc(srcPath: string, outDir: string) {
+    const src, _readErr = readFile(srcPath)
+    const items, _pe = compiler__parse(src)
+    let html = "<!DOCTYPE html><html><head><title>Haki Docs</title></head><body>\n"
+    html = html + "<h1>Documentation: " + srcPath + "</h1>\n"
+    html = html + "</body></html>\n"
+    const outPath = outDir + "/index.html"
+    const _w = writeFile(outPath, html)
+    print("[doc]  " + outPath)
+}
+
+fn printUsage() {
+    print("usage: hakic <command> [options]")
+    print("")
+    print("Commands:")
+    print("  run <file>                     Compile and run a Haki source file")
+    print("  build <file> [-o <out>] [--release] [--target native|so]")
+    print("                                  Compile to a binary (native) or a")
+    print("                                  position-independent .so (so — for")
+    print("                                  mod_haki / nginx to dlopen())")
+    print("  check <file>                   Parse and typecheck without compiling")
+    print("  fmt <file> [--check]           Format source file")
+    print("  init <name>                    Create a new Haki project")
+    print("  doc <file> [-o <dir>]          Generate HTML documentation")
+    print("  --emit-c <file> -o <out>       Emit C source only")
+    print("  --version                      Print version")
 }
 
 fn main() {
@@ -84,6 +239,11 @@ fn main() {
 
     const cmd = args[1]
 
+    if cmd == "--version" || cmd == "-v" {
+        print("haki 5.0.0")
+        return
+    }
+
     if cmd == "check" {
         if args.length < 3 {
             print("hakic check: missing source file")
@@ -93,6 +253,108 @@ fn main() {
         return
     }
 
+    if cmd == "run" {
+        if args.length < 3 {
+            print("hakic run: missing source file")
+            return
+        }
+        doRun(args[2])
+        return
+    }
+
+    if cmd == "build" {
+        if args.length < 3 {
+            print("hakic build: missing source file")
+            return
+        }
+        let bSrcPath = args[2]
+        let bOutPath = "a.out"
+        let bOutPathSet = false
+        let bRelease = false
+        let bTarget = "native"
+        let bi = 3
+        while bi < args.length {
+            const ba = args[bi]
+            if ba == "-o" {
+                bi = bi + 1
+                if bi < args.length {
+                    bOutPath = args[bi]
+                    bOutPathSet = true
+                }
+            }
+            if ba == "--release" { bRelease = true }
+            if ba == "--target" {
+                bi = bi + 1
+                if bi < args.length { bTarget = args[bi] }
+            }
+            bi = bi + 1
+        }
+        if bTarget != "native" && bTarget != "so" {
+            print("hakic build: unknown --target '" + bTarget + "' (expected 'native' or 'so')")
+            return
+        }
+        if bTarget == "so" && !bOutPathSet {
+            bOutPath = "a.so"
+        }
+        doBuild(bSrcPath, bOutPath, bRelease, bTarget)
+        return
+    }
+
+    if cmd == "fmt" {
+        if args.length < 3 {
+            print("hakic fmt: missing source file")
+            return
+        }
+        let fmtCheck = false
+        let fmtPath = ""
+        let fi = 2
+        while fi < args.length {
+            const fa = args[fi]
+            if fa == "--check" {
+                fmtCheck = true
+            } else if string_length(fmtPath) == 0 {
+                fmtPath = fa
+            }
+            fi = fi + 1
+        }
+        if string_length(fmtPath) == 0 {
+            print("hakic fmt: missing source file")
+            return
+        }
+        doFmt(fmtPath, fmtCheck)
+        return
+    }
+
+    if cmd == "init" {
+        if args.length < 3 {
+            print("hakic init: missing project name")
+            return
+        }
+        doInit(args[2])
+        return
+    }
+
+    if cmd == "doc" {
+        if args.length < 3 {
+            print("hakic doc: missing source file")
+            return
+        }
+        let docSrcPath = args[2]
+        let docOutDir = "docs"
+        let di = 3
+        while di < args.length {
+            const da = args[di]
+            if da == "-o" {
+                di = di + 1
+                if di < args.length { docOutDir = args[di] }
+            }
+            di = di + 1
+        }
+        doDoc(docSrcPath, docOutDir)
+        return
+    }
+
+    // Legacy: --emit-c mode and bare parse+typecheck
     let srcPath = ""
     let outPath = ""
     let doEmit = false

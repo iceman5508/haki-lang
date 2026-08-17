@@ -29,3 +29,13 @@ fn shell(cmd: string) -> (string, Error?) {
 fn exit(code: int) {
     haki_process_exit(code)
 }
+
+/// Return command-line arguments passed to the program (excludes argv[0]).
+fn args() -> Array<string> {
+    return haki_process_args()
+}
+
+/// Return the current process ID.
+fn pid() -> int {
+    return haki_getpid()
+}

@@ -7,18 +7,50 @@
 //   applyMutation(m) → haki_gtk_* calls (integer node_ids only)
 
 import "std/haki_ui/element" as ui
-import "std/haki_ui/vnode" as vn
+import "std/haki_ui/view"    as vw
+import "std/haki_ui/vnode"   as vn
 
 class App {
+    const root:   vw.View
     const title:  string
     const width:  int
     const height: int
+    let   oldVtree: vn.VNode
 
+    // Static, single-mount path — no reactive updates. Kept for callers that
+    // hand a pre-built Element tree instead of a View with reactive state.
     fn runStatic(elem: ui.Element) {
         haki_gtk_create_window(title, width, height)
         const vtree, _ = vn.buildVtree(elem, 1)
         mountVtree(vtree, 0)
         haki_platform_run()
+    }
+
+    // Reactive path — what counter.haki and every State<T>-driven View use.
+    // Mounts the initial tree, remembers it as oldVtree, and registers
+    // rerender() as the C-side rerender callback so every button click
+    // (via haki_trigger_rerender in haki_ui_gtk.c) runs a real diff cycle
+    // instead of the old first-Text-node-only shortcut.
+    fn run() {
+        haki_gtk_create_window(title, width, height)
+        const vtree, _ = vn.buildVtree(root.body(), 1)
+        mountVtree(vtree, 0)
+        oldVtree = vtree
+        haki_set_rerender_fn(fn() { self.rerender() })
+        haki_platform_run()
+    }
+
+    // Rebuild the Element tree from current state, diff against the last
+    // mounted tree, and apply only the mutations that changed — every
+    // changed Text node gets its own SetText, not just the first one.
+    fn rerender() {
+        const newVtree, _ = vn.buildVtree(root.body(), 1)
+        let mutations: Array<vn.Mutation> = []
+        vn.diff(oldVtree, newVtree, mutations)
+        for m in mutations {
+            applyMutation(m)
+        }
+        oldVtree = newVtree
     }
 }
 

@@ -32,15 +32,16 @@ struct EnumDef {
 }
 
 struct MonoProgram {
-    let fns:     Array<MonoFn>
-    let structs: Array<compiler.StructDef>
-    let enums:   Array<EnumDef>    // enum definitions for discriminant lookup
-    let items:   int     // total input items
-    let fnCount: int     // top-level functions
+    let fns:      Array<MonoFn>
+    let structs:  Array<compiler.StructDef>
+    let enums:    Array<EnumDef>    // enum definitions for discriminant lookup
+    let generics: Array<MonoFn>     // uninstantiated generic templates
+    let items:    int     // total input items
+    let fnCount:  int     // top-level functions
 }
 
 fn monoNew() -> MonoProgram {
-    return MonoProgram(fns: [], structs: [], enums: [], items: 0, fnCount: 0)
+    return MonoProgram(fns: [], structs: [], enums: [], generics: [], items: 0, fnCount: 0)
 }
 
 // ── Name mangling ─────────────────────────────────────────────────────────────
@@ -66,6 +67,308 @@ fn hasGenericParams(f: compiler.FnDef) -> bool {
     }
     if isGenericTy(f.retTy) { return true }
     return false
+}
+
+// ── Generic specialization ────────────────────────────────────────────────────
+
+/// Short, C-identifier-safe tag for a concrete type argument.
+/// Anything that is not a scalar collapses to "ptr" — every non-scalar is a
+/// pointer in the C backend, so one instantiation covers all of them.
+fn tyTag(ty: string) -> string {
+    if ty == "int"    { return "int" }
+    if ty == "bool"   { return "bool" }
+    if ty == "float"  { return "float" }
+    if ty == "string" { return "string" }
+    return "ptr"
+}
+
+/// Concrete type a tag stands for, used when rewriting param/return types.
+fn tagTy(tag: string) -> string {
+    if tag == "int"    { return "int" }
+    if tag == "bool"   { return "bool" }
+    if tag == "float"  { return "float" }
+    if tag == "string" { return "string" }
+    return "void*"
+}
+
+/// Mangled name for an instantiation: identity + [string] -> "identity__string".
+fn genericMangle(name: string, tags: Array<string>) -> string {
+    let out = name
+    for t in tags {
+        out = out + "__" + t
+    }
+    return out
+}
+
+/// Split a comma-separated tag list back into an array.
+fn splitTags(s: string) -> Array<string> {
+    let parts: Array<string> = []
+    let cur = ""
+    let i = 0
+    while i < string_length(s) {
+        const ch = s.substring(i, i + 1)
+        if ch == "," {
+            parts.append(cur)
+            cur = ""
+        } else {
+            cur = cur + ch
+        }
+        i = i + 1
+    }
+    if string_length(cur) > 0 { parts.append(cur) }
+    return parts
+}
+
+/// Resolve one declared type against the binding built from the call site.
+/// `gnames` holds the type-parameter names (T, U, ...) in first-seen order and
+/// `tags` the tag chosen for each. Non-generic types pass through untouched.
+fn substTy(ty: string, gnames: Array<string>, tags: Array<string>) -> string {
+    let i = 0
+    while i < gnames.length {
+        if gnames[i] == ty {
+            if i < tags.length { return tagTy(tags[i]) }
+            return "void*"
+        }
+        i = i + 1
+    }
+    return ty
+}
+
+/// Type-parameter names of a template, in the order they appear in the params.
+fn genericParamNames(g: MonoFn) -> Array<string> {
+    let names: Array<string> = []
+    for p in g.params {
+        if isGenericTy(p.ty) {
+            let seen = false
+            for n in names {
+                if n == p.ty { seen = true }
+            }
+            if !seen { names.append(p.ty) }
+        }
+    }
+    return names
+}
+
+/// Build a concrete MonoFn from a template plus one tag per type parameter.
+fn specializeFn(g: MonoFn, tags: Array<string>) -> MonoFn {
+    const gnames = genericParamNames(g)
+    let newParams: Array<compiler.Param> = []
+    for p in g.params {
+        newParams.append(compiler.makeParam(p.name, substTy(p.ty, gnames, tags)))
+    }
+    return MonoFn(
+        name:   genericMangle(g.name, tags),
+        params: newParams,
+        retTy:  substTy(g.retTy, gnames, tags),
+        body:   g.body
+    )
+}
+
+/// Look up a generic template by name — exact match, or by unqualified suffix
+/// so that `alias__identity` and `identity` both resolve.
+fn monoFnName(f: MonoFn) -> string {
+    return f.name
+}
+
+fn monoFnParams(f: MonoFn) -> Array<compiler.Param> {
+    return f.params
+}
+
+fn monoFnRetTy(f: MonoFn) -> string {
+    return f.retTy
+}
+
+fn monoFnBody(f: MonoFn) -> Array<compiler.Stmt> {
+    return f.body
+}
+
+fn emptyMonoFn() -> MonoFn {
+    let ps: Array<compiler.Param> = []
+    let bd: Array<compiler.Stmt> = []
+    return MonoFn(name: "", params: ps, retTy: "void", body: bd)
+}
+
+fn findGeneric(prog: MonoProgram, name: string) -> (MonoFn, bool) {
+    for g in prog.generics {
+        if g.name == name { return g, true }
+    }
+    for g in prog.generics {
+        if unqualify(g.name) == name { return g, true }
+    }
+    return emptyMonoFn(), false
+}
+
+/// Strip a "module__" prefix, returning the trailing simple name.
+fn unqualify(name: string) -> string {
+    let last = 0
+    let i = 0
+    const n = string_length(name)
+    while i < n - 1 {
+        if name.substring(i, i + 2) == "__" { last = i + 2 }
+        i = i + 1
+    }
+    if last > 0 { return name.substring(last, n) }
+    return name
+}
+
+// ── Lambda lifting ────────────────────────────────────────────────────────────
+//
+// Function literals are parsed with a name that is unique within their parse
+// ("__fn_lit_N"), so lifting is a pure collection walk: find every EFnLit,
+// emit its FnDef as a top-level function. The emitter references the literal
+// by that same name, so the two passes cannot disagree.
+
+// NOTE on match-arm shape: hakic_s4's C emitter, when a match ARM BODY has
+// more than one statement before its `yield`, silently drops every
+// statement except the final yielded value (confirmed by inspecting the
+// generated C — each arm collapsed to just `__mr = <yielded value>;`,
+// with all prelude statements, including print() calls, vanishing).
+// Every match arm below is therefore kept to a single `yield <call>`
+// expression, with any real work factored into a normal (non-arm) helper
+// function, which compiles fine since the bug is specific to arm bodies.
+
+fn liftFnLit(lf: compiler.FnDef, out: Array<MonoFn>) -> int {
+    out.append(MonoFn(name: compiler.fnDefName(lf), params: compiler.fnDefParams(lf),
+                      retTy: compiler.fnDefRetTy(lf), body: compiler.fnDefBody(lf)))
+    collectLitsInStmts(compiler.fnDefBody(lf), out)
+    return 0
+}
+
+fn collectLitsInExpr2(a: compiler.Expr, b: compiler.Expr, out: Array<MonoFn>) -> int {
+    collectLitsInExpr(a, out)
+    collectLitsInExpr(b, out)
+    return 0
+}
+
+fn collectLitsInExprsRet(es: Array<compiler.Expr>, out: Array<MonoFn>) -> int {
+    collectLitsInExprs(es, out)
+    return 0
+}
+
+fn collectLitsInIf(c: compiler.Expr, th: Array<compiler.Stmt>, el: Array<compiler.Stmt>, out: Array<MonoFn>) -> int {
+    collectLitsInExpr(c, out)
+    collectLitsInStmts(th, out)
+    collectLitsInStmts(el, out)
+    return 0
+}
+
+fn collectLitsInWhile(c: compiler.Expr, body: Array<compiler.Stmt>, out: Array<MonoFn>) -> int {
+    collectLitsInExpr(c, out)
+    collectLitsInStmts(body, out)
+    return 0
+}
+
+fn collectLitsInFor(iter: compiler.Expr, body: Array<compiler.Stmt>, out: Array<MonoFn>) -> int {
+    collectLitsInExpr(iter, out)
+    collectLitsInStmts(body, out)
+    return 0
+}
+
+fn collectLitsInMatchExpr(s: compiler.Expr, arms: Array<compiler.MatchArm>, out: Array<MonoFn>) -> int {
+    collectLitsInExpr(s, out)
+    collectLitsInArms(arms, out)
+    return 0
+}
+
+fn isFnLitExpr(e: compiler.Expr) -> bool {
+    return match e {
+        EFnLit(lit) { yield true }
+        _           { yield false }
+    }
+}
+
+fn fnLitVal(e: compiler.Expr) -> compiler.FnDef {
+    return match e {
+        EFnLit(lit) { yield lit }
+        _           { yield compiler.emptyFnDef() }
+    }
+}
+
+// HTTP route handlers — server.get(path, fn(req, res){...}) and
+// server.post(path, fn(req, res){...}) — get their handler's params
+// retyped to HttpReq/HttpRes right here, from the call shape itself
+// (structural, not inferred/guessed), so the emitter's scope-based
+// inference resolves `res.text(...)` etc. without the lifted function
+// ever seeing an untyped req/res.
+fn collectLitsInMethodCall(r: compiler.Expr, m: string, margs: Array<compiler.Expr>, out: Array<MonoFn>) -> int {
+    collectLitsInExpr(r, out)
+    let handledHttp = false
+    if (m == "get" || m == "post") && margs.length == 2 {
+        const isLit = isFnLitExpr(margs[1])
+        if isLit {
+            const lf = fnLitVal(margs[1])
+            const origParams = compiler.fnDefParams(lf)
+            if origParams.length == 2 {
+                const typedParams = [
+                    compiler.makeParam(compiler.paramName(origParams[0]), "HttpReq"),
+                    compiler.makeParam(compiler.paramName(origParams[1]), "HttpRes")
+                ]
+                out.append(MonoFn(name: compiler.fnDefName(lf), params: typedParams,
+                                  retTy: compiler.fnDefRetTy(lf), body: compiler.fnDefBody(lf)))
+                collectLitsInStmts(compiler.fnDefBody(lf), out)
+                collectLitsInExpr(margs[0], out)
+                handledHttp = true
+            }
+        }
+    }
+    if !handledHttp { collectLitsInExprs(margs, out) }
+    return 0
+}
+
+fn collectLitsInExpr(e: compiler.Expr, out: Array<MonoFn>) -> int {
+    return match e {
+        EFnLit(lf)               { yield liftFnLit(lf, out) }
+        EUnary(op, inner)        { yield collectLitsInExpr(inner, out) }
+        EBinary(op, l, r)        { yield collectLitsInExpr2(l, r, out) }
+        ETry(inner)              { yield collectLitsInExpr(inner, out) }
+        EAsync(inner)            { yield collectLitsInExpr(inner, out) }
+        ECall(n, args)           { yield collectLitsInExprsRet(args, out) }
+        ENamedCall(n, args)      { yield collectLitsInExprsRet(args, out) }
+        EFStr(parts)             { yield collectLitsInExprsRet(parts, out) }
+        EArray(elems)            { yield collectLitsInExprsRet(elems, out) }
+        EField(recv, f)          { yield collectLitsInExpr(recv, out) }
+        EMethodCall(r, m, margs) { yield collectLitsInMethodCall(r, m, margs, out) }
+        EIndex(a, i)             { yield collectLitsInExpr2(a, i, out) }
+        EIf(c, th, el)           { yield collectLitsInIf(c, th, el, out) }
+        EMatch(s, arms)          { yield collectLitsInMatchExpr(s, arms, out) }
+        EBlock(stmts)            { yield collectLitsInStmts(stmts, out) }
+        _                        { yield 0 }
+    }
+}
+
+fn collectLitsInExprs(es: Array<compiler.Expr>, out: Array<MonoFn>) {
+    for e in es { collectLitsInExpr(e, out) }
+}
+
+fn collectLitsInArms(arms: Array<compiler.MatchArm>, out: Array<MonoFn>) {
+    for a in arms {
+        collectLitsInStmts(compiler.armBody(a), out)
+    }
+}
+
+fn collectOneStmtLits(s: compiler.Stmt, out: Array<MonoFn>) -> int {
+    return match s {
+        SLet(isMut, name, init)   { yield collectLitsInExpr(init, out) }
+        SReturn(vals)             { yield collectLitsInExprsRet(vals, out) }
+        SYield(e)                 { yield collectLitsInExpr(e, out) }
+        SDefer(e)                 { yield collectLitsInExpr(e, out) }
+        SExpr(e)                  { yield collectLitsInExpr(e, out) }
+        SAssign(t, v)             { yield collectLitsInExpr2(t, v, out) }
+        SCompoundAssign(t, op, v) { yield collectLitsInExpr2(t, v, out) }
+        SIf(c, th, el)            { yield collectLitsInIf(c, th, el, out) }
+        SWhile(c, body)           { yield collectLitsInWhile(c, body, out) }
+        SFor(v, iter, body)       { yield collectLitsInFor(iter, body, out) }
+        SAnnotated(attrs, inner)  { yield collectOneStmtLits(inner, out) }
+        SBlock(stmts)             { yield collectLitsInStmts(stmts, out) }
+        _                         { yield 0 }
+    }
+}
+
+fn collectLitsInStmts(ss: Array<compiler.Stmt>, out: Array<MonoFn>) -> int {
+    for s in ss {
+        collectOneStmtLits(s, out)
+    }
+    return 0
 }
 
 // ── Core monomorphization pass ─────────────────────────────────────────────────
@@ -142,7 +445,21 @@ fn lowerItem(prog: MonoProgram, item: compiler.Item) {
 
     if tag == "fn" {
         const f = extractFn(item)
-        if hasGenericParams(f) { return }
+        // Lift any function literals in this body to top level first.
+        let lifted: Array<MonoFn> = []
+        const fBody = f.body
+        collectLitsInStmts(fBody, lifted)
+        for lf in lifted {
+            prog.fns.append(lf)
+            prog.fnCount = prog.fnCount + 1
+        }
+        if hasGenericParams(f) {
+            // Keep the template. The C emitter discovers call sites, infers the
+            // concrete type arguments, and asks for a specialization per unique
+            // instantiation (see specializeFn below).
+            prog.generics.append(lowerFn(f))
+            return
+        }
         prog.fns.append(lowerFn(f))
         prog.fnCount = prog.fnCount + 1
     }
@@ -259,4 +576,290 @@ fn mergeProgramWithAlias(dst: MonoProgram, src: MonoProgram, alias: string) {
     for e in src.enums {
         dst.enums.append(EnumDef(name: alias + "__" + e.name, variants: e.variants))
     }
+    for g in src.generics {
+        dst.generics.append(MonoFn(
+            name:   alias + "__" + g.name,
+            params: g.params,
+            retTy:  g.retTy,
+            body:   g.body
+        ))
+    }
+}
+
+// ── AST optimization ──────────────────────────────────────────────────────────
+//
+// A conservative constant-folding and dead-branch pass over the monomorphized
+// AST. Everything here is a pure rewrite: a node is rebuilt only when a fold
+// actually applies, otherwise the original node is returned unchanged, so the
+// pass can never introduce structure the emitter has not already seen.
+//
+// Folds:
+//   int  arithmetic and comparison on two literals
+//   bool && || ! == != on literals, plus && false / || true short-circuit
+//   string concatenation of two literals
+//   unary minus and logical not on literals
+// Eliminates:
+//   if <literal bool>      → the taken branch only
+//   while false            → removed entirely
+//   statements after return → removed (unreachable)
+
+fn isIntLit(e: compiler.Expr) -> bool {
+    return match e { EInt(n) { yield true } _ { yield false } }
+}
+
+fn intLitVal(e: compiler.Expr) -> int {
+    return match e { EInt(n) { yield n } _ { yield 0 } }
+}
+
+fn isBoolLit(e: compiler.Expr) -> bool {
+    return match e { EBool(b) { yield true } _ { yield false } }
+}
+
+fn boolLitVal(e: compiler.Expr) -> bool {
+    return match e { EBool(b) { yield b } _ { yield false } }
+}
+
+fn isStrLit(e: compiler.Expr) -> bool {
+    return match e { EString(s) { yield true } _ { yield false } }
+}
+
+fn strLitVal(e: compiler.Expr) -> string {
+    return match e { EString(s) { yield s } _ { yield "" } }
+}
+
+fn foldIntBinary(op: string, a: int, b: int) -> (compiler.Expr, bool) {
+    if op == "+" { return EInt(a + b), true }
+    if op == "-" { return EInt(a - b), true }
+    if op == "*" { return EInt(a * b), true }
+    // Division and modulo by zero must stay in the program: folding them would
+    // turn a runtime trap into a compile-time wrong answer.
+    if op == "/" && b != 0 { return EInt(a / b), true }
+    if op == "%" && b != 0 { return EInt(a % b), true }
+    if op == "<"  { return EBool(a < b),  true }
+    if op == ">"  { return EBool(a > b),  true }
+    if op == "<=" { return EBool(a <= b), true }
+    if op == ">=" { return EBool(a >= b), true }
+    if op == "==" { return EBool(a == b), true }
+    if op == "!=" { return EBool(a != b), true }
+    return ENull, false
+}
+
+fn foldExpr(e: compiler.Expr) -> compiler.Expr {
+    const tag = match e {
+        EUnary(op, inner)        { yield "unary" }
+        EBinary(op, l, r)        { yield "binary" }
+        ECall(n, args)           { yield "call" }
+        EMethodCall(r, m, margs) { yield "method" }
+        EIndex(a, i)             { yield "index" }
+        EField(r, f)             { yield "field" }
+        EArray(elems)            { yield "array" }
+        ETry(inner)              { yield "try" }
+        EAsync(inner)            { yield "async" }
+        _                        { yield "leaf" }
+    }
+
+    if tag == "unary" {
+        const op = match e { EUnary(op, inner) { yield op } _ { yield "" } }
+        const inner0 = match e { EUnary(op, inner) { yield inner } _ { yield compiler.nullExpr() } }
+        const inner = foldExpr(inner0)
+        if op == "-" && isIntLit(inner) { return EInt(0 - intLitVal(inner)) }
+        if op == "!" && isBoolLit(inner) { return EBool(!boolLitVal(inner)) }
+        return EUnary(op, inner)
+    }
+
+    if tag == "binary" {
+        const op = match e { EBinary(op, l, r) { yield op } _ { yield "" } }
+        const l0 = match e { EBinary(op, l, r) { yield l } _ { yield compiler.nullExpr() } }
+        const r0 = match e { EBinary(op, l, r) { yield r } _ { yield compiler.nullExpr() } }
+        const l = foldExpr(l0)
+        const r = foldExpr(r0)
+
+        if isIntLit(l) && isIntLit(r) {
+            const folded, ok = foldIntBinary(op, intLitVal(l), intLitVal(r))
+            if ok { return folded }
+        }
+        if isStrLit(l) && isStrLit(r) && op == "+" {
+            return EString(strLitVal(l) + strLitVal(r))
+        }
+        if isBoolLit(l) && isBoolLit(r) {
+            if op == "&&" { return EBool(boolLitVal(l) && boolLitVal(r)) }
+            if op == "||" { return EBool(boolLitVal(l) || boolLitVal(r)) }
+            if op == "==" { return EBool(boolLitVal(l) == boolLitVal(r)) }
+            if op == "!=" { return EBool(boolLitVal(l) != boolLitVal(r)) }
+        }
+        // One-sided short circuit. Only safe when the *other* side is dropped
+        // and it cannot have an effect we owe the program — which is exactly
+        // the case where the constant already decides the result.
+        if op == "&&" && isBoolLit(l) && !boolLitVal(l) { return EBool(false) }
+        if op == "||" && isBoolLit(l) && boolLitVal(l)  { return EBool(true) }
+        return EBinary(op, l, r)
+    }
+
+    if tag == "call" {
+        const n = match e { ECall(n, args) { yield n } _ { yield "" } }
+        const args = match e { ECall(n, args) { yield args } _ { yield compiler.emptyExprs() } }
+        return ECall(n, foldExprs(args))
+    }
+    if tag == "method" {
+        const rr = match e { EMethodCall(r, m, margs) { yield r } _ { yield compiler.nullExpr() } }
+        const mm = match e { EMethodCall(r, m, margs) { yield m } _ { yield "" } }
+        const aa = match e { EMethodCall(r, m, margs) { yield margs } _ { yield compiler.emptyExprs() } }
+        return EMethodCall(foldExpr(rr), mm, foldExprs(aa))
+    }
+    if tag == "index" {
+        const aa = match e { EIndex(a, i) { yield a } _ { yield compiler.nullExpr() } }
+        const ii = match e { EIndex(a, i) { yield i } _ { yield compiler.nullExpr() } }
+        return EIndex(foldExpr(aa), foldExpr(ii))
+    }
+    if tag == "field" {
+        const rr = match e { EField(r, f) { yield r } _ { yield compiler.nullExpr() } }
+        const ff = match e { EField(r, f) { yield f } _ { yield "" } }
+        return EField(foldExpr(rr), ff)
+    }
+    if tag == "array" {
+        const elems = match e { EArray(elems) { yield elems } _ { yield compiler.emptyExprs() } }
+        return EArray(foldExprs(elems))
+    }
+    if tag == "try" {
+        const inner = match e { ETry(inner) { yield inner } _ { yield compiler.nullExpr() } }
+        return ETry(foldExpr(inner))
+    }
+    if tag == "async" {
+        const inner = match e { EAsync(inner) { yield inner } _ { yield compiler.nullExpr() } }
+        return EAsync(foldExpr(inner))
+    }
+    return e
+}
+
+fn foldExprs(es: Array<compiler.Expr>) -> Array<compiler.Expr> {
+    let out: Array<compiler.Expr> = []
+    for e in es { out.append(foldExpr(e)) }
+    return out
+}
+
+fn foldStmt(s: compiler.Stmt, out: Array<compiler.Stmt>) {
+    const tag = match s {
+        SLet(isMut, name, init)   { yield "let" }
+        SReturn(vals)             { yield "return" }
+        SYield(e)                 { yield "yield" }
+        SDefer(e)                 { yield "defer" }
+        SExpr(e)                  { yield "expr" }
+        SAssign(t, v)             { yield "assign" }
+        SCompoundAssign(t, op, v) { yield "cassign" }
+        SIf(c, th, el)            { yield "if" }
+        SWhile(c, body)           { yield "while" }
+        SFor(v, iter, body)       { yield "for" }
+        SBlock(stmts)             { yield "block" }
+        _                         { yield "other" }
+    }
+
+    if tag == "let" {
+        const isMut = match s { SLet(m, n, i) { yield m } _ { yield false } }
+        const name  = match s { SLet(m, n, i) { yield n } _ { yield "" } }
+        const init  = match s { SLet(m, n, i) { yield i } _ { yield compiler.nullExpr() } }
+        out.append(SLet(isMut, name, foldExpr(init)))
+        return
+    }
+    if tag == "return" {
+        const vals = match s { SReturn(vs) { yield vs } _ { yield compiler.emptyExprs() } }
+        out.append(SReturn(foldExprs(vals)))
+        return
+    }
+    if tag == "yield" {
+        const e = match s { SYield(e) { yield e } _ { yield compiler.nullExpr() } }
+        out.append(SYield(foldExpr(e)))
+        return
+    }
+    if tag == "defer" {
+        const e = match s { SDefer(e) { yield e } _ { yield compiler.nullExpr() } }
+        out.append(SDefer(foldExpr(e)))
+        return
+    }
+    if tag == "expr" {
+        const e = match s { SExpr(e) { yield e } _ { yield compiler.nullExpr() } }
+        out.append(SExpr(foldExpr(e)))
+        return
+    }
+    if tag == "assign" {
+        const t = match s { SAssign(t, v) { yield t } _ { yield compiler.nullExpr() } }
+        const v = match s { SAssign(t, v) { yield v } _ { yield compiler.nullExpr() } }
+        out.append(SAssign(t, foldExpr(v)))
+        return
+    }
+    if tag == "cassign" {
+        const t  = match s { SCompoundAssign(t, op, v) { yield t } _ { yield compiler.nullExpr() } }
+        const op = match s { SCompoundAssign(t, op, v) { yield op } _ { yield "" } }
+        const v  = match s { SCompoundAssign(t, op, v) { yield v } _ { yield compiler.nullExpr() } }
+        out.append(SCompoundAssign(t, op, foldExpr(v)))
+        return
+    }
+    if tag == "if" {
+        const c  = match s { SIf(c, th, el) { yield c } _ { yield compiler.nullExpr() } }
+        const th = match s { SIf(c, th, el) { yield th } _ { yield compiler.emptyStmts() } }
+        const el = match s { SIf(c, th, el) { yield el } _ { yield compiler.emptyStmts() } }
+        const fc = foldExpr(c)
+        // Dead branch elimination: a literal condition means one side is
+        // unreachable. Splice the taken side in directly rather than emitting
+        // a branch on a constant.
+        if isBoolLit(fc) {
+            if boolLitVal(fc) {
+                for st in foldStmts(th) { out.append(st) }
+            } else {
+                for st in foldStmts(el) { out.append(st) }
+            }
+            return
+        }
+        out.append(SIf(fc, foldStmts(th), foldStmts(el)))
+        return
+    }
+    if tag == "while" {
+        const c    = match s { SWhile(c, body) { yield c } _ { yield compiler.nullExpr() } }
+        const body = match s { SWhile(c, body) { yield body } _ { yield compiler.emptyStmts() } }
+        const fc = foldExpr(c)
+        // `while false { ... }` never runs.
+        if isBoolLit(fc) && !boolLitVal(fc) { return }
+        out.append(SWhile(fc, foldStmts(body)))
+        return
+    }
+    if tag == "for" {
+        const v    = match s { SFor(v, it, body) { yield v } _ { yield "" } }
+        const it   = match s { SFor(v, it, body) { yield it } _ { yield compiler.nullExpr() } }
+        const body = match s { SFor(v, it, body) { yield body } _ { yield compiler.emptyStmts() } }
+        out.append(SFor(v, foldExpr(it), foldStmts(body)))
+        return
+    }
+    if tag == "block" {
+        const stmts = match s { SBlock(stmts) { yield stmts } _ { yield compiler.emptyStmts() } }
+        out.append(SBlock(foldStmts(stmts)))
+        return
+    }
+    out.append(s)
+}
+
+fn foldStmts(ss: Array<compiler.Stmt>) -> Array<compiler.Stmt> {
+    let out: Array<compiler.Stmt> = []
+    let stopped = false
+    for s in ss {
+        if !stopped {
+            foldStmt(s, out)
+            // Anything after a return in the same block is unreachable.
+            const isRet = match s { SReturn(vs) { yield true } _ { yield false } }
+            if isRet { stopped = true }
+        }
+    }
+    return out
+}
+
+/// Rewrite every function body in the program with the folded version.
+fn optimizeProgram(prog: MonoProgram) {
+    let newFns: Array<MonoFn> = []
+    for f in prog.fns {
+        newFns.append(MonoFn(name: f.name, params: f.params, retTy: f.retTy, body: foldStmts(f.body)))
+    }
+    prog.fns = newFns
+    let newGenerics: Array<MonoFn> = []
+    for g in prog.generics {
+        newGenerics.append(MonoFn(name: g.name, params: g.params, retTy: g.retTy, body: foldStmts(g.body)))
+    }
+    prog.generics = newGenerics
 }

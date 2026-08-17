@@ -57,6 +57,14 @@ typedef struct { void* f0; void* f1; void* f2; } __PayloadTuple3;
 static GtkWidget* g_nodes[HAKI_MAX_NODES];
 static int64_t    g_next_id = 1;   // 0 = root window
 
+// v3.4 widget constructors (text field, checkbox, dropdown, image, layout
+// setters) address widgets through this map instead of g_nodes/node_get.
+// It was referenced throughout the file but never declared, so any build
+// touching those widgets failed to link. Alias it onto g_nodes so both
+// families of accessors see the same underlying registry rather than
+// silently diverging into two separate node tables.
+#define g_node_id_map g_nodes
+
 static GtkWidget* node_get(int64_t id) {
     if (id <= 0 || id >= HAKI_MAX_NODES) return NULL;
     return g_nodes[id];
@@ -71,6 +79,11 @@ static int64_t node_alloc(GtkWidget* w) {
 
 static void node_free(int64_t id) {
     if (id > 0 && id < HAKI_MAX_NODES) g_nodes[id] = NULL;
+    // Widget is gone — drop its slot in the callback registry too, so a
+    // stale/reused node_id can't fire a closure that belonged to a widget
+    // that no longer exists. (Defined inline, not via haki_unregister_callback,
+    // to avoid a forward declaration — g_callbacks_fwd is already in scope.)
+    if (id > 0 && id < HAKI_MAX_CALLBACKS) g_callbacks_fwd[id] = NULL;
 }
 
 // ── Callback dispatcher ───────────────────────────────────────────────────────
@@ -90,8 +103,20 @@ static void on_button_clicked(GtkWidget* widget, gpointer user_data) {
     int64_t node_id = (int64_t)(intptr_t)user_data;
     haki_fire_callback(node_id);
     if (g_dispatcher) g_dispatcher(node_id);
-    do_rerender();
+    // v3.4: drive the full VNode diff cycle, not the legacy single-label
+    // shortcut. do_rerender() only ever updated one hardcoded label id
+    // (g_label_node_id) via haki_gtk_mark_label's "first call wins" latch —
+    // that's why only the first Text node ever refreshed. haki_trigger_rerender
+    // calls back into Haki's App.rerender(), which rebuilds the vtree, diffs
+    // it against the previous one, and applies a SetText mutation for every
+    // node that changed.
+    haki_trigger_rerender();
 }
+
+// Alias kept for widgets (checkbox/dropdown) whose signal handlers were
+// wired to a name ("haki_button_clicked") that was never defined — those
+// signals should drive the same rerender path as button clicks.
+#define haki_button_clicked on_button_clicked
 
 // ── Window ────────────────────────────────────────────────────────────────────
 
@@ -160,7 +185,6 @@ int64_t haki_gtk_create_box(int64_t parent_id, int64_t horizontal) {
 
 void haki_gtk_set_text(int64_t node_id, const char* text) {
     GtkWidget* w = node_get(node_id);
-            (long long)node_id, (void*)w, text ? text : "(null)");
     if (GTK_IS_LABEL(w)) {
         gtk_label_set_text(GTK_LABEL(w), text);
         gtk_widget_queue_draw(w);
@@ -201,9 +225,23 @@ void haki_gtk_remove_child(int64_t node_id) {
 // GTK button-clicked signal calls haki_fire_callback(id).
 
 void haki_register_callback(int64_t node_id, void* closure) {
-            (long long)node_id, closure);
-    if (node_id > 0 && node_id < HAKI_MAX_CALLBACKS)
+    if (node_id > 0 && node_id < HAKI_MAX_CALLBACKS) {
+        // Overwriting a live slot drops the previous fat pointer with no
+        // release — see haki_unregister_callback below and the caller-side
+        // note in vnode.haki: this is the rerender-time leak, not just the
+        // unmount-time one.
         g_callbacks_fwd[node_id] = closure;
+    }
+}
+
+// Counterpart to haki_register_callback — drops the raw pointer from the
+// registry so a destroyed widget's id can't fire a stale closure. This does
+// NOT release/free the Haki-side closure environment: there is no
+// haki_release_closure/ARC-decrement primitive in this codebase for us to
+// call. It only prevents future dispatch through a freed node_id.
+void haki_unregister_callback(int64_t node_id) {
+    if (node_id > 0 && node_id < HAKI_MAX_CALLBACKS)
+        g_callbacks_fwd[node_id] = NULL;
 }
 
 int64_t haki_gtk_alloc_node_id_debug(void) {
@@ -246,7 +284,6 @@ static int64_t   g_label_node_id = 0;
 
 void haki_set_rerender_callback(int64_t label_id, void* closure) {
     g_label_node_id = label_id;
-            (long long)label_id, closure);
     if (closure) {
         void** fat = (void**)closure;
         g_rerender_fn  = (HakiStrFn)fat[0];
@@ -254,12 +291,14 @@ void haki_set_rerender_callback(int64_t label_id, void* closure) {
     }
 }
 
+// Legacy single-label debug helper — unused now that on_button_clicked
+// drives haki_trigger_rerender() instead of do_rerender(), kept only so
+// nothing outside this file that still calls do_rerender_debug() breaks.
 static void do_rerender_debug(void) {
-            (void*)g_rerender_fn, g_rerender_env, (long long)g_label_node_id);
+    (void)g_rerender_fn; (void)g_rerender_env; (void)g_label_node_id;
 }
 
 static void do_rerender(void) {
-            (void*)g_rerender_fn, (long long)g_label_node_id);
     if (!g_rerender_fn || !g_label_node_id) return;
     const char* new_text = g_rerender_fn(g_rerender_env);
     if (new_text) haki_gtk_set_text(g_label_node_id, new_text);

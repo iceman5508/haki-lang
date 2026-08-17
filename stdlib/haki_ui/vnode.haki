@@ -49,6 +49,15 @@ fn buildVtree(elem: ui.Element, nextId: int) -> (VNode, int) {
         Button(lbl, f) {
             outText  = lbl
             outClick = n + 1
+            // Register the closure under its id so on_button_clicked's
+            // haki_fire_callback(node_id) has something to look up and call.
+            // buildVtree runs on every rerender (not just mount), so this
+            // re-registers on every render — necessary, since each render
+            // produces a fresh closure with fresh captures, but it means
+            // haki_register_callback silently overwrites the previous fat
+            // pointer with no release every single time a button is
+            // clicked, not just on unmount. See haki_ui_gtk.c.
+            haki_register_callback(outClick, f)
             yield "button"
         }
         Column(cs) {
@@ -91,6 +100,18 @@ fn buildVtree(elem: ui.Element, nextId: int) -> (VNode, int) {
         TextField(placeholder, onChange) {
             outText  = placeholder
             outClick = n + 1
+            // Registered so the id resolves to *something*, but this alone
+            // is not sufficient: onChange is fn(string)->void, while
+            // haki_fire_callback always invokes the fat pointer as
+            // fn_ptr(env_ptr) — zero real arguments, matching Button's
+            // fn()->void exactly but not this. GTK's "changed" signal fires
+            // haki_button_clicked -> on_button_clicked, which has no path to
+            // read gtk_entry_get_text() and pass it through. Needs a
+            // dedicated C-side dispatch (read the widget's current value,
+            // pass it as the closure's argument) before onChange actually
+            // receives the new text — same gap applies to Checkbox/Dropdown
+            // below.
+            haki_register_callback(outClick, onChange)
             yield "textfield"
         }
         Checkbox(lbl, checked, onChange) {
@@ -98,11 +119,17 @@ fn buildVtree(elem: ui.Element, nextId: int) -> (VNode, int) {
             const checkedStr = if checked { yield "true" } else { yield "false" }
             outText  = checkedStr
             outClick = n + 1
+            // See TextField above — onChange is fn(bool)->void, registered
+            // but not yet reachable with the toggled state as an argument.
+            haki_register_callback(outClick, onChange)
             yield "checkbox"
         }
         Dropdown(options, selectedIndex, onChange) {
             outText  = options.join(",")
             outClick = n + 1
+            // See TextField above — onChange is fn(int)->void, registered
+            // but not yet reachable with the selected index as an argument.
+            haki_register_callback(outClick, onChange)
             yield "dropdown"
         }
         Padding(px, child) {

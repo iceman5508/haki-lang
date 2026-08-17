@@ -142,6 +142,13 @@ fn binaryOpC(op: string, ty: string) -> string {
     if op == "!=" && isBoolTy(ty)     { return "!=" }
     if op == "&&"                     { return "&&" }
     if op == "||"                     { return "||" }
+    // Ordering on strings is lexicographic via strcmp. Without these the
+    // fallthrough emitted a raw C "<" on two const char*, silently comparing
+    // pointer addresses instead of contents.
+    if op == "<"  && isStringTy(ty)   { return "string_lt" }
+    if op == ">"  && isStringTy(ty)   { return "string_gt" }
+    if op == "<=" && isStringTy(ty)   { return "string_le" }
+    if op == ">=" && isStringTy(ty)   { return "string_ge" }
     // String concat
     if op == "+"  && isStringTy(ty)   { return "string_concat" }
     // String equality via strcmp
@@ -192,6 +199,91 @@ fn builtinReturnTy(name: string) -> string {
 
 // ── Type inference for expressions ────────────────────────────────────────────
 
+// ── Generic call support ──────────────────────────────────────────────────────
+
+/// Split a meta string on "|".
+fn splitBars(s: string) -> Array<string> {
+    let parts: Array<string> = []
+    let cur = ""
+    let i = 0
+    while i < string_length(s) {
+        const ch = s.substring(i, i + 1)
+        if ch == "|" {
+            parts.append(cur)
+            cur = ""
+        } else {
+            cur = cur + ch
+        }
+        i = i + 1
+    }
+    parts.append(cur)
+    return parts
+}
+
+/// Split a comma-separated list.
+fn splitCommas(s: string) -> Array<string> {
+    let parts: Array<string> = []
+    let cur = ""
+    let i = 0
+    while i < string_length(s) {
+        const ch = s.substring(i, i + 1)
+        if ch == "," {
+            parts.append(cur)
+            cur = ""
+        } else {
+            cur = cur + ch
+        }
+        i = i + 1
+    }
+    if string_length(cur) > 0 { parts.append(cur) }
+    return parts
+}
+
+/// Split on an arbitrary single-character separator. Capture lists cannot use
+/// commas as their separator because a captured `Map<string,int>` contains one.
+fn splitOn(s: string, sep: string) -> Array<string> {
+    let parts: Array<string> = []
+    let cur = ""
+    let i = 0
+    while i < string_length(s) {
+        const ch = s.substring(i, i + 1)
+        if ch == sep {
+            parts.append(cur)
+            cur = ""
+        } else {
+            cur = cur + ch
+        }
+        i = i + 1
+    }
+    if string_length(cur) > 0 { parts.append(cur) }
+    return parts
+}
+
+/// Single-uppercase-letter type names are type parameters (bootstrap subset).
+fn isTypeParam(ty: string) -> bool {
+    if string_length(ty) != 1 { return false }
+    if ty == "T" || ty == "U" || ty == "V" || ty == "K" || ty == "E" { return true }
+    return false
+}
+
+/// Resolve the result type of a call to a generic template.
+/// Returns "" when the answer is unknown and the caller should fall through.
+fn genericCallRetTy(meta: string, args: Array<compiler.Expr>, sc: Scope, sym: typeck.SymTable) -> string {
+    const parts = splitBars(meta)
+    if parts.length < 3 { return "" }
+    const declTys = splitCommas(parts[1])
+    const retTy   = parts[2]
+    if !isTypeParam(retTy) { return retTy }
+    let i = 0
+    while i < declTys.length {
+        if declTys[i] == retTy && i < args.length {
+            return inferExprTy(args[i], sc, sym)
+        }
+        i = i + 1
+    }
+    return ""
+}
+
 fn inferExprTy(e: compiler.Expr, sc: Scope, sym: typeck.SymTable) -> string {
     const tag = match e {
         EInt(n)             { yield "int_lit" }
@@ -202,6 +294,7 @@ fn inferExprTy(e: compiler.Expr, sc: Scope, sym: typeck.SymTable) -> string {
         EUnary(op, inner)   { yield "unary" }
         EBinary(op, l, r)   { yield "binary" }
         ECall(n, args)      { yield "call" }
+        ENamedCall(n, args) { yield "namedcall" }
         EField(recv, f)     { yield "field" }
         EMethodCall(r,m,ma) { yield "method" }
         EIndex(a, idx)      { yield "index" }
@@ -210,7 +303,13 @@ fn inferExprTy(e: compiler.Expr, sc: Scope, sym: typeck.SymTable) -> string {
         EMatch(s, arms)     { yield "match" }
         EBlock(stmts)       { yield "block" }
         EAsync(inner)       { yield "async" }
+        EFnLit(lf)          { yield "fnlit" }
         _                   { yield "unknown" }
+    }
+
+    if tag == "fnlit" {
+        const lf = match e { EFnLit(lf) { yield lf } _ { yield compiler.emptyFnDef() } }
+        return compiler.fnDefTyStr(lf)
     }
 
     if tag == "int_lit"    { return "int" }
@@ -218,9 +317,20 @@ fn inferExprTy(e: compiler.Expr, sc: Scope, sym: typeck.SymTable) -> string {
     if tag == "null"       { return "void*" }
     if tag == "string_lit" { return "string" }
 
+    // Named constructor call (ENamedCall) → returns the struct type name
+    if tag == "namedcall" {
+        const name = match e { ENamedCall(n, args) { yield n } _ { yield "" } }
+        return name
+    }
+
     if tag == "ident" {
         const name = match e { EIdent(n) { yield n } _ { yield "" } }
-        return scopeGet(sc, name)
+        const directTy = scopeGet(sc, name)
+        if directTy != "void*" { return directTy }
+        // Fall back to __selffld__ entry (class fields injected by emitFn)
+        const sfTy = scopeLookup(sc, "__selffld__" + name)
+        if string_length(sfTy) > 0 { return sfTy }
+        return "void*"
     }
 
     if tag == "unary" {
@@ -314,6 +424,22 @@ fn inferExprTy(e: compiler.Expr, sc: Scope, sym: typeck.SymTable) -> string {
             }
         }
 
+        // Generic call: the emitter injects "__gen__<name>" as
+        // "<template>|<declParamTys>|<declRetTy>". If the declared return type
+        // is one of the type parameters, the call's type is whatever the
+        // corresponding argument turned out to be — which is what makes nested
+        // generic calls like identity(identity(x)) infer correctly.
+        const genMeta = scopeLookup(sc, "__gen__" + name)
+        if string_length(genMeta) > 0 {
+            const gRet = genericCallRetTy(genMeta, args, sc, sym)
+            if string_length(gRet) > 0 { return gRet }
+        }
+
+        // `__typed_ctor__Chan<int>` — the parser folded the declared type into
+        // the constructor call because the constructor itself is zero-arg.
+        if string_length(name) > 14 && name.substring(0, 14) == "__typed_ctor__" {
+            return name.substring(14, string_length(name))
+        }
         // Check builtin first
         const bty = builtinReturnTy(name)
         if bty != "void*" { return bty }
@@ -327,6 +453,9 @@ fn inferExprTy(e: compiler.Expr, sc: Scope, sym: typeck.SymTable) -> string {
         if retTyStr == "bool"   { return "bool" }
         if retTyStr == "string" { return "string" }
         if retTyStr == "void"   { return "void" }
+        // Check if this is a registered struct constructor (meta-scope has "__sf__StructName" entry)
+        const sfStr = scopeLookup(sc, "__sf__" + name)
+        if string_length(sfStr) > 0 { return name }
         return "void*"
     }
 
@@ -363,6 +492,17 @@ fn inferExprTy(e: compiler.Expr, sc: Scope, sym: typeck.SymTable) -> string {
         const m    = match e { EMethodCall(r,m,ma) { yield m } _ { yield "" } }
         // Check if receiver is a module alias → module-qualified function call type inference
         const recvStr = match recv { EIdent(n) { yield n } _ { yield "" } }
+        // HTTP module constructors — give these concrete, distinct types so
+        // downstream method dispatch (server vs client) can key off the
+        // receiver's actual type instead of guessing from argument count.
+        if recvStr == "http" && m == "Server" { return "HttpServer" }
+        if recvStr == "http" && m == "Client" { return "HttpClient" }
+        // compiler.fnDefParams(...)'s declared return type (Array<Param>)
+        // isn't reliably resolved through the generic __fn__ scope lookup
+        // below, so origParams[0].name (indexing then field access) was
+        // falling back to an untyped void* element and failing to compile
+        // ("member reference base type 'void'"). Give it explicitly.
+        if recvStr == "compiler" && m == "fnDefParams" { return "Array<compiler.Param>" }
         if string_length(recvStr) > 0 {
             const modName = scopeLookup(sc, "__mod__" + recvStr)
             if string_length(modName) > 0 {
@@ -378,6 +518,36 @@ fn inferExprTy(e: compiler.Expr, sc: Scope, sym: typeck.SymTable) -> string {
         if m == "toUpper"   { return "string" }
         if m == "toLower"   { return "string" }
         if m == "trim"      { return "string" }
+        // Sequential concurrency shims: a Chan is a FIFO and a TaskGroup is a
+        // list of already-computed results, so their element types come
+        // straight from the receiver's type argument.
+        const cRecvTy = inferExprTy(recv, sc, sym)
+        if string_length(cRecvTy) > 5 && cRecvTy.substring(0, 5) == "Chan<" {
+            const chElem = cRecvTy.substring(5, string_length(cRecvTy) - 1)
+            if m == "receive" { return chElem }
+            if m == "send"    { return "void" }
+        }
+        if string_length(cRecvTy) > 10 && cRecvTy.substring(0, 10) == "TaskGroup<" {
+            const tgElem = cRecvTy.substring(10, string_length(cRecvTy) - 1)
+            if m == "waitAll" { return "Array<" + tgElem + ">" }
+            if m == "add"     { return "void" }
+        }
+        // Class method: resolve through the receiver's own type so chains like
+        // b.add("x").add("y") know that add() hands back a Builder.
+        const mRecvTy = inferExprTy(recv, sc, sym)
+        // HTTP client responses: client.get(url) / client.post(url, body) → HttpResponse
+        if mRecvTy == "HttpClient" && (m == "get" || m == "post") { return "HttpResponse" }
+        // server.listen_background() returns the bound port as an int (was
+        // falling through to void*, breaking int_to_string(port) downstream).
+        if mRecvTy == "HttpServer" && m == "listen_background" { return "int" }
+        let mClass = mRecvTy
+        const mcLen = string_length(mClass)
+        if mcLen > 1 && mClass.substring(mcLen - 1, mcLen) == "?" { mClass = mClass.substring(0, mcLen - 1) }
+        if string_length(mClass) > 0 && mClass != "void" && mClass != "void*"
+            && mClass != "int" && mClass != "bool" && mClass != "float" && mClass != "string" {
+            const mRet = scopeLookup(sc, "__fn__" + mClass + "__" + m)
+            if string_length(mRet) > 0 { return mRet }
+        }
         return "void*"
     }
 
