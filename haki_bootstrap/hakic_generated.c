@@ -2283,8 +2283,35 @@ typedef struct { void* f0; void* f1; void* f2; } __Tuple3;
 typedef struct { void* f0; void* f1; void* f2; void* f3; } __Tuple4;
 
 /* Enum typedefs (tagged unions represented as void*) */
+typedef void* compiler__TokenKind;
+typedef void TokenKind;
+typedef void* compiler__Ty;
+typedef void Ty;
+typedef void* compiler__Expr;
+typedef void Expr;
+typedef void* compiler__Stmt;
+typedef void Stmt;
+typedef void* compiler__Item;
+typedef void Item;
+typedef void* typeck__SemTy;
+typedef void SemTy;
 
 /* Forward declarations */
+typedef struct Token Token;
+typedef struct Lexer Lexer;
+typedef struct Param Param;
+typedef struct FnDef FnDef;
+typedef struct MatchArm MatchArm;
+typedef struct StructDef StructDef;
+typedef struct Parser Parser;
+typedef struct FnInfo FnInfo;
+typedef struct SymTable SymTable;
+typedef struct MonoFn MonoFn;
+typedef struct EnumDef EnumDef;
+typedef struct MonoProgram MonoProgram;
+typedef struct TypedExpr TypedExpr;
+typedef struct TypedStmt TypedStmt;
+typedef struct Scope Scope;
 typedef struct MonoProgram mono__MonoProgram;
 typedef struct MonoFn mono__MonoFn;
 typedef struct EnumDef mono__EnumDef;
@@ -2299,7 +2326,8654 @@ typedef struct Scope tinfer__Scope;
 typedef struct TypedExpr tinfer__TypedExpr;
 
 /* Function prototypes */
+const char* getBinDir(void);
+const char* getRuntimePath(void);
+const char* getStdlibPath(const char* name);
+int8_t isStdlibModule(const char* path);
+int8_t isNativeModule(const char* path);
+int8_t alreadyResolved(void* visited, const char* path);
+void resolveImports(mono__MonoProgram* dst, void* items, void* visited);
+void doEmitCQuiet(const char* srcPath, const char* outPath, const char* rtSrc);
+void doEmitC(const char* srcPath, const char* outPath);
+void doCheck(const char* path);
+void doRun(const char* srcPath);
+void doBuild(const char* srcPath, const char* outPath, int8_t release, const char* target);
+void doFmt(const char* srcPath, int8_t checkOnly);
+void doInit(const char* name);
+void doDoc(const char* srcPath, const char* outDir);
+void printUsage(void);
+int main(int argc, char** argv);
+Lexer* compiler__lexerNew(const char* src);
+const char* compiler__charAt(Lexer* l, int64_t i);
+int8_t compiler__isDigit(const char* ch);
+int8_t compiler__isAlpha(const char* ch);
+int8_t compiler__isAlphaNum(const char* ch);
+int8_t compiler__isWhitespace(const char* ch);
+void* compiler__identToKeyword(const char* s);
+int64_t compiler__digitVal(const char* ch);
+void* compiler__tokenize(const char* src);
+const char* compiler__showKind(TokenKind* k);
+Parser* compiler__parserNew(void* tokens);
+const char* compiler__resolveAlias(Parser* p, const char* name);
+Token* compiler__peek(Parser* p);
+const char* compiler__peekKind(Parser* p);
+Token* compiler__advance(Parser* p);
+int8_t compiler__eat(Parser* p, const char* kind);
+void* compiler__expect(Parser* p, const char* kind);
+void* compiler__parseSimpleTyStr(Parser* p);
+void* compiler__parseExpr(Parser* p);
+void* compiler__parseNilCoalesce(Parser* p);
+void* compiler__parseOr(Parser* p);
+void* compiler__parseAnd(Parser* p);
+void* compiler__parseEquality(Parser* p);
+void* compiler__parseComparison(Parser* p);
+void* compiler__parseAddSub(Parser* p);
+void* compiler__parseMulDiv(Parser* p);
+void* compiler__parseUnary(Parser* p);
+void* compiler__parsePostfix(Parser* p);
+const char* compiler__keywordAsName(const char* kind);
+void* compiler__parseArgList(Parser* p);
+void* compiler__parsePrimary(Parser* p);
+void* compiler__parseBlock(Parser* p);
+void* compiler__parseStmt(Parser* p);
+void* compiler__parseIfStmt(Parser* p);
+void* compiler__parseFn(Parser* p);
+void* compiler__parseItem(Parser* p);
+void* compiler__parse(const char* src);
+const char* compiler__showExpr(Expr* e);
+void compiler__main(void);
+void compiler__test_parse_fn(void);
+void compiler__test_parse_params(void);
+void compiler__test_parse_return_type(void);
+void compiler__test_parse_struct(void);
+void compiler__test_parse_expr_binary(void);
+void compiler__test_parse_if(void);
+void compiler__test_parse_multi_fn(void);
+FnDef* compiler__emptyFnDef(void);
+StructDef* compiler__emptyStructDef(void);
+FnDef* compiler__makeFnDef(const char* name, void* params, const char* retTy, void* body);
+Param* compiler__makeParam(const char* name, const char* ty);
+const char* compiler__fnDefName(FnDef* f);
+void* compiler__fnDefParams(FnDef* f);
+const char* compiler__fnDefRetTy(FnDef* f);
+void* compiler__fnDefBody(FnDef* f);
+void* compiler__armBindings(MatchArm* a);
+const char* compiler__paramName(Param* p);
+void* compiler__armBody(MatchArm* a);
+const char* compiler__fnDefTyStr(FnDef* f);
+Expr* compiler__nullExpr(void);
+int8_t compiler__isNullExpr(Expr* e);
+void* compiler__emptyStmts(void);
+void* compiler__emptyExprs(void);
+void* compiler__emptyArms(void);
+void* compiler__emptyStrings(void);
+const char* typeck__tyName(SemTy* t);
+int8_t typeck__tyEq(SemTy* a, SemTy* b);
+SymTable* typeck__symNew(void);
+int64_t typeck__symGenericCount(SymTable* sym);
+const char* typeck__symGenericBaseAt(SymTable* sym, int64_t i);
+const char* typeck__symGenericTagsAt(SymTable* sym, int64_t i);
+void typeck__symClearErrors(SymTable* sym);
+void typeck__symRecordGeneric(SymTable* sym, const char* base, const char* tags);
+void typeck__symRecordCaptures(SymTable* sym, const char* lit, const char* list);
+const char* typeck__symCapturesFor(SymTable* sym, const char* lit);
+void typeck__symError(SymTable* sym, const char* msg);
+void typeck__symRegisterFn(SymTable* sym, FnInfo* info);
+void* typeck__symLookupFn(SymTable* sym, const char* name);
+const char* typeck__fnInfoRetTyStr(FnInfo* info);
+const char* typeck__symLookupFnRetTyStr(SymTable* sym, const char* name);
+SemTy* typeck__resolveSimpleTy(const char* s);
+void typeck__collectItem(SymTable* sym, compiler__Item* item);
+int8_t typeck__isEnumVariant(SymTable* sym, const char* name);
+void typeck__collectItems(SymTable* sym, void* items);
+SemTy* typeck__inferExpr(SymTable* sym, compiler__Expr* e);
+SemTy* typeck__inferExprInner(SymTable* sym, compiler__Expr* e);
+SemTy* typeck__inferBinary(SymTable* sym, compiler__Expr* e);
+int8_t typeck__isTypo(const char* a, const char* b);
+void* typeck__builtinNames(void);
+int8_t typeck__isKnownBuiltin(const char* name);
+const char* typeck__findTypoSuggestion(SymTable* sym, const char* name);
+SemTy* typeck__inferCall(SymTable* sym, compiler__Expr* e);
+void typeck__checkStmts(SymTable* sym, void* stmts, const char* fnName, SemTy* retTy);
+void typeck__checkStmt(SymTable* sym, compiler__Stmt* stmt, const char* fnName, SemTy* retTy);
+void typeck__checkFn(SymTable* sym, compiler__FnDef* f);
+void typeck__checkItems(SymTable* sym, void* items);
+void* typeck__typecheck(const char* src);
+void typeck__test_collect_fns(void);
+void typeck__test_wrong_arg_count(void);
+void typeck__test_collect_struct(void);
+void typeck__test_complex_fn(void);
+void typeck__main(void);
+const char* typeck__semTyToStr(SemTy* ty);
+MonoProgram* mono__monoNew(void);
+const char* mono__mangle(const char* typeName, const char* methodName);
+int8_t mono__isGenericTy(const char* ty);
+int8_t mono__hasGenericParams(compiler__FnDef* f);
+const char* mono__tyTag(const char* ty);
+const char* mono__tagTy(const char* tag);
+const char* mono__genericMangle(const char* name, void* tags);
+void* mono__splitTags(const char* s);
+const char* mono__substTy(const char* ty, void* gnames, void* tags);
+void* mono__genericParamNames(MonoFn* g);
+MonoFn* mono__specializeFn(MonoFn* g, void* tags);
+const char* mono__monoFnName(MonoFn* f);
+void* mono__monoFnParams(MonoFn* f);
+const char* mono__monoFnRetTy(MonoFn* f);
+void* mono__monoFnBody(MonoFn* f);
+MonoFn* mono__emptyMonoFn(void);
+void* mono__findGeneric(MonoProgram* prog, const char* name);
+const char* mono__unqualify(const char* name);
+int64_t mono__liftFnLit(compiler__FnDef* lf, void* out);
+int64_t mono__collectLitsInExpr2(compiler__Expr* a, compiler__Expr* b, void* out);
+int64_t mono__collectLitsInExprsRet(void* es, void* out);
+int64_t mono__collectLitsInIf(compiler__Expr* c, void* th, void* el, void* out);
+int64_t mono__collectLitsInWhile(compiler__Expr* c, void* body, void* out);
+int64_t mono__collectLitsInFor(compiler__Expr* iter, void* body, void* out);
+int64_t mono__collectLitsInMatchExpr(compiler__Expr* s, void* arms, void* out);
+int8_t mono__isFnLitExpr(compiler__Expr* e);
+compiler__FnDef* mono__fnLitVal(compiler__Expr* e);
+int64_t mono__collectLitsInMethodCall(compiler__Expr* r, const char* m, void* margs, void* out);
+int64_t mono__collectLitsInExpr(compiler__Expr* e, void* out);
+void mono__collectLitsInExprs(void* es, void* out);
+void mono__collectLitsInArms(void* arms, void* out);
+int64_t mono__collectOneStmtLits(compiler__Stmt* s, void* out);
+int64_t mono__collectLitsInStmts(void* ss, void* out);
+MonoFn* mono__lowerFn(compiler__FnDef* f);
+void mono__lowerStructMethods(MonoProgram* prog, compiler__StructDef* s, void* body);
+compiler__FnDef* mono__extractFn(compiler__Item* item);
+compiler__StructDef* mono__extractStruct(compiler__Item* item);
+const char* mono__extractEnumName(compiler__Item* item);
+void* mono__extractEnumVariants(compiler__Item* item);
+void mono__lowerItem(MonoProgram* prog, compiler__Item* item);
+MonoProgram* mono__monomorphize(void* items);
+void* mono__monoFromSource(const char* src);
+void mono__showMonoProgram(MonoProgram* prog);
+void mono__test_concrete_fn(void);
+void mono__test_struct_passthrough(void);
+void mono__test_mangle(void);
+void mono__test_generic_skip(void);
+void mono__main(void);
+MonoFn* mono__makeMonoFn(const char* name, void* params, const char* retTy, void* body);
+void mono__mergeProgramWithAlias(MonoProgram* dst, MonoProgram* src, const char* alias);
+int8_t mono__isIntLit(compiler__Expr* e);
+int64_t mono__intLitVal(compiler__Expr* e);
+int8_t mono__isBoolLit(compiler__Expr* e);
+int8_t mono__boolLitVal(compiler__Expr* e);
+int8_t mono__isStrLit(compiler__Expr* e);
+const char* mono__strLitVal(compiler__Expr* e);
+void* mono__foldIntBinary(const char* op, int64_t a, int64_t b);
+compiler__Expr* mono__foldExpr(compiler__Expr* e);
+void* mono__foldExprs(void* es);
+void mono__foldStmt(compiler__Stmt* s, void* out);
+void* mono__foldStmts(void* ss);
+void mono__optimizeProgram(MonoProgram* prog);
+const char* cemit__cName(const char* name);
+const char* cemit__cTy(const char* ty);
+const char* cemit__cRetTy(const char* ty);
+int8_t cemit__isScalarTy(const char* ty);
+const char* cemit__indent(int64_t depth);
+const char* cemit__escapeStr(const char* s);
+const char* cemit__getFieldAt(const char* fields, int64_t idx);
+const char* cemit__getTypeAt(const char* types, int64_t idx);
+const char* cemit__emitExpr(compiler__Expr* e, int64_t depth, tinfer__Scope* sc, typeck__SymTable* sym);
+const char* cemit__emitExprList(void* args, int64_t depth, tinfer__Scope* sc, typeck__SymTable* sym);
+const char* cemit__armPrelude(void* stmts, int64_t depth, tinfer__Scope* sc, typeck__SymTable* sym);
+const char* cemit__yieldVal(void* stmts, int64_t depth, tinfer__Scope* sc, typeck__SymTable* sym);
+const char* cemit__emitMatchExpr(compiler__Expr* scrut, void* arms, int64_t depth, tinfer__Scope* sc, typeck__SymTable* sym);
+int8_t cemit__nameInList(void* names, const char* n);
+void cemit__fvExpr(compiler__Expr* e, void* bound, void* found, tinfer__Scope* sc);
+void cemit__fvExprs(void* es, void* bound, void* found, tinfer__Scope* sc);
+void cemit__fvArms(void* arms, void* bound, void* found, tinfer__Scope* sc);
+void cemit__fvStmt(compiler__Stmt* st, void* bound, void* found, tinfer__Scope* sc);
+void cemit__fvStmts(void* ss, void* bound, void* found, tinfer__Scope* sc);
+const char* cemit__litCaptureList(compiler__FnDef* lf, tinfer__Scope* sc);
+const char* cemit__capFieldAt(const char* list, int64_t idx, int64_t field);
+const char* cemit__capNameAt(const char* list, int64_t idx);
+const char* cemit__capTyAt(const char* list, int64_t idx);
+const char* cemit__capHakiTyAt(const char* list, int64_t idx);
+int64_t cemit__capCount(const char* list);
+const char* cemit__cTyToHakiTy(const char* ct);
+int8_t cemit__isLiftedName(const char* n);
+const char* cemit__fnPtrCTy(const char* fnTy);
+const char* cemit__trimSpaces(const char* s);
+void* cemit__genericTagsForCall(void* declTys, void* args, int64_t depth, tinfer__Scope* sc, typeck__SymTable* sym);
+const char* cemit__emitCall(const char* name, void* args, int64_t depth, tinfer__Scope* sc, typeck__SymTable* sym);
+const char* cemit__emitStmt(compiler__Stmt* stmt, int64_t depth, tinfer__Scope* sc, typeck__SymTable* sym, int8_t inMain);
+const char* cemit__emitLet(const char* name, compiler__Expr* init, int64_t depth, tinfer__Scope* sc, typeck__SymTable* sym);
+const char* cemit__emitFnProto(mono__MonoFn* f);
+const char* cemit__emitFn(mono__MonoFn* f, typeck__SymTable* sym, void* enums, void* structs, void* fns, void* generics);
+const char* cemit__castTo(const char* ct, const char* expr);
+int8_t cemit__isSimpleCType(const char* ct);
+const char* cemit__cStructFieldTy(const char* ty);
+const char* cemit__emitStructDef(compiler__StructDef* s);
+const char* cemit__tupleStructs(void);
+int8_t cemit__hasFnNamed(void* fns, const char* name);
+const char* cemit__emitProgram(mono__MonoProgram* prog, const char* runtimeSrc);
+void* cemit__compileToC(const char* src, const char* runtimeSrc);
+void cemit__test_c_name(void);
+void cemit__test_c_ty(void);
+void cemit__test_escape_str(void);
+void cemit__test_emit_proto(void);
+void cemit__main(void);
+Scope* tinfer__scopeNew(void);
+void tinfer__scopeSet(Scope* sc, const char* name, const char* ty);
+const char* tinfer__scopeGet(Scope* sc, const char* name);
+const char* tinfer__scopeLookup(Scope* sc, const char* name);
+Scope* tinfer__scopeCopy(Scope* sc);
+int8_t tinfer__isIntTy(const char* ty);
+int8_t tinfer__isFloatTy(const char* ty);
+int8_t tinfer__isStringTy(const char* ty);
+int8_t tinfer__isBoolTy(const char* ty);
+int8_t tinfer__isNumericTy(const char* ty);
+const char* tinfer__binaryOpC(const char* op, const char* ty);
+const char* tinfer__builtinReturnTy(const char* name);
+void* tinfer__splitBars(const char* s);
+void* tinfer__splitCommas(const char* s);
+void* tinfer__splitOn(const char* s, const char* sep);
+int8_t tinfer__isTypeParam(const char* ty);
+const char* tinfer__genericCallRetTy(const char* meta, void* args, Scope* sc, typeck__SymTable* sym);
+const char* tinfer__inferExprTy(compiler__Expr* e, Scope* sc, typeck__SymTable* sym);
+const char* tinfer__inferStmtYieldTy(compiler__Stmt* stmt, Scope* sc, typeck__SymTable* sym);
+const char* tinfer__inferMatchArmTy(compiler__MatchArm* arm, Scope* sc, typeck__SymTable* sym);
+TypedExpr* tinfer__makeTyped(compiler__Expr* e, Scope* sc, typeck__SymTable* sym);
+void tinfer__populateScopeFromParams(Scope* sc, void* params);
+const char* tinfer__simplifyTy(const char* ty);
+void tinfer__inferFnScope(void* stmts, Scope* sc, typeck__SymTable* sym);
+TypedExpr* tinfer__inferExpr(compiler__Expr* e, compiler__FnDef* fnDef, typeck__SymTable* sym);
+Scope* tinfer__buildFnScope(compiler__FnDef* fnDef, typeck__SymTable* sym);
+const char* tinfer__inferWithScope(compiler__Expr* e, Scope* sc, typeck__SymTable* sym);
 
 /* Struct definitions */
+struct Token {
+    void* kind;
+    int64_t lo;
+    int64_t hi;
+};
+struct Lexer {
+    const char* src;
+    int64_t pos;
+    int64_t len;
+};
+struct Param {
+    const char* name;
+    const char* ty;
+};
+struct FnDef {
+    const char* name;
+    void* params;
+    const char* retTy;
+    void* body;
+};
+struct MatchArm {
+    const char* pattern;
+    void* bindings;
+    void* guard;
+    void* body;
+};
+struct StructDef {
+    const char* name;
+    void* fields;
+};
+struct Parser {
+    void* tokens;
+    int64_t pos;
+    int64_t litCount;
+    void* aliasNames;
+    void* aliasTargets;
+    void* pendingItems;
+    void* methodFnDefs;
+    void* methodOwner;
+};
+struct FnInfo {
+    const char* name;
+    void* retTy;
+    int64_t nParams;
+};
+struct SymTable {
+    void* fns;
+    void* structs;
+    void* errors;
+    void* genericBase;
+    void* genericTags;
+    void* variants;
+    void* capLit;
+    void* capList;
+};
+struct MonoFn {
+    const char* name;
+    void* params;
+    const char* retTy;
+    void* body;
+};
+struct EnumDef {
+    const char* name;
+    void* variants;
+};
+struct MonoProgram {
+    void* fns;
+    void* structs;
+    void* enums;
+    void* generics;
+    int64_t items;
+    int64_t fnCount;
+};
+struct TypedExpr {
+    void* kind;
+    const char* ty;
+};
+struct TypedStmt {
+    void* kind;
+    const char* declTy;
+};
+struct Scope {
+    void* names;
+    void* types;
+};
 
 /* Functions */
+const char* getBinDir(void) {
+    void* allArgs = (void*)(haki_argv());
+    if ((haki_array_length(allArgs) == ((int64_t)0LL))) {
+        return (const char*)(intptr_t)(".");
+    }
+    const char* bin = (const char*)(intptr_t)((*((void**)haki_array_get(allArgs, ((int64_t)0LL)))));
+    int64_t lastSlash = (int64_t)(intptr_t)(((int64_t)-1LL));
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_string_length(bin))) {
+        if ((strcmp(haki_string_substring(bin, i, (i + ((int64_t)1LL))), "/") == 0)) {
+            lastSlash = i;
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    if ((lastSlash < ((int64_t)0LL))) {
+        return (const char*)(intptr_t)(".");
+    }
+    return (const char*)(intptr_t)(haki_string_substring(bin, ((int64_t)0LL), lastSlash));
+}
+
+const char* getRuntimePath(void) {
+    return (const char*)(intptr_t)(haki_string_concat(getBinDir(), "/haki_runtime_core.c"));
+}
+
+const char* getStdlibPath(const char* name) {
+    return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(getBinDir(), "/../stdlib/"), name), ".haki"));
+}
+
+int8_t isStdlibModule(const char* path) {
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_string_length(path))) {
+        const char* ch = (const char*)(intptr_t)(haki_string_substring(path, i, (i + ((int64_t)1LL))));
+        if ((strcmp(ch, "/") == 0)) {
+            return (int8_t)(intptr_t)(0);
+        }
+        if ((strcmp(ch, ".") == 0)) {
+            return (int8_t)(intptr_t)(0);
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    return (int8_t)(intptr_t)(1);
+}
+
+int8_t isNativeModule(const char* path) {
+    if ((strcmp(path, "math") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(path, "env") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(path, "strings") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(path, "process") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(path, "fs") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(path, "json") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(path, "template") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(path, "csv") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(path, "crypto") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(path, "regex") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(path, "http") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(path, "time") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    return (int8_t)(intptr_t)(0);
+}
+
+int8_t alreadyResolved(void* visited, const char* path) {
+    { void* __arr_p = visited;
+      int64_t __len_p = haki_array_length(__arr_p);
+      for (int64_t __i_p = 0; __i_p < __len_p; __i_p++) {
+            const char* p = (const char*)*(void**)haki_array_get(__arr_p, __i_p);
+            if ((strcmp(p, path) == 0)) {
+                return (int8_t)(intptr_t)(1);
+            }
+      }
+    }
+    return (int8_t)(intptr_t)(0);
+}
+
+void resolveImports(mono__MonoProgram* dst, void* items, void* visited) {
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_array_length(items))) {
+        compiler__Item* item = (compiler__Item*)(((compiler__Item*)(*((void**)haki_array_get(items, i)))));
+        int8_t isImport = (int8_t)(intptr_t)(({ void* __msc = (void*)(item); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 2LL) { const char* p = *(const char**)((void**)__mpayload)[0]; const char* a = *(const char**)((void**)__mpayload)[1]; __mr = (void*)(1); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+        if (isImport) {
+            const char* path = (const char*)(intptr_t)(({ void* __msc = (void*)(item); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 2LL) { const char* p = *(const char**)((void**)__mpayload)[0]; const char* a = *(const char**)((void**)__mpayload)[1]; __mr = (void*)(p); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+            const char* alias = (const char*)(intptr_t)(({ void* __msc = (void*)(item); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 2LL) { const char* p = *(const char**)((void**)__mpayload)[0]; const char* a = *(const char**)((void**)__mpayload)[1]; __mr = (void*)(a); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+            if ((((strcmp(path, "__skip__") != 0) && (haki_string_length(path) > ((int64_t)0LL))) && (!isNativeModule(path)))) {
+                const char* fullPath = (const char*)(intptr_t)(haki_string_concat(path, ".haki"));
+                if (isStdlibModule(path)) {
+                    fullPath = getStdlibPath(path);
+                }
+                if ((!alreadyResolved(visited, fullPath))) {
+                    ({ void* __el = (void*)(intptr_t)(fullPath); haki_array_append(visited, &__el); });
+                    void* __mr_modSrc = (void*)(haki_read_file(fullPath));
+                    void* modSrc = (void*)((intptr_t)((void**)(__mr_modSrc))[0]);
+                    void* _modErr = (void*)((intptr_t)((void**)(__mr_modSrc))[1]);
+                    if ((haki_string_length(modSrc) > ((int64_t)0LL))) {
+                        void* __mr_modItems = (void*)(compiler__parse(modSrc));
+                        void* modItems = (void*)((intptr_t)((void**)(__mr_modItems))[0]);
+                        void* _pe = (void*)((intptr_t)((void**)(__mr_modItems))[1]);
+                        MonoProgram* modProg = (MonoProgram*)(mono__monomorphize(modItems));
+                        mono__mergeProgramWithAlias(dst, modProg, alias);
+                        resolveImports(dst, modItems, visited);
+                    }
+                }
+            }
+        }
+        i = (i + ((int64_t)1LL));
+    }
+}
+
+void doEmitCQuiet(const char* srcPath, const char* outPath, const char* rtSrc) {
+    void* __mr_src = (void*)(haki_read_file(srcPath));
+    void* src = (void*)((intptr_t)((void**)(__mr_src))[0]);
+    void* _srcErr = (void*)((intptr_t)((void**)(__mr_src))[1]);
+    void* __mr_items = (void*)(compiler__parse(src));
+    void* items = (void*)((intptr_t)((void**)(__mr_items))[0]);
+    void* _pe = (void*)((intptr_t)((void**)(__mr_items))[1]);
+    MonoProgram* prog = (MonoProgram*)(mono__monomorphize(items));
+    void* visited = haki_array_new(sizeof(void*));
+    { void* __el = (void*)(intptr_t)(srcPath); haki_array_append(visited, &__el); }
+    resolveImports(prog, items, visited);
+    const char* cSrc = (const char*)(intptr_t)(cemit__emitProgram(prog, rtSrc));
+    void* _wErr = (void*)(haki_write_file(outPath, cSrc));
+}
+
+void doEmitC(const char* srcPath, const char* outPath) {
+    void* __mr_rtSrc = (void*)(haki_read_file(getRuntimePath()));
+    void* rtSrc = (void*)((intptr_t)((void**)(__mr_rtSrc))[0]);
+    void* _rtErr = (void*)((intptr_t)((void**)(__mr_rtSrc))[1]);
+    doEmitCQuiet(srcPath, outPath, rtSrc);
+    void* __mr_src = (void*)(haki_read_file(outPath));
+    void* src = (void*)((intptr_t)((void**)(__mr_src))[0]);
+    void* _se = (void*)((intptr_t)((void**)(__mr_src))[1]);
+    haki_print(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("[emit-c]  ", outPath), " ("), haki_int_to_string(haki_string_length(src))), " bytes)"));
+}
+
+void doCheck(const char* path) {
+    void* __mr_src = (void*)(haki_read_file(path));
+    void* src = (void*)((intptr_t)((void**)(__mr_src))[0]);
+    void* _readErr = (void*)((intptr_t)((void**)(__mr_src))[1]);
+    void* __mr_items = (void*)(compiler__parse(src));
+    void* items = (void*)((intptr_t)((void**)(__mr_items))[0]);
+    void* pe1 = (void*)((intptr_t)((void**)(__mr_items))[1]);
+    if ((pe1 != NULL)) {
+        haki_print(haki_string_concat("parse error: ", haki_error_message(pe1)));
+        return;
+    }
+    void* __mr_sym = (void*)(typeck__typecheck(src));
+    SymTable* sym = (SymTable*)((intptr_t)((void**)(__mr_sym))[0]);
+    void* te1 = (void*)((intptr_t)((void**)(__mr_sym))[1]);
+    if ((te1 != NULL)) {
+        haki_print(haki_string_concat("error: ", haki_error_message(te1)));
+        return;
+    }
+    haki_print(haki_string_concat("✓  ", path));
+}
+
+void doRun(const char* srcPath) {
+    void* __mr_rtSrc = (void*)(haki_read_file(getRuntimePath()));
+    void* rtSrc = (void*)((intptr_t)((void**)(__mr_rtSrc))[0]);
+    void* _rtErr = (void*)((intptr_t)((void**)(__mr_rtSrc))[1]);
+    const char* cPath = (const char*)(intptr_t)("/tmp/_hakic_run.c");
+    const char* binPath = (const char*)(intptr_t)("/tmp/_hakic_run_bin");
+    doEmitCQuiet(srcPath, cPath, rtSrc);
+    void* r1 = (void*)(haki_run_cmd(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("cc -std=gnu11 ", cPath), " -o "), binPath), " -lm -lpthread 2>/tmp/_hakic_cc.log")));
+    if ((r1 != ((int64_t)0LL))) {
+        void* r1b = (void*)(haki_run_cmd(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("gcc -std=gnu11 ", cPath), " -o "), binPath), " -lm -lpthread 2>/tmp/_hakic_cc.log")));
+        if ((r1b != ((int64_t)0LL))) {
+            void* __mr_log = (void*)(haki_read_file("/tmp/_hakic_cc.log"));
+            void* log = (void*)((intptr_t)((void**)(__mr_log))[0]);
+            void* _lerr = (void*)((intptr_t)((void**)(__mr_log))[1]);
+            haki_print(log);
+            return;
+        }
+    }
+    void* _r2 = (void*)(haki_run_cmd(binPath));
+}
+
+void doBuild(const char* srcPath, const char* outPath, int8_t release, const char* target) {
+    void* __mr_rtSrc = (void*)(haki_read_file(getRuntimePath()));
+    void* rtSrc = (void*)((intptr_t)((void**)(__mr_rtSrc))[0]);
+    void* _rtErr = (void*)((intptr_t)((void**)(__mr_rtSrc))[1]);
+    const char* cPath = (const char*)(intptr_t)("/tmp/_hakic_build.c");
+    doEmitCQuiet(srcPath, cPath, rtSrc);
+    const char* cflags = (const char*)(intptr_t)("-std=gnu11");
+    if (release) {
+        cflags = "-std=gnu11 -O2";
+    }
+    if ((strcmp(target, "so") == 0)) {
+        cflags = haki_string_concat(cflags, " -fPIC -shared");
+    }
+    const char* libs = (const char*)(intptr_t)("-lm -lpthread");
+    void* r1 = (void*)(haki_run_cmd(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("cc ", cflags), " "), cPath), " -o "), outPath), " "), libs), " 2>/tmp/_hakic_cc.log")));
+    if ((r1 != ((int64_t)0LL))) {
+        void* r1b = (void*)(haki_run_cmd(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("gcc ", cflags), " "), cPath), " -o "), outPath), " "), libs), " 2>/tmp/_hakic_cc.log")));
+        if ((r1b != ((int64_t)0LL))) {
+            void* __mr_log = (void*)(haki_read_file("/tmp/_hakic_cc.log"));
+            void* log = (void*)((intptr_t)((void**)(__mr_log))[0]);
+            void* _lerr = (void*)((intptr_t)((void**)(__mr_log))[1]);
+            haki_print(log);
+        }
+    }
+}
+
+void doFmt(const char* srcPath, int8_t checkOnly) {
+    void* __mr_src = (void*)(haki_read_file(srcPath));
+    void* src = (void*)((intptr_t)((void**)(__mr_src))[0]);
+    void* _readErr = (void*)((intptr_t)((void**)(__mr_src))[1]);
+    void* __mr_items = (void*)(compiler__parse(src));
+    void* items = (void*)((intptr_t)((void**)(__mr_items))[0]);
+    void* _pe = (void*)((intptr_t)((void**)(__mr_items))[1]);
+    if ((!checkOnly)) {
+        void* _w = (void*)(haki_write_file(srcPath, src));
+    }
+    haki_print(haki_string_concat("✓  ", srcPath));
+}
+
+void doInit(const char* name) {
+    void* _mk = (void*)(haki_run_cmd("mkdir -p src"));
+    const char* toml = (const char*)(intptr_t)(haki_string_concat(haki_string_concat("[package]\nname = \"", name), "\"\nversion = \"0.1.0\"\n"));
+    const char* mainSrc = (const char*)(intptr_t)(haki_string_concat(haki_string_concat("fn main() {\n    print(\"Hello, ", name), "!\")\n}\n"));
+    void* _t = (void*)(haki_write_file("haki.toml", toml));
+    void* _m = (void*)(haki_write_file("src/main.haki", mainSrc));
+    haki_print(haki_string_concat(haki_string_concat("Initialized '", name), "' project"));
+}
+
+void doDoc(const char* srcPath, const char* outDir) {
+    void* __mr_src = (void*)(haki_read_file(srcPath));
+    void* src = (void*)((intptr_t)((void**)(__mr_src))[0]);
+    void* _readErr = (void*)((intptr_t)((void**)(__mr_src))[1]);
+    void* __mr_items = (void*)(compiler__parse(src));
+    void* items = (void*)((intptr_t)((void**)(__mr_items))[0]);
+    void* _pe = (void*)((intptr_t)((void**)(__mr_items))[1]);
+    const char* html = (const char*)(intptr_t)("<!DOCTYPE html><html><head><title>Haki Docs</title></head><body>\n");
+    html = haki_string_concat(haki_string_concat(haki_string_concat(html, "<h1>Documentation: "), srcPath), "</h1>\n");
+    html = haki_string_concat(html, "</body></html>\n");
+    const char* outPath = (const char*)(intptr_t)(haki_string_concat(outDir, "/index.html"));
+    void* _w = (void*)(haki_write_file(outPath, html));
+    haki_print(haki_string_concat("[doc]  ", outPath));
+}
+
+void printUsage(void) {
+    haki_print("usage: hakic <command> [options]");
+    haki_print("");
+    haki_print("Commands:");
+    haki_print("  run <file>                     Compile and run a Haki source file");
+    haki_print("  build <file> [-o <out>] [--release] [--target native|so]");
+    haki_print("                                  Compile to a binary (native) or a");
+    haki_print("                                  position-independent .so (so — for");
+    haki_print("                                  mod_haki / nginx to dlopen())");
+    haki_print("  check <file>                   Parse and typecheck without compiling");
+    haki_print("  fmt <file> [--check]           Format source file");
+    haki_print("  init <name>                    Create a new Haki project");
+    haki_print("  doc <file> [-o <dir>]          Generate HTML documentation");
+    haki_print("  --emit-c <file> -o <out>       Emit C source only");
+    haki_print("  --version                      Print version");
+}
+
+int main(int argc, char** argv) {
+    haki_runtime_init(argc, argv);
+    void* args = (void*)(haki_argv());
+    if ((haki_array_length(args) < ((int64_t)2LL))) {
+        printUsage();
+        return 0;
+    }
+    const char* cmd = (const char*)(intptr_t)((*((void**)haki_array_get(args, ((int64_t)1LL)))));
+    if (((strcmp(cmd, "--version") == 0) || (strcmp(cmd, "-v") == 0))) {
+        haki_print("haki 5.0.0");
+        return 0;
+    }
+    if ((strcmp(cmd, "check") == 0)) {
+        if ((haki_array_length(args) < ((int64_t)3LL))) {
+            haki_print("hakic check: missing source file");
+            return 0;
+        }
+        doCheck((*((void**)haki_array_get(args, ((int64_t)2LL)))));
+        return 0;
+    }
+    if ((strcmp(cmd, "run") == 0)) {
+        if ((haki_array_length(args) < ((int64_t)3LL))) {
+            haki_print("hakic run: missing source file");
+            return 0;
+        }
+        doRun((*((void**)haki_array_get(args, ((int64_t)2LL)))));
+        return 0;
+    }
+    if ((strcmp(cmd, "build") == 0)) {
+        if ((haki_array_length(args) < ((int64_t)3LL))) {
+            haki_print("hakic build: missing source file");
+            return 0;
+        }
+        const char* bSrcPath = (const char*)(intptr_t)((*((void**)haki_array_get(args, ((int64_t)2LL)))));
+        const char* bOutPath = (const char*)(intptr_t)("a.out");
+        int8_t bOutPathSet = (int8_t)(intptr_t)(0);
+        int8_t bRelease = (int8_t)(intptr_t)(0);
+        const char* bTarget = (const char*)(intptr_t)("native");
+        int64_t bi = (int64_t)(intptr_t)(((int64_t)3LL));
+        while ((bi < haki_array_length(args))) {
+            const char* ba = (const char*)(intptr_t)((*((void**)haki_array_get(args, bi))));
+            if ((strcmp(ba, "-o") == 0)) {
+                bi = (bi + ((int64_t)1LL));
+                if ((bi < haki_array_length(args))) {
+                    bOutPath = (*((void**)haki_array_get(args, bi)));
+                    bOutPathSet = 1;
+                }
+            }
+            if ((strcmp(ba, "--release") == 0)) {
+                bRelease = 1;
+            }
+            if ((strcmp(ba, "--target") == 0)) {
+                bi = (bi + ((int64_t)1LL));
+                if ((bi < haki_array_length(args))) {
+                    bTarget = (*((void**)haki_array_get(args, bi)));
+                }
+            }
+            bi = (bi + ((int64_t)1LL));
+        }
+        if (((strcmp(bTarget, "native") != 0) && (strcmp(bTarget, "so") != 0))) {
+            haki_print(haki_string_concat(haki_string_concat("hakic build: unknown --target '", bTarget), "' (expected 'native' or 'so')"));
+            return 0;
+        }
+        if (((strcmp(bTarget, "so") == 0) && (!bOutPathSet))) {
+            bOutPath = "a.so";
+        }
+        doBuild(bSrcPath, bOutPath, bRelease, bTarget);
+        return 0;
+    }
+    if ((strcmp(cmd, "fmt") == 0)) {
+        if ((haki_array_length(args) < ((int64_t)3LL))) {
+            haki_print("hakic fmt: missing source file");
+            return 0;
+        }
+        int8_t fmtCheck = (int8_t)(intptr_t)(0);
+        const char* fmtPath = (const char*)(intptr_t)("");
+        int64_t fi = (int64_t)(intptr_t)(((int64_t)2LL));
+        while ((fi < haki_array_length(args))) {
+            const char* fa = (const char*)(intptr_t)((*((void**)haki_array_get(args, fi))));
+            if ((strcmp(fa, "--check") == 0)) {
+                fmtCheck = 1;
+            }
+            else {
+                if ((haki_string_length(fmtPath) == ((int64_t)0LL))) {
+                    fmtPath = fa;
+                }
+            }
+            fi = (fi + ((int64_t)1LL));
+        }
+        if ((haki_string_length(fmtPath) == ((int64_t)0LL))) {
+            haki_print("hakic fmt: missing source file");
+            return 0;
+        }
+        doFmt(fmtPath, fmtCheck);
+        return 0;
+    }
+    if ((strcmp(cmd, "init") == 0)) {
+        if ((haki_array_length(args) < ((int64_t)3LL))) {
+            haki_print("hakic init: missing project name");
+            return 0;
+        }
+        doInit((*((void**)haki_array_get(args, ((int64_t)2LL)))));
+        return 0;
+    }
+    if ((strcmp(cmd, "doc") == 0)) {
+        if ((haki_array_length(args) < ((int64_t)3LL))) {
+            haki_print("hakic doc: missing source file");
+            return 0;
+        }
+        const char* docSrcPath = (const char*)(intptr_t)((*((void**)haki_array_get(args, ((int64_t)2LL)))));
+        const char* docOutDir = (const char*)(intptr_t)("docs");
+        int64_t di = (int64_t)(intptr_t)(((int64_t)3LL));
+        while ((di < haki_array_length(args))) {
+            const char* da = (const char*)(intptr_t)((*((void**)haki_array_get(args, di))));
+            if ((strcmp(da, "-o") == 0)) {
+                di = (di + ((int64_t)1LL));
+                if ((di < haki_array_length(args))) {
+                    docOutDir = (*((void**)haki_array_get(args, di)));
+                }
+            }
+            di = (di + ((int64_t)1LL));
+        }
+        doDoc(docSrcPath, docOutDir);
+        return 0;
+    }
+    const char* srcPath = (const char*)(intptr_t)("");
+    const char* outPath = (const char*)(intptr_t)("");
+    int8_t doEmit = (int8_t)(intptr_t)(0);
+    int64_t i = (int64_t)(intptr_t)(((int64_t)1LL));
+    while ((i < haki_array_length(args))) {
+        const char* a = (const char*)(intptr_t)((*((void**)haki_array_get(args, i))));
+        if ((strcmp(a, "--emit-c") == 0)) {
+            doEmit = 1;
+        }
+        else {
+            if ((strcmp(a, "-o") == 0)) {
+                i = (i + ((int64_t)1LL));
+                if ((i < haki_array_length(args))) {
+                    outPath = (*((void**)haki_array_get(args, i)));
+                }
+            }
+            else {
+                if ((strcmp(a, "--quiet") != 0)) {
+                    if ((haki_string_length(srcPath) == ((int64_t)0LL))) {
+                        srcPath = a;
+                    }
+                }
+            }
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    if ((haki_string_length(srcPath) == ((int64_t)0LL))) {
+        printUsage();
+        return 0;
+    }
+    if (doEmit) {
+        if ((haki_string_length(outPath) == ((int64_t)0LL))) {
+            outPath = haki_string_concat(srcPath, ".c");
+        }
+        doEmitC(srcPath, outPath);
+        return 0;
+    }
+    void* __mr_src = (void*)(haki_read_file(srcPath));
+    void* src = (void*)((intptr_t)((void**)(__mr_src))[0]);
+    void* _mainErr = (void*)((intptr_t)((void**)(__mr_src))[1]);
+    haki_print("[lex+parse]");
+    void* __mr_items = (void*)(compiler__parse(src));
+    void* items = (void*)((intptr_t)((void**)(__mr_items))[0]);
+    void* _pe4 = (void*)((intptr_t)((void**)(__mr_items))[1]);
+    haki_print("[typecheck]");
+    void* __mr_sym = (void*)(typeck__typecheck(src));
+    SymTable* sym = (SymTable*)((intptr_t)((void**)(__mr_sym))[0]);
+    void* _te4 = (void*)((intptr_t)((void**)(__mr_sym))[1]);
+    haki_print("");
+    haki_print("✓  ok");
+    return 0;
+}
+
+Lexer* compiler__lexerNew(const char* src) {
+    return (Lexer*)(intptr_t)(({ Lexer* __c_Lexer = (Lexer*)malloc(sizeof(Lexer)); __c_Lexer->src = src; __c_Lexer->pos = ((int64_t)0LL); __c_Lexer->len = haki_string_length(src); __c_Lexer; }));
+}
+
+const char* compiler__charAt(Lexer* l, int64_t i) {
+    if ((i >= l->len)) {
+        return (const char*)(intptr_t)("");
+    }
+    return (const char*)(intptr_t)(haki_string_substring(l->src, i, (i + ((int64_t)1LL))));
+}
+
+int8_t compiler__isDigit(const char* ch) {
+    if ((strcmp(ch, "0") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "1") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "2") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "3") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "4") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "5") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "6") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "7") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "8") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "9") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    return (int8_t)(intptr_t)(0);
+}
+
+int8_t compiler__isAlpha(const char* ch) {
+    if ((strcmp(ch, "_") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "a") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "A") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "b") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "B") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "c") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "C") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "d") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "D") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "e") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "E") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "f") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "F") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "g") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "G") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "h") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "H") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "i") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "I") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "j") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "J") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "k") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "K") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "l") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "L") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "m") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "M") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "n") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "N") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "o") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "O") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "p") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "P") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "q") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "Q") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "r") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "R") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "s") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "S") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "t") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "T") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "u") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "U") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "v") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "V") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "w") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "W") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "x") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "X") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "y") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "Y") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "z") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ch, "Z") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    return (int8_t)(intptr_t)(0);
+}
+
+int8_t compiler__isAlphaNum(const char* ch) {
+    return (int8_t)(intptr_t)((compiler__isAlpha(ch) || compiler__isDigit(ch)));
+}
+
+int8_t compiler__isWhitespace(const char* ch) {
+    return (int8_t)(intptr_t)(((((strcmp(ch, " ") == 0) || (strcmp(ch, "\n") == 0)) || (strcmp(ch, "\t") == 0)) || (strcmp(ch, "\\r") == 0)));
+}
+
+void* compiler__identToKeyword(const char* s) {
+    if ((strcmp(s, "fn") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 4LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "let") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 5LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "const") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 6LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "return") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 7LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "if") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 8LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "else") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 9LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "while") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 10LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "for") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 11LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "in") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 12LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "match") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 13LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "yield") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 14LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "struct") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 15LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "class") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 16LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "enum") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 17LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "protocol") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 18LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "impl") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 19LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "import") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 20LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "as") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 21LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "weak") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 22LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "async") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 23LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "await") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 24LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "defer") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 25LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "try") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 26LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "true") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 27LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "false") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 28LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(s, "null") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 29LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 60LL; ((void**)__ev)[1] = NULL; __ev; }));
+    __ret->f1 = (void*)(int64_t)(0);
+    return __ret;
+}
+
+int64_t compiler__digitVal(const char* ch) {
+    if ((strcmp(ch, "0") == 0)) {
+        return (int64_t)(intptr_t)(((int64_t)0LL));
+    }
+    if ((strcmp(ch, "1") == 0)) {
+        return (int64_t)(intptr_t)(((int64_t)1LL));
+    }
+    if ((strcmp(ch, "2") == 0)) {
+        return (int64_t)(intptr_t)(((int64_t)2LL));
+    }
+    if ((strcmp(ch, "3") == 0)) {
+        return (int64_t)(intptr_t)(((int64_t)3LL));
+    }
+    if ((strcmp(ch, "4") == 0)) {
+        return (int64_t)(intptr_t)(((int64_t)4LL));
+    }
+    if ((strcmp(ch, "5") == 0)) {
+        return (int64_t)(intptr_t)(((int64_t)5LL));
+    }
+    if ((strcmp(ch, "6") == 0)) {
+        return (int64_t)(intptr_t)(((int64_t)6LL));
+    }
+    if ((strcmp(ch, "7") == 0)) {
+        return (int64_t)(intptr_t)(((int64_t)7LL));
+    }
+    if ((strcmp(ch, "8") == 0)) {
+        return (int64_t)(intptr_t)(((int64_t)8LL));
+    }
+    if ((strcmp(ch, "9") == 0)) {
+        return (int64_t)(intptr_t)(((int64_t)9LL));
+    }
+    return (int64_t)(intptr_t)(((int64_t)0LL));
+}
+
+void* compiler__tokenize(const char* src) {
+    Lexer* l = (Lexer*)(compiler__lexerNew(src));
+    void* tokens = haki_array_new(sizeof(void*));
+    while ((l->pos < l->len)) {
+        const char* ch = (const char*)(intptr_t)(compiler__charAt(l, l->pos));
+        int64_t lo = (int64_t)(intptr_t)(l->pos);
+        if (compiler__isWhitespace(ch)) {
+            l->pos = (l->pos + ((int64_t)1LL));
+            continue;
+        }
+        if (((strcmp(ch, "/") == 0) && (strcmp(compiler__charAt(l, (l->pos + ((int64_t)1LL))), "/") == 0))) {
+            while (((l->pos < l->len) && (strcmp(compiler__charAt(l, l->pos), "\n") != 0))) {
+                l->pos = (l->pos + ((int64_t)1LL));
+            }
+            continue;
+        }
+        if (compiler__isDigit(ch)) {
+            int64_t n = (int64_t)(intptr_t)(((int64_t)0LL));
+            while (((l->pos < l->len) && compiler__isDigit(compiler__charAt(l, l->pos)))) {
+                n = ((n * ((int64_t)10LL)) + compiler__digitVal(compiler__charAt(l, l->pos)));
+                l->pos = (l->pos + ((int64_t)1LL));
+            }
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void** __pay_TkInt = (void**)malloc(sizeof(void*) * 1); __pay_TkInt[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(n); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_TkInt; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if (compiler__isAlpha(ch)) {
+            int64_t start = (int64_t)(intptr_t)(l->pos);
+            while (((l->pos < l->len) && compiler__isAlphaNum(compiler__charAt(l, l->pos)))) {
+                l->pos = (l->pos + ((int64_t)1LL));
+            }
+            const char* word = (const char*)(intptr_t)(haki_string_substring(src, start, l->pos));
+            void* __mr_kw = (void*)(compiler__identToKeyword(word));
+            TokenKind* kw = (TokenKind*)((intptr_t)((void**)(__mr_kw))[0]);
+            int8_t isKw = (int8_t)(intptr_t)((intptr_t)((void**)(__mr_kw))[1]);
+            if (isKw) {
+                ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = kw; __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            }
+            else {
+                ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void** __pay_TkIdent = (void**)malloc(sizeof(void*) * 1); __pay_TkIdent[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (word); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 3LL; ((void**)__ev)[1] = (void*)__pay_TkIdent; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            }
+            continue;
+        }
+        if ((strcmp(ch, "\"") == 0)) {
+            l->pos = (l->pos + ((int64_t)1LL));
+            int64_t start = (int64_t)(intptr_t)(l->pos);
+            const char* buf = (const char*)(intptr_t)("");
+            while (((l->pos < l->len) && (strcmp(compiler__charAt(l, l->pos), "\"") != 0))) {
+                const char* c = (const char*)(intptr_t)(compiler__charAt(l, l->pos));
+                if (((strcmp(c, "\\") == 0) && ((l->pos + ((int64_t)1LL)) < l->len))) {
+                    const char* esc = (const char*)(intptr_t)(compiler__charAt(l, (l->pos + ((int64_t)1LL))));
+                    if ((strcmp(esc, "n") == 0)) {
+                        buf = haki_string_concat(buf, "\n");
+                        l->pos = (l->pos + ((int64_t)2LL));
+                        continue;
+                    }
+                    if ((strcmp(esc, "t") == 0)) {
+                        buf = haki_string_concat(buf, "\t");
+                        l->pos = (l->pos + ((int64_t)2LL));
+                        continue;
+                    }
+                    if ((strcmp(esc, "\"") == 0)) {
+                        buf = haki_string_concat(buf, "\"");
+                        l->pos = (l->pos + ((int64_t)2LL));
+                        continue;
+                    }
+                    if ((strcmp(esc, "\\") == 0)) {
+                        buf = haki_string_concat(buf, "\\");
+                        l->pos = (l->pos + ((int64_t)2LL));
+                        continue;
+                    }
+                }
+                buf = haki_string_concat(buf, c);
+                l->pos = (l->pos + ((int64_t)1LL));
+            }
+            if ((l->pos < l->len)) {
+                l->pos = (l->pos + ((int64_t)1LL));
+            }
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void** __pay_TkString = (void**)malloc(sizeof(void*) * 1); __pay_TkString[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (buf); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = (void*)__pay_TkString; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        const char* ch2 = (const char*)(intptr_t)(compiler__charAt(l, (l->pos + ((int64_t)1LL))));
+        if (((strcmp(ch, "-") == 0) && (strcmp(ch2, ">") == 0))) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 41LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = (lo + ((int64_t)2LL)); __c_Token; })); haki_array_append(tokens, &__el); });
+            l->pos = (l->pos + ((int64_t)2LL));
+            continue;
+        }
+        if (((strcmp(ch, "=") == 0) && (strcmp(ch2, ">") == 0))) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 42LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = (lo + ((int64_t)2LL)); __c_Token; })); haki_array_append(tokens, &__el); });
+            l->pos = (l->pos + ((int64_t)2LL));
+            continue;
+        }
+        if (((strcmp(ch, "=") == 0) && (strcmp(ch2, "=") == 0))) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 47LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = (lo + ((int64_t)2LL)); __c_Token; })); haki_array_append(tokens, &__el); });
+            l->pos = (l->pos + ((int64_t)2LL));
+            continue;
+        }
+        if (((strcmp(ch, "!") == 0) && (strcmp(ch2, "=") == 0))) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 48LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = (lo + ((int64_t)2LL)); __c_Token; })); haki_array_append(tokens, &__el); });
+            l->pos = (l->pos + ((int64_t)2LL));
+            continue;
+        }
+        if (((strcmp(ch, "<") == 0) && (strcmp(ch2, "=") == 0))) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 50LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = (lo + ((int64_t)2LL)); __c_Token; })); haki_array_append(tokens, &__el); });
+            l->pos = (l->pos + ((int64_t)2LL));
+            continue;
+        }
+        if (((strcmp(ch, ">") == 0) && (strcmp(ch2, "=") == 0))) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 52LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = (lo + ((int64_t)2LL)); __c_Token; })); haki_array_append(tokens, &__el); });
+            l->pos = (l->pos + ((int64_t)2LL));
+            continue;
+        }
+        if (((strcmp(ch, "&") == 0) && (strcmp(ch2, "&") == 0))) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 58LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = (lo + ((int64_t)2LL)); __c_Token; })); haki_array_append(tokens, &__el); });
+            l->pos = (l->pos + ((int64_t)2LL));
+            continue;
+        }
+        if (((strcmp(ch, "|") == 0) && (strcmp(ch2, "|") == 0))) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 59LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = (lo + ((int64_t)2LL)); __c_Token; })); haki_array_append(tokens, &__el); });
+            l->pos = (l->pos + ((int64_t)2LL));
+            continue;
+        }
+        l->pos = (l->pos + ((int64_t)1LL));
+        if ((strcmp(ch, "(") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 30LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, ")") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 31LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, "{") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 32LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, "}") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 33LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, "[") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 34LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, "]") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 35LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, ",") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 36LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, ".") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 37LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, ":") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 38LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, ";") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 39LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, "@") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 40LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, "?") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 43LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, "_") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 44LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, "!") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 45LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, "=") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 46LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, "<") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 49LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, ">") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 51LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, "+") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 53LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, "-") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 54LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, "*") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 55LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, "/") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 56LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        if ((strcmp(ch, "%") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 57LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+            continue;
+        }
+        ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void** __pay_TkError = (void**)malloc(sizeof(void*) * 1); __pay_TkError[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (haki_string_concat("unexpected char: ", ch)); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 61LL; ((void**)__ev)[1] = (void*)__pay_TkError; __ev; }); __c_Token->lo = lo; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+    }
+    ({ void* __el = (void*)(intptr_t)(({ Token* __c_Token = (Token*)malloc(sizeof(Token)); __c_Token->kind = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 60LL; ((void**)__ev)[1] = NULL; __ev; }); __c_Token->lo = l->pos; __c_Token->hi = l->pos; __c_Token; })); haki_array_append(tokens, &__el); });
+    return (void*)(intptr_t)(tokens);
+}
+
+const char* compiler__showKind(TokenKind* k) {
+    const char* s = (const char*)(intptr_t)(({ void* __msc = (void*)(k); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t n = *(int64_t*)((void**)__mpayload)[0]; __mr = (void*)(haki_string_concat(haki_string_concat("Int(", haki_int_to_string(n)), ")")); __mdone = 1; } if (!__mdone && __mtag == 2LL) { const char* s = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(haki_string_concat(haki_string_concat("Str(", s), ")")); __mdone = 1; } if (!__mdone && __mtag == 3LL) { const char* s = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(haki_string_concat(haki_string_concat("Ident(", s), ")")); __mdone = 1; } if (!__mdone && __mtag == 61LL) { const char* s = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(haki_string_concat(haki_string_concat("Error(", s), ")")); __mdone = 1; } if (!__mdone && __mtag == 4LL) { __mr = (void*)("fn"); __mdone = 1; } if (!__mdone && __mtag == 5LL) { __mr = (void*)("let"); __mdone = 1; } if (!__mdone && __mtag == 6LL) { __mr = (void*)("const"); __mdone = 1; } if (!__mdone && __mtag == 7LL) { __mr = (void*)("return"); __mdone = 1; } if (!__mdone && __mtag == 8LL) { __mr = (void*)("if"); __mdone = 1; } if (!__mdone && __mtag == 9LL) { __mr = (void*)("else"); __mdone = 1; } if (!__mdone && __mtag == 10LL) { __mr = (void*)("while"); __mdone = 1; } if (!__mdone && __mtag == 11LL) { __mr = (void*)("for"); __mdone = 1; } if (!__mdone && __mtag == 12LL) { __mr = (void*)("in"); __mdone = 1; } if (!__mdone && __mtag == 13LL) { __mr = (void*)("match"); __mdone = 1; } if (!__mdone && __mtag == 14LL) { __mr = (void*)("yield"); __mdone = 1; } if (!__mdone && __mtag == 15LL) { __mr = (void*)("struct"); __mdone = 1; } if (!__mdone && __mtag == 16LL) { __mr = (void*)("class"); __mdone = 1; } if (!__mdone && __mtag == 17LL) { __mr = (void*)("enum"); __mdone = 1; } if (!__mdone && __mtag == 18LL) { __mr = (void*)("protocol"); __mdone = 1; } if (!__mdone && __mtag == 19LL) { __mr = (void*)("impl"); __mdone = 1; } if (!__mdone && __mtag == 20LL) { __mr = (void*)("import"); __mdone = 1; } if (!__mdone && __mtag == 21LL) { __mr = (void*)("as"); __mdone = 1; } if (!__mdone && __mtag == 22LL) { __mr = (void*)("weak"); __mdone = 1; } if (!__mdone && __mtag == 23LL) { __mr = (void*)("async"); __mdone = 1; } if (!__mdone && __mtag == 24LL) { __mr = (void*)("await"); __mdone = 1; } if (!__mdone && __mtag == 25LL) { __mr = (void*)("defer"); __mdone = 1; } if (!__mdone && __mtag == 26LL) { __mr = (void*)("try"); __mdone = 1; } if (!__mdone && __mtag == 27LL) { __mr = (void*)("true"); __mdone = 1; } if (!__mdone && __mtag == 28LL) { __mr = (void*)("false"); __mdone = 1; } if (!__mdone && __mtag == 29LL) { __mr = (void*)("null"); __mdone = 1; } if (!__mdone && __mtag == 30LL) { __mr = (void*)("("); __mdone = 1; } if (!__mdone && __mtag == 31LL) { __mr = (void*)(")"); __mdone = 1; } if (!__mdone && __mtag == 32LL) { __mr = (void*)("{"); __mdone = 1; } if (!__mdone && __mtag == 33LL) { __mr = (void*)("}"); __mdone = 1; } if (!__mdone && __mtag == 34LL) { __mr = (void*)("["); __mdone = 1; } if (!__mdone && __mtag == 35LL) { __mr = (void*)("]"); __mdone = 1; } if (!__mdone && __mtag == 36LL) { __mr = (void*)(","); __mdone = 1; } if (!__mdone && __mtag == 37LL) { __mr = (void*)("."); __mdone = 1; } if (!__mdone && __mtag == 38LL) { __mr = (void*)(":"); __mdone = 1; } if (!__mdone && __mtag == 43LL) { __mr = (void*)("?"); __mdone = 1; } if (!__mdone && __mtag == 44LL) { __mr = (void*)("_"); __mdone = 1; } if (!__mdone && __mtag == 45LL) { __mr = (void*)("!"); __mdone = 1; } if (!__mdone && __mtag == 41LL) { __mr = (void*)("->"); __mdone = 1; } if (!__mdone && __mtag == 42LL) { __mr = (void*)("=>"); __mdone = 1; } if (!__mdone && __mtag == 46LL) { __mr = (void*)("="); __mdone = 1; } if (!__mdone && __mtag == 47LL) { __mr = (void*)("=="); __mdone = 1; } if (!__mdone && __mtag == 48LL) { __mr = (void*)("!="); __mdone = 1; } if (!__mdone && __mtag == 49LL) { __mr = (void*)("<"); __mdone = 1; } if (!__mdone && __mtag == 50LL) { __mr = (void*)("<="); __mdone = 1; } if (!__mdone && __mtag == 51LL) { __mr = (void*)(">"); __mdone = 1; } if (!__mdone && __mtag == 52LL) { __mr = (void*)(">="); __mdone = 1; } if (!__mdone && __mtag == 53LL) { __mr = (void*)("+"); __mdone = 1; } if (!__mdone && __mtag == 54LL) { __mr = (void*)("-"); __mdone = 1; } if (!__mdone && __mtag == 55LL) { __mr = (void*)("*"); __mdone = 1; } if (!__mdone && __mtag == 56LL) { __mr = (void*)("/"); __mdone = 1; } if (!__mdone && __mtag == 57LL) { __mr = (void*)("%"); __mdone = 1; } if (!__mdone && __mtag == 58LL) { __mr = (void*)("&&"); __mdone = 1; } if (!__mdone && __mtag == 59LL) { __mr = (void*)("||"); __mdone = 1; } if (!__mdone && __mtag == 60LL) { __mr = (void*)("EOF"); __mdone = 1; } if (!__mdone && __mtag == 39LL) { __mr = (void*)(";"); __mdone = 1; } if (!__mdone && __mtag == 40LL) { __mr = (void*)("@"); __mdone = 1; } if (!__mdone && __mtag == 1LL) { int64_t n = *(int64_t*)((void**)__mpayload)[0]; __mr = (void*)(haki_string_concat(haki_string_concat("Float(", haki_int_to_string(n)), ")")); __mdone = 1; } (void)__mdone; __mr;}));
+    return (const char*)(intptr_t)(s);
+}
+
+Parser* compiler__parserNew(void* tokens) {
+    void* emptyFnDefs = haki_array_new(sizeof(void*));
+    void* emptyOwners = haki_array_new(sizeof(void*));
+    void* emptyItems = haki_array_new(sizeof(void*));
+    return (Parser*)(intptr_t)(({ Parser* __c_Parser = (Parser*)malloc(sizeof(Parser)); __c_Parser->tokens = tokens; __c_Parser->pos = ((int64_t)0LL); __c_Parser->litCount = ((int64_t)0LL); __c_Parser->aliasNames = haki_array_new(sizeof(void*)); __c_Parser->aliasTargets = haki_array_new(sizeof(void*)); __c_Parser->pendingItems = emptyItems; __c_Parser->methodFnDefs = emptyFnDefs; __c_Parser->methodOwner = emptyOwners; __c_Parser; }));
+}
+
+const char* compiler__resolveAlias(Parser* p, const char* name) {
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_array_length(p->aliasNames))) {
+        if ((strcmp((*((void**)haki_array_get(p->aliasNames, i))), name) == 0)) {
+            return (const char*)(intptr_t)((*((void**)haki_array_get(p->aliasTargets, i))));
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    return (const char*)(intptr_t)("");
+}
+
+Token* compiler__peek(Parser* p) {
+    if ((p->pos < haki_array_length(p->tokens))) {
+        return (Token*)(intptr_t)(((Token*)(*((void**)haki_array_get(p->tokens, p->pos)))));
+    }
+    return (Token*)(intptr_t)(((Token*)(*((void**)haki_array_get(p->tokens, (haki_array_length(p->tokens) - ((int64_t)1LL)))))));
+}
+
+const char* compiler__peekKind(Parser* p) {
+    return (const char*)(intptr_t)(compiler__showKind(compiler__peek(p)->kind));
+}
+
+Token* compiler__advance(Parser* p) {
+    Token* tok = (Token*)(compiler__peek(p));
+    if ((p->pos < (haki_array_length(p->tokens) - ((int64_t)1LL)))) {
+        p->pos = (p->pos + ((int64_t)1LL));
+    }
+    return (Token*)(intptr_t)(tok);
+}
+
+int8_t compiler__eat(Parser* p, const char* kind) {
+    if ((strcmp(compiler__peekKind(p), kind) == 0)) {
+        (void)(compiler__advance(p));
+        return (int8_t)(intptr_t)(1);
+    }
+    return (int8_t)(intptr_t)(0);
+}
+
+void* compiler__expect(Parser* p, const char* kind) {
+    Token* tok = (Token*)(compiler__peek(p));
+    if ((strcmp(compiler__peekKind(p), kind) != 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(tok);
+        __ret->f1 = (void*)(haki_error_new(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("expected ", kind), " but got "), compiler__peekKind(p)), " at pos "), haki_int_to_string(p->pos))));
+        return __ret;
+    }
+    (void)(compiler__advance(p));
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(tok);
+    __ret->f1 = (void*)(NULL);
+    return __ret;
+}
+
+void* compiler__parseSimpleTyStr(Parser* p) {
+    const char* kind = (const char*)(intptr_t)(compiler__peekKind(p));
+    if ((strcmp(kind, "(") == 0)) {
+        (void)(compiler__advance(p));
+        void* parts = haki_array_new(sizeof(void*));
+        while (((strcmp(compiler__peekKind(p), ")") != 0) && (strcmp(compiler__peekKind(p), "EOF") != 0))) {
+            void* __mr_part = (void*)(compiler__parseSimpleTyStr(p));
+            const char* part = (const char*)(intptr_t)((intptr_t)((void**)(__mr_part))[0]);
+            void* pe = (void*)((intptr_t)((void**)(__mr_part))[1]);
+            if ((pe != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)("()");
+                __ret->f1 = (void*)(pe);
+                return __ret;
+            }
+            ({ void* __el = (void*)(intptr_t)(part); haki_array_append(parts, &__el); });
+            (void)(compiler__eat(p, ","));
+        }
+        void* __mr_rpe = (void*)(compiler__expect(p, ")"));
+        void* rpe = (void*)((intptr_t)((void**)(__mr_rpe))[1]);
+        if ((rpe != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)("()");
+            __ret->f1 = (void*)(rpe);
+            return __ret;
+        }
+        const char* result = (const char*)(intptr_t)("(");
+        int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+        while ((i < haki_array_length(parts))) {
+            if ((i > ((int64_t)0LL))) {
+                result = haki_string_concat(result, ", ");
+            }
+            result = haki_string_concat(result, (*((void**)haki_array_get(parts, i))));
+            i = (i + ((int64_t)1LL));
+        }
+        result = haki_string_concat(result, ")");
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(result);
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "fn") == 0)) {
+        (void)(compiler__advance(p));
+        const char* fnTy = (const char*)(intptr_t)("fn");
+        if ((strcmp(compiler__peekKind(p), "(") == 0)) {
+            (void)(compiler__advance(p));
+            fnTy = haki_string_concat(fnTy, "(");
+            int8_t first = (int8_t)(intptr_t)(1);
+            while (((strcmp(compiler__peekKind(p), ")") != 0) && (strcmp(compiler__peekKind(p), "EOF") != 0))) {
+                void* __mr_pt = (void*)(compiler__parseSimpleTyStr(p));
+                const char* pt = (const char*)(intptr_t)((intptr_t)((void**)(__mr_pt))[0]);
+                void* pte = (void*)((intptr_t)((void**)(__mr_pt))[1]);
+                if ((pte != NULL)) {
+                    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                    __ret->f0 = (void*)(haki_string_concat(fnTy, ")"));
+                    __ret->f1 = (void*)(pte);
+                    return __ret;
+                }
+                if ((!first)) {
+                    fnTy = haki_string_concat(fnTy, ", ");
+                }
+                fnTy = haki_string_concat(fnTy, pt);
+                first = 0;
+                (void)(compiler__eat(p, ","));
+            }
+            void* __mr_rpe = (void*)(compiler__expect(p, ")"));
+            void* rpe = (void*)((intptr_t)((void**)(__mr_rpe))[1]);
+            if ((rpe != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(fnTy);
+                __ret->f1 = (void*)(rpe);
+                return __ret;
+            }
+            fnTy = haki_string_concat(fnTy, ")");
+        }
+        if ((strcmp(compiler__peekKind(p), "->") == 0)) {
+            (void)(compiler__advance(p));
+            void* __mr_rt = (void*)(compiler__parseSimpleTyStr(p));
+            const char* rt = (const char*)(intptr_t)((intptr_t)((void**)(__mr_rt))[0]);
+            void* rte = (void*)((intptr_t)((void**)(__mr_rt))[1]);
+            if ((rte != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(fnTy);
+                __ret->f1 = (void*)(rte);
+                return __ret;
+            }
+            fnTy = haki_string_concat(haki_string_concat(fnTy, " -> "), rt);
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(fnTy);
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if (((haki_string_length(kind) > ((int64_t)6LL)) && (strcmp(haki_string_substring(kind, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+        const char* name = (const char*)(intptr_t)(haki_string_substring(kind, ((int64_t)6LL), (haki_string_length(kind) - ((int64_t)1LL))));
+        (void)(compiler__advance(p));
+        const char* baseName = (const char*)(intptr_t)(name);
+        if ((strcmp(compiler__peekKind(p), ".") == 0)) {
+            (void)(compiler__advance(p));
+            const char* nextK = (const char*)(intptr_t)(compiler__peekKind(p));
+            if (((haki_string_length(nextK) > ((int64_t)6LL)) && (strcmp(haki_string_substring(nextK, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+                const char* tyName = (const char*)(intptr_t)(haki_string_substring(nextK, ((int64_t)6LL), (haki_string_length(nextK) - ((int64_t)1LL))));
+                (void)(compiler__advance(p));
+                baseName = haki_string_concat(haki_string_concat(name, "."), tyName);
+            }
+        }
+        if ((strcmp(compiler__peekKind(p), "<") == 0)) {
+            (void)(compiler__advance(p));
+            const char* argStr = (const char*)(intptr_t)(haki_string_concat(baseName, "<"));
+            int8_t firstArg = (int8_t)(intptr_t)(1);
+            while (((strcmp(compiler__peekKind(p), ">") != 0) && (strcmp(compiler__peekKind(p), "EOF") != 0))) {
+                void* __mr_inner = (void*)(compiler__parseSimpleTyStr(p));
+                const char* inner = (const char*)(intptr_t)((intptr_t)((void**)(__mr_inner))[0]);
+                void* ie = (void*)((intptr_t)((void**)(__mr_inner))[1]);
+                if ((ie != NULL)) {
+                    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                    __ret->f0 = (void*)(haki_string_concat(argStr, ">"));
+                    __ret->f1 = (void*)(ie);
+                    return __ret;
+                }
+                if ((!firstArg)) {
+                    argStr = haki_string_concat(argStr, ", ");
+                }
+                argStr = haki_string_concat(argStr, inner);
+                firstArg = 0;
+                (void)(compiler__eat(p, ","));
+            }
+            void* __mr_ge = (void*)(compiler__expect(p, ">"));
+            void* ge = (void*)((intptr_t)((void**)(__mr_ge))[1]);
+            if ((ge != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(haki_string_concat(argStr, ">"));
+                __ret->f1 = (void*)(ge);
+                return __ret;
+            }
+            argStr = haki_string_concat(argStr, ">");
+            if ((strcmp(compiler__peekKind(p), "?") == 0)) {
+                (void)(compiler__advance(p));
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(haki_string_concat(argStr, "?"));
+                __ret->f1 = (void*)(NULL);
+                return __ret;
+            }
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(argStr);
+            __ret->f1 = (void*)(NULL);
+            return __ret;
+        }
+        if ((strcmp(compiler__peekKind(p), "?") == 0)) {
+            (void)(compiler__advance(p));
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(haki_string_concat(baseName, "?"));
+            __ret->f1 = (void*)(NULL);
+            return __ret;
+        }
+        const char* __aliasR = (const char*)(intptr_t)(compiler__resolveAlias(p, baseName));
+        if ((haki_string_length(__aliasR) > ((int64_t)0LL))) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(__aliasR);
+            __ret->f1 = (void*)(NULL);
+            return __ret;
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(baseName);
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((((((strcmp(kind, "int") == 0) || (strcmp(kind, "string") == 0)) || (strcmp(kind, "bool") == 0)) || (strcmp(kind, "float") == 0)) || (strcmp(kind, "void") == 0))) {
+        (void)(compiler__advance(p));
+        if ((strcmp(compiler__peekKind(p), "?") == 0)) {
+            (void)(compiler__advance(p));
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(haki_string_concat(kind, "?"));
+            __ret->f1 = (void*)(NULL);
+            return __ret;
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(kind);
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)("");
+    __ret->f1 = (void*)(haki_error_new(haki_string_concat("expected type, got: ", kind)));
+    return __ret;
+}
+
+void* compiler__parseExpr(Parser* p) {
+    void* __mr_cond = (void*)(compiler__parseNilCoalesce(p));
+    Expr* cond = (Expr*)((intptr_t)((void**)(__mr_cond))[0]);
+    void* ce = (void*)((intptr_t)((void**)(__mr_cond))[1]);
+    if ((ce != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(cond);
+        __ret->f1 = (void*)(ce);
+        return __ret;
+    }
+    if ((strcmp(compiler__peekKind(p), "?") == 0)) {
+        (void)(compiler__advance(p));
+        void* __mr_thenE = (void*)(compiler__parseExpr(p));
+        Expr* thenE = (Expr*)((intptr_t)((void**)(__mr_thenE))[0]);
+        void* te = (void*)((intptr_t)((void**)(__mr_thenE))[1]);
+        if ((te != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(thenE);
+            __ret->f1 = (void*)(te);
+            return __ret;
+        }
+        void* __mr_cle = (void*)(compiler__expect(p, ":"));
+        void* cle = (void*)((intptr_t)((void**)(__mr_cle))[1]);
+        if ((cle != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(thenE);
+            __ret->f1 = (void*)(cle);
+            return __ret;
+        }
+        void* __mr_elseE = (void*)(compiler__parseExpr(p));
+        Expr* elseE = (Expr*)((intptr_t)((void**)(__mr_elseE))[0]);
+        void* ee = (void*)((intptr_t)((void**)(__mr_elseE))[1]);
+        if ((ee != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(elseE);
+            __ret->f1 = (void*)(ee);
+            return __ret;
+        }
+        void* thenB = haki_array_new(sizeof(void*));
+        ({ void* __el = (void*)(intptr_t)(({ void** __pay_SYield = (void**)malloc(sizeof(void*) * 1); __pay_SYield[0] = (void*)(thenE); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = (void*)__pay_SYield; __ev; })); haki_array_append(thenB, &__el); });
+        void* elseB = haki_array_new(sizeof(void*));
+        ({ void* __el = (void*)(intptr_t)(({ void** __pay_SYield = (void**)malloc(sizeof(void*) * 1); __pay_SYield[0] = (void*)(elseE); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = (void*)__pay_SYield; __ev; })); haki_array_append(elseB, &__el); });
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EIf = (void**)malloc(sizeof(void*) * 3); __pay_EIf[0] = (void*)(cond); __pay_EIf[1] = (void*)(thenB); __pay_EIf[2] = (void*)(elseB); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 16LL; ((void**)__ev)[1] = (void*)__pay_EIf; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(cond);
+    __ret->f1 = (void*)(NULL);
+    return __ret;
+}
+
+void* compiler__parseNilCoalesce(Parser* p) {
+    void* __mr_left = (void*)(compiler__parseOr(p));
+    Expr* left = (Expr*)((intptr_t)((void**)(__mr_left))[0]);
+    void* le = (void*)((intptr_t)((void**)(__mr_left))[1]);
+    if ((le != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(left);
+        __ret->f1 = (void*)(le);
+        return __ret;
+    }
+    Expr* result = (Expr*)(left);
+    int8_t going = (int8_t)(intptr_t)(1);
+    while (going) {
+        if ((strcmp(compiler__peekKind(p), "?") == 0)) {
+            int64_t savedPos = (int64_t)(intptr_t)(p->pos);
+            (void)(compiler__advance(p));
+            if ((strcmp(compiler__peekKind(p), "?") == 0)) {
+                (void)(compiler__advance(p));
+                void* __mr_right = (void*)(compiler__parseOr(p));
+                Expr* right = (Expr*)((intptr_t)((void**)(__mr_right))[0]);
+                void* re = (void*)((intptr_t)((void**)(__mr_right))[1]);
+                if ((re != NULL)) {
+                    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                    __ret->f0 = (void*)(result);
+                    __ret->f1 = (void*)(re);
+                    return __ret;
+                }
+                result = ({ void** __pay_EBinary = (void**)malloc(sizeof(void*) * 3); __pay_EBinary[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ("??"); (void*)__ps; }); __pay_EBinary[1] = (void*)(result); __pay_EBinary[2] = (void*)(right); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 10LL; ((void**)__ev)[1] = (void*)__pay_EBinary; __ev; });
+            }
+            else {
+                p->pos = savedPos;
+                going = 0;
+            }
+        }
+        else {
+            going = 0;
+        }
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(result);
+    __ret->f1 = (void*)(NULL);
+    return __ret;
+}
+
+void* compiler__parseOr(Parser* p) {
+    void* __mr_left = (void*)(compiler__parseAnd(p));
+    Expr* left = (Expr*)((intptr_t)((void**)(__mr_left))[0]);
+    void* le = (void*)((intptr_t)((void**)(__mr_left))[1]);
+    if ((le != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(left);
+        __ret->f1 = (void*)(le);
+        return __ret;
+    }
+    Expr* result = (Expr*)(left);
+    while ((strcmp(compiler__peekKind(p), "||") == 0)) {
+        (void)(compiler__advance(p));
+        void* __mr_right = (void*)(compiler__parseAnd(p));
+        Expr* right = (Expr*)((intptr_t)((void**)(__mr_right))[0]);
+        void* re = (void*)((intptr_t)((void**)(__mr_right))[1]);
+        if ((re != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(result);
+            __ret->f1 = (void*)(re);
+            return __ret;
+        }
+        result = ({ void** __pay_EBinary = (void**)malloc(sizeof(void*) * 3); __pay_EBinary[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ("||"); (void*)__ps; }); __pay_EBinary[1] = (void*)(result); __pay_EBinary[2] = (void*)(right); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 10LL; ((void**)__ev)[1] = (void*)__pay_EBinary; __ev; });
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(result);
+    __ret->f1 = (void*)(NULL);
+    return __ret;
+}
+
+void* compiler__parseAnd(Parser* p) {
+    void* __mr_left = (void*)(compiler__parseEquality(p));
+    Expr* left = (Expr*)((intptr_t)((void**)(__mr_left))[0]);
+    void* le = (void*)((intptr_t)((void**)(__mr_left))[1]);
+    if ((le != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(left);
+        __ret->f1 = (void*)(le);
+        return __ret;
+    }
+    Expr* result = (Expr*)(left);
+    while ((strcmp(compiler__peekKind(p), "&&") == 0)) {
+        (void)(compiler__advance(p));
+        void* __mr_right = (void*)(compiler__parseEquality(p));
+        Expr* right = (Expr*)((intptr_t)((void**)(__mr_right))[0]);
+        void* re = (void*)((intptr_t)((void**)(__mr_right))[1]);
+        if ((re != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(result);
+            __ret->f1 = (void*)(re);
+            return __ret;
+        }
+        result = ({ void** __pay_EBinary = (void**)malloc(sizeof(void*) * 3); __pay_EBinary[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ("&&"); (void*)__ps; }); __pay_EBinary[1] = (void*)(result); __pay_EBinary[2] = (void*)(right); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 10LL; ((void**)__ev)[1] = (void*)__pay_EBinary; __ev; });
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(result);
+    __ret->f1 = (void*)(NULL);
+    return __ret;
+}
+
+void* compiler__parseEquality(Parser* p) {
+    void* __mr_left = (void*)(compiler__parseComparison(p));
+    Expr* left = (Expr*)((intptr_t)((void**)(__mr_left))[0]);
+    void* le = (void*)((intptr_t)((void**)(__mr_left))[1]);
+    if ((le != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(left);
+        __ret->f1 = (void*)(le);
+        return __ret;
+    }
+    Expr* result = (Expr*)(left);
+    int8_t going = (int8_t)(intptr_t)(1);
+    while (going) {
+        const char* k = (const char*)(intptr_t)(compiler__peekKind(p));
+        if (((strcmp(k, "==") == 0) || (strcmp(k, "!=") == 0))) {
+            (void)(compiler__advance(p));
+            void* __mr_right = (void*)(compiler__parseComparison(p));
+            Expr* right = (Expr*)((intptr_t)((void**)(__mr_right))[0]);
+            void* re = (void*)((intptr_t)((void**)(__mr_right))[1]);
+            if ((re != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(result);
+                __ret->f1 = (void*)(re);
+                return __ret;
+            }
+            result = ({ void** __pay_EBinary = (void**)malloc(sizeof(void*) * 3); __pay_EBinary[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (k); (void*)__ps; }); __pay_EBinary[1] = (void*)(result); __pay_EBinary[2] = (void*)(right); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 10LL; ((void**)__ev)[1] = (void*)__pay_EBinary; __ev; });
+        }
+        else {
+            going = 0;
+        }
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(result);
+    __ret->f1 = (void*)(NULL);
+    return __ret;
+}
+
+void* compiler__parseComparison(Parser* p) {
+    void* __mr_left = (void*)(compiler__parseAddSub(p));
+    Expr* left = (Expr*)((intptr_t)((void**)(__mr_left))[0]);
+    void* le = (void*)((intptr_t)((void**)(__mr_left))[1]);
+    if ((le != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(left);
+        __ret->f1 = (void*)(le);
+        return __ret;
+    }
+    Expr* result = (Expr*)(left);
+    int8_t going = (int8_t)(intptr_t)(1);
+    while (going) {
+        const char* k = (const char*)(intptr_t)(compiler__peekKind(p));
+        if (((((strcmp(k, "<") == 0) || (strcmp(k, "<=") == 0)) || (strcmp(k, ">") == 0)) || (strcmp(k, ">=") == 0))) {
+            (void)(compiler__advance(p));
+            void* __mr_right = (void*)(compiler__parseAddSub(p));
+            Expr* right = (Expr*)((intptr_t)((void**)(__mr_right))[0]);
+            void* re = (void*)((intptr_t)((void**)(__mr_right))[1]);
+            if ((re != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(result);
+                __ret->f1 = (void*)(re);
+                return __ret;
+            }
+            result = ({ void** __pay_EBinary = (void**)malloc(sizeof(void*) * 3); __pay_EBinary[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (k); (void*)__ps; }); __pay_EBinary[1] = (void*)(result); __pay_EBinary[2] = (void*)(right); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 10LL; ((void**)__ev)[1] = (void*)__pay_EBinary; __ev; });
+        }
+        else {
+            going = 0;
+        }
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(result);
+    __ret->f1 = (void*)(NULL);
+    return __ret;
+}
+
+void* compiler__parseAddSub(Parser* p) {
+    void* __mr_left = (void*)(compiler__parseMulDiv(p));
+    Expr* left = (Expr*)((intptr_t)((void**)(__mr_left))[0]);
+    void* le = (void*)((intptr_t)((void**)(__mr_left))[1]);
+    if ((le != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(left);
+        __ret->f1 = (void*)(le);
+        return __ret;
+    }
+    Expr* result = (Expr*)(left);
+    int8_t going = (int8_t)(intptr_t)(1);
+    while (going) {
+        const char* k = (const char*)(intptr_t)(compiler__peekKind(p));
+        if (((strcmp(k, "+") == 0) || (strcmp(k, "-") == 0))) {
+            (void)(compiler__advance(p));
+            void* __mr_right = (void*)(compiler__parseMulDiv(p));
+            Expr* right = (Expr*)((intptr_t)((void**)(__mr_right))[0]);
+            void* re = (void*)((intptr_t)((void**)(__mr_right))[1]);
+            if ((re != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(result);
+                __ret->f1 = (void*)(re);
+                return __ret;
+            }
+            result = ({ void** __pay_EBinary = (void**)malloc(sizeof(void*) * 3); __pay_EBinary[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (k); (void*)__ps; }); __pay_EBinary[1] = (void*)(result); __pay_EBinary[2] = (void*)(right); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 10LL; ((void**)__ev)[1] = (void*)__pay_EBinary; __ev; });
+        }
+        else {
+            going = 0;
+        }
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(result);
+    __ret->f1 = (void*)(NULL);
+    return __ret;
+}
+
+void* compiler__parseMulDiv(Parser* p) {
+    void* __mr_left = (void*)(compiler__parseUnary(p));
+    Expr* left = (Expr*)((intptr_t)((void**)(__mr_left))[0]);
+    void* le = (void*)((intptr_t)((void**)(__mr_left))[1]);
+    if ((le != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(left);
+        __ret->f1 = (void*)(le);
+        return __ret;
+    }
+    Expr* result = (Expr*)(left);
+    int8_t going = (int8_t)(intptr_t)(1);
+    while (going) {
+        const char* k = (const char*)(intptr_t)(compiler__peekKind(p));
+        if ((((strcmp(k, "*") == 0) || (strcmp(k, "/") == 0)) || (strcmp(k, "%") == 0))) {
+            (void)(compiler__advance(p));
+            void* __mr_right = (void*)(compiler__parseUnary(p));
+            Expr* right = (Expr*)((intptr_t)((void**)(__mr_right))[0]);
+            void* re = (void*)((intptr_t)((void**)(__mr_right))[1]);
+            if ((re != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(result);
+                __ret->f1 = (void*)(re);
+                return __ret;
+            }
+            result = ({ void** __pay_EBinary = (void**)malloc(sizeof(void*) * 3); __pay_EBinary[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (k); (void*)__ps; }); __pay_EBinary[1] = (void*)(result); __pay_EBinary[2] = (void*)(right); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 10LL; ((void**)__ev)[1] = (void*)__pay_EBinary; __ev; });
+        }
+        else {
+            going = 0;
+        }
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(result);
+    __ret->f1 = (void*)(NULL);
+    return __ret;
+}
+
+void* compiler__parseUnary(Parser* p) {
+    const char* k = (const char*)(intptr_t)(compiler__peekKind(p));
+    if ((strcmp(k, "await") == 0)) {
+        (void)(compiler__advance(p));
+        return (void*)(intptr_t)(compiler__parseUnary(p));
+    }
+    if (((strcmp(k, "-") == 0) || (strcmp(k, "!") == 0))) {
+        (void)(compiler__advance(p));
+        void* __mr_operand = (void*)(compiler__parsePostfix(p));
+        Expr* operand = (Expr*)((intptr_t)((void**)(__mr_operand))[0]);
+        void* oe = (void*)((intptr_t)((void**)(__mr_operand))[1]);
+        if ((oe != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(operand);
+            __ret->f1 = (void*)(oe);
+            return __ret;
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EUnary = (void**)malloc(sizeof(void*) * 2); __pay_EUnary[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (k); (void*)__ps; }); __pay_EUnary[1] = (void*)(operand); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 9LL; ((void**)__ev)[1] = (void*)__pay_EUnary; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    return (void*)(intptr_t)(compiler__parsePostfix(p));
+}
+
+void* compiler__parsePostfix(Parser* p) {
+    void* __mr_base = (void*)(compiler__parsePrimary(p));
+    Expr* base = (Expr*)((intptr_t)((void**)(__mr_base))[0]);
+    void* be = (void*)((intptr_t)((void**)(__mr_base))[1]);
+    if ((be != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(base);
+        __ret->f1 = (void*)(be);
+        return __ret;
+    }
+    Expr* result = (Expr*)(base);
+    int8_t going = (int8_t)(intptr_t)(1);
+    while (going) {
+        const char* k = (const char*)(intptr_t)(compiler__peekKind(p));
+        if ((strcmp(k, ".") == 0)) {
+            (void)(compiler__advance(p));
+            const char* fieldK = (const char*)(intptr_t)(compiler__peekKind(p));
+            const char* dotName = (const char*)(intptr_t)("");
+            if (((haki_string_length(fieldK) > ((int64_t)6LL)) && (strcmp(haki_string_substring(fieldK, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+                dotName = haki_string_substring(fieldK, ((int64_t)6LL), (haki_string_length(fieldK) - ((int64_t)1LL)));
+            }
+            else {
+                dotName = compiler__keywordAsName(fieldK);
+            }
+            if ((haki_string_length(dotName) > ((int64_t)0LL))) {
+                const char* field = (const char*)(intptr_t)(dotName);
+                (void)(compiler__advance(p));
+                if ((strcmp(compiler__peekKind(p), "(") == 0)) {
+                    (void)(compiler__advance(p));
+                    void* __mr_args = (void*)(compiler__parseArgList(p));
+                    void* args = (void*)((intptr_t)((void**)(__mr_args))[0]);
+                    void* ae = (void*)((intptr_t)((void**)(__mr_args))[1]);
+                    if ((ae != NULL)) {
+                        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                        __ret->f0 = (void*)(result);
+                        __ret->f1 = (void*)(ae);
+                        return __ret;
+                    }
+                    void* __mr_pe = (void*)(compiler__expect(p, ")"));
+                    void* pe = (void*)((intptr_t)((void**)(__mr_pe))[1]);
+                    if ((pe != NULL)) {
+                        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                        __ret->f0 = (void*)(result);
+                        __ret->f1 = (void*)(pe);
+                        return __ret;
+                    }
+                    result = ({ void** __pay_EMethodCall = (void**)malloc(sizeof(void*) * 3); __pay_EMethodCall[0] = (void*)(result); __pay_EMethodCall[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (field); (void*)__ps; }); __pay_EMethodCall[2] = (void*)(args); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 13LL; ((void**)__ev)[1] = (void*)__pay_EMethodCall; __ev; });
+                }
+                else {
+                    result = ({ void** __pay_EField = (void**)malloc(sizeof(void*) * 2); __pay_EField[0] = (void*)(result); __pay_EField[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (field); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 12LL; ((void**)__ev)[1] = (void*)__pay_EField; __ev; });
+                }
+            }
+            else {
+                going = 0;
+            }
+        }
+        else {
+            if ((strcmp(k, "[") == 0)) {
+                (void)(compiler__advance(p));
+                void* __mr_idx = (void*)(compiler__parseExpr(p));
+                Expr* idx = (Expr*)((intptr_t)((void**)(__mr_idx))[0]);
+                void* ie = (void*)((intptr_t)((void**)(__mr_idx))[1]);
+                if ((ie != NULL)) {
+                    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                    __ret->f0 = (void*)(result);
+                    __ret->f1 = (void*)(ie);
+                    return __ret;
+                }
+                void* __mr_be2 = (void*)(compiler__expect(p, "]"));
+                void* be2 = (void*)((intptr_t)((void**)(__mr_be2))[1]);
+                if ((be2 != NULL)) {
+                    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                    __ret->f0 = (void*)(result);
+                    __ret->f1 = (void*)(be2);
+                    return __ret;
+                }
+                result = ({ void** __pay_EIndex = (void**)malloc(sizeof(void*) * 2); __pay_EIndex[0] = (void*)(result); __pay_EIndex[1] = (void*)(idx); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 14LL; ((void**)__ev)[1] = (void*)__pay_EIndex; __ev; });
+            }
+            else {
+                if ((strcmp(k, "?") == 0)) {
+                    int64_t savedPos2 = (int64_t)(intptr_t)(p->pos);
+                    (void)(compiler__advance(p));
+                    if ((strcmp(compiler__peekKind(p), ".") == 0)) {
+                        (void)(compiler__advance(p));
+                        const char* fieldK2 = (const char*)(intptr_t)(compiler__peekKind(p));
+                        const char* dotName2 = (const char*)(intptr_t)("");
+                        if (((haki_string_length(fieldK2) > ((int64_t)6LL)) && (strcmp(haki_string_substring(fieldK2, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+                            dotName2 = haki_string_substring(fieldK2, ((int64_t)6LL), (haki_string_length(fieldK2) - ((int64_t)1LL)));
+                        }
+                        else {
+                            dotName2 = compiler__keywordAsName(fieldK2);
+                        }
+                        if ((haki_string_length(dotName2) > ((int64_t)0LL))) {
+                            const char* field2 = (const char*)(intptr_t)(dotName2);
+                            (void)(compiler__advance(p));
+                            if ((strcmp(compiler__peekKind(p), "(") == 0)) {
+                                (void)(compiler__advance(p));
+                                void* __mr_args2 = (void*)(compiler__parseArgList(p));
+                                void* args2 = (void*)((intptr_t)((void**)(__mr_args2))[0]);
+                                void* ae2 = (void*)((intptr_t)((void**)(__mr_args2))[1]);
+                                if ((ae2 != NULL)) {
+                                    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                                    __ret->f0 = (void*)(result);
+                                    __ret->f1 = (void*)(ae2);
+                                    return __ret;
+                                }
+                                void* __mr_pe2 = (void*)(compiler__expect(p, ")"));
+                                void* pe2 = (void*)((intptr_t)((void**)(__mr_pe2))[1]);
+                                if ((pe2 != NULL)) {
+                                    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                                    __ret->f0 = (void*)(result);
+                                    __ret->f1 = (void*)(pe2);
+                                    return __ret;
+                                }
+                                result = ({ void** __pay_EMethodCall = (void**)malloc(sizeof(void*) * 3); __pay_EMethodCall[0] = (void*)(result); __pay_EMethodCall[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (haki_string_concat("__optchain__", field2)); (void*)__ps; }); __pay_EMethodCall[2] = (void*)(args2); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 13LL; ((void**)__ev)[1] = (void*)__pay_EMethodCall; __ev; });
+                            }
+                            else {
+                                result = ({ void** __pay_EMethodCall = (void**)malloc(sizeof(void*) * 3); __pay_EMethodCall[0] = (void*)(result); __pay_EMethodCall[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (haki_string_concat("__optchain__", field2)); (void*)__ps; }); __pay_EMethodCall[2] = (void*)(compiler__emptyExprs()); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 13LL; ((void**)__ev)[1] = (void*)__pay_EMethodCall; __ev; });
+                            }
+                        }
+                        else {
+                            p->pos = savedPos2;
+                            going = 0;
+                        }
+                    }
+                    else {
+                        p->pos = savedPos2;
+                        going = 0;
+                    }
+                }
+                else {
+                    going = 0;
+                }
+            }
+        }
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(result);
+    __ret->f1 = (void*)(NULL);
+    return __ret;
+}
+
+const char* compiler__keywordAsName(const char* kind) {
+    if ((strcmp(kind, "match") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "type") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "in") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "for") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "if") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "else") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "while") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "return") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "break") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "continue") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "yield") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "defer") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "import") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "as") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "fn") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "let") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "const") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "struct") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "class") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "enum") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "protocol") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "impl") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "async") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "await") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "extern") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "weak") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "try") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    if ((strcmp(kind, "spawn") == 0)) {
+        return (const char*)(intptr_t)(kind);
+    }
+    return (const char*)(intptr_t)("");
+}
+
+void* compiler__parseArgList(Parser* p) {
+    void* args = haki_array_new(sizeof(void*));
+    while (((strcmp(compiler__peekKind(p), ")") != 0) && (strcmp(compiler__peekKind(p), "EOF") != 0))) {
+        if (((haki_string_length(compiler__peekKind(p)) > ((int64_t)6LL)) && (strcmp(haki_string_substring(compiler__peekKind(p), ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+            int64_t savedPos = (int64_t)(intptr_t)(p->pos);
+            (void)(compiler__advance(p));
+            if ((strcmp(compiler__peekKind(p), ":") == 0)) {
+                (void)(compiler__advance(p));
+            }
+            else {
+                p->pos = savedPos;
+            }
+        }
+        void* __mr_arg = (void*)(compiler__parseExpr(p));
+        Expr* arg = (Expr*)((intptr_t)((void**)(__mr_arg))[0]);
+        void* ae = (void*)((intptr_t)((void**)(__mr_arg))[1]);
+        if ((ae != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(args);
+            __ret->f1 = (void*)(ae);
+            return __ret;
+        }
+        ({ void* __el = (void*)(intptr_t)(arg); haki_array_append(args, &__el); });
+        (void)(compiler__eat(p, ","));
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(args);
+    __ret->f1 = (void*)(NULL);
+    return __ret;
+}
+
+void* compiler__parsePrimary(Parser* p) {
+    const char* kind = (const char*)(intptr_t)(compiler__peekKind(p));
+    if (((haki_string_length(kind) > ((int64_t)4LL)) && (strcmp(haki_string_substring(kind, ((int64_t)0LL), ((int64_t)4LL)), "Int(") == 0))) {
+        const char* nStr = (const char*)(intptr_t)(haki_string_substring(kind, ((int64_t)4LL), (haki_string_length(kind) - ((int64_t)1LL))));
+        (void)(compiler__advance(p));
+        int64_t n = (int64_t)(intptr_t)(((int64_t)0LL));
+        int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+        int8_t neg = (int8_t)(intptr_t)(0);
+        if (((haki_string_length(nStr) > ((int64_t)0LL)) && (strcmp(haki_string_substring(nStr, ((int64_t)0LL), ((int64_t)1LL)), "-") == 0))) {
+            neg = 1;
+            i = ((int64_t)1LL);
+        }
+        while ((i < haki_string_length(nStr))) {
+            const char* ch = (const char*)(intptr_t)(haki_string_substring(nStr, i, (i + ((int64_t)1LL))));
+            if ((strcmp(ch, "0") == 0)) {
+                n = ((n * ((int64_t)10LL)) + ((int64_t)0LL));
+            }
+            if ((strcmp(ch, "1") == 0)) {
+                n = ((n * ((int64_t)10LL)) + ((int64_t)1LL));
+            }
+            if ((strcmp(ch, "2") == 0)) {
+                n = ((n * ((int64_t)10LL)) + ((int64_t)2LL));
+            }
+            if ((strcmp(ch, "3") == 0)) {
+                n = ((n * ((int64_t)10LL)) + ((int64_t)3LL));
+            }
+            if ((strcmp(ch, "4") == 0)) {
+                n = ((n * ((int64_t)10LL)) + ((int64_t)4LL));
+            }
+            if ((strcmp(ch, "5") == 0)) {
+                n = ((n * ((int64_t)10LL)) + ((int64_t)5LL));
+            }
+            if ((strcmp(ch, "6") == 0)) {
+                n = ((n * ((int64_t)10LL)) + ((int64_t)6LL));
+            }
+            if ((strcmp(ch, "7") == 0)) {
+                n = ((n * ((int64_t)10LL)) + ((int64_t)7LL));
+            }
+            if ((strcmp(ch, "8") == 0)) {
+                n = ((n * ((int64_t)10LL)) + ((int64_t)8LL));
+            }
+            if ((strcmp(ch, "9") == 0)) {
+                n = ((n * ((int64_t)10LL)) + ((int64_t)9LL));
+            }
+            i = (i + ((int64_t)1LL));
+        }
+        if (neg) {
+            n = (-n);
+        }
+        if ((strcmp(compiler__peekKind(p), ".") == 0)) {
+            int64_t dotPos = (int64_t)(intptr_t)(p->pos);
+            (void)(compiler__advance(p));
+            const char* afterDot = (const char*)(intptr_t)(compiler__peekKind(p));
+            if (((haki_string_length(afterDot) > ((int64_t)4LL)) && (strcmp(haki_string_substring(afterDot, ((int64_t)0LL), ((int64_t)4LL)), "Int(") == 0))) {
+                const char* mStr = (const char*)(intptr_t)(haki_string_substring(afterDot, ((int64_t)4LL), (haki_string_length(afterDot) - ((int64_t)1LL))));
+                (void)(compiler__advance(p));
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(({ void** __pay_EFloat = (void**)malloc(sizeof(void*) * 1); __pay_EFloat[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (haki_string_concat(haki_string_concat(nStr, "."), mStr)); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 4LL; ((void**)__ev)[1] = (void*)__pay_EFloat; __ev; }));
+                __ret->f1 = (void*)(NULL);
+                return __ret;
+            }
+            else {
+                p->pos = dotPos;
+            }
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EInt = (void**)malloc(sizeof(void*) * 1); __pay_EInt[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(n); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_EInt; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if (((haki_string_length(kind) > ((int64_t)4LL)) && (strcmp(haki_string_substring(kind, ((int64_t)0LL), ((int64_t)4LL)), "Str(") == 0))) {
+        const char* s = (const char*)(intptr_t)(haki_string_substring(kind, ((int64_t)4LL), (haki_string_length(kind) - ((int64_t)1LL))));
+        (void)(compiler__advance(p));
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EString = (void**)malloc(sizeof(void*) * 1); __pay_EString[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (s); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 3LL; ((void**)__ev)[1] = (void*)__pay_EString; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "true") == 0)) {
+        (void)(compiler__advance(p));
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EBool = (void**)malloc(sizeof(void*) * 1); __pay_EBool[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(1); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_EBool; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "false") == 0)) {
+        (void)(compiler__advance(p));
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EBool = (void**)malloc(sizeof(void*) * 1); __pay_EBool[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(0); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_EBool; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "null") == 0)) {
+        (void)(compiler__advance(p));
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if (((haki_string_length(kind) > ((int64_t)6LL)) && (strcmp(haki_string_substring(kind, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+        const char* name = (const char*)(intptr_t)(haki_string_substring(kind, ((int64_t)6LL), (haki_string_length(kind) - ((int64_t)1LL))));
+        (void)(compiler__advance(p));
+        if ((strcmp(compiler__peekKind(p), "(") == 0)) {
+            (void)(compiler__advance(p));
+            int8_t isNamed = (int8_t)(intptr_t)(0);
+            if (((haki_string_length(compiler__peekKind(p)) > ((int64_t)6LL)) && (strcmp(haki_string_substring(compiler__peekKind(p), ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+                int64_t savedPos = (int64_t)(intptr_t)(p->pos);
+                (void)(compiler__advance(p));
+                if ((strcmp(compiler__peekKind(p), ":") == 0)) {
+                    isNamed = 1;
+                }
+                p->pos = savedPos;
+            }
+            if (isNamed) {
+                void* args = haki_array_new(sizeof(void*));
+                while (((strcmp(compiler__peekKind(p), ")") != 0) && (strcmp(compiler__peekKind(p), "EOF") != 0))) {
+                    if (((haki_string_length(compiler__peekKind(p)) > ((int64_t)6LL)) && (strcmp(haki_string_substring(compiler__peekKind(p), ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+                        (void)(compiler__advance(p));
+                    }
+                    if ((strcmp(compiler__peekKind(p), ":") == 0)) {
+                        (void)(compiler__advance(p));
+                    }
+                    void* __mr_arg = (void*)(compiler__parseExpr(p));
+                    Expr* arg = (Expr*)((intptr_t)((void**)(__mr_arg))[0]);
+                    void* ae = (void*)((intptr_t)((void**)(__mr_arg))[1]);
+                    if ((ae != NULL)) {
+                        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                        __ret->f0 = (void*)(({ void** __pay_ECall = (void**)malloc(sizeof(void*) * 2); __pay_ECall[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (name); (void*)__ps; }); __pay_ECall[1] = (void*)(args); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 11LL; ((void**)__ev)[1] = (void*)__pay_ECall; __ev; }));
+                        __ret->f1 = (void*)(ae);
+                        return __ret;
+                    }
+                    ({ void* __el = (void*)(intptr_t)(arg); haki_array_append(args, &__el); });
+                    (void)(compiler__eat(p, ","));
+                }
+                void* __mr_pe = (void*)(compiler__expect(p, ")"));
+                void* pe = (void*)((intptr_t)((void**)(__mr_pe))[1]);
+                if ((pe != NULL)) {
+                    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                    __ret->f0 = (void*)(({ void** __pay_ECall = (void**)malloc(sizeof(void*) * 2); __pay_ECall[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (name); (void*)__ps; }); __pay_ECall[1] = (void*)(args); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 11LL; ((void**)__ev)[1] = (void*)__pay_ECall; __ev; }));
+                    __ret->f1 = (void*)(pe);
+                    return __ret;
+                }
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(({ void** __pay_ECall = (void**)malloc(sizeof(void*) * 2); __pay_ECall[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (name); (void*)__ps; }); __pay_ECall[1] = (void*)(args); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 11LL; ((void**)__ev)[1] = (void*)__pay_ECall; __ev; }));
+                __ret->f1 = (void*)(NULL);
+                return __ret;
+            }
+            else {
+                void* __mr_args = (void*)(compiler__parseArgList(p));
+                void* args = (void*)((intptr_t)((void**)(__mr_args))[0]);
+                void* ae = (void*)((intptr_t)((void**)(__mr_args))[1]);
+                if ((ae != NULL)) {
+                    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                    __ret->f0 = (void*)(({ void** __pay_EIdent = (void**)malloc(sizeof(void*) * 1); __pay_EIdent[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (name); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 8LL; ((void**)__ev)[1] = (void*)__pay_EIdent; __ev; }));
+                    __ret->f1 = (void*)(ae);
+                    return __ret;
+                }
+                void* __mr_pe = (void*)(compiler__expect(p, ")"));
+                void* pe = (void*)((intptr_t)((void**)(__mr_pe))[1]);
+                if ((pe != NULL)) {
+                    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                    __ret->f0 = (void*)(({ void** __pay_EIdent = (void**)malloc(sizeof(void*) * 1); __pay_EIdent[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (name); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 8LL; ((void**)__ev)[1] = (void*)__pay_EIdent; __ev; }));
+                    __ret->f1 = (void*)(pe);
+                    return __ret;
+                }
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(({ void** __pay_ECall = (void**)malloc(sizeof(void*) * 2); __pay_ECall[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (name); (void*)__ps; }); __pay_ECall[1] = (void*)(args); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 11LL; ((void**)__ev)[1] = (void*)__pay_ECall; __ev; }));
+                __ret->f1 = (void*)(NULL);
+                return __ret;
+            }
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EIdent = (void**)malloc(sizeof(void*) * 1); __pay_EIdent[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (name); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 8LL; ((void**)__ev)[1] = (void*)__pay_EIdent; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "match") == 0)) {
+        (void)(compiler__advance(p));
+        void* __mr_scrutinee = (void*)(compiler__parseExpr(p));
+        Expr* scrutinee = (Expr*)((intptr_t)((void**)(__mr_scrutinee))[0]);
+        void* se = (void*)((intptr_t)((void**)(__mr_scrutinee))[1]);
+        if ((se != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(scrutinee);
+            __ret->f1 = (void*)(se);
+            return __ret;
+        }
+        void* __mr_lbe = (void*)(compiler__expect(p, "{"));
+        void* lbe = (void*)((intptr_t)((void**)(__mr_lbe))[1]);
+        if ((lbe != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(scrutinee);
+            __ret->f1 = (void*)(lbe);
+            return __ret;
+        }
+        void* arms = haki_array_new(sizeof(void*));
+        while (((strcmp(compiler__peekKind(p), "}") != 0) && (strcmp(compiler__peekKind(p), "EOF") != 0))) {
+            const char* pat = (const char*)(intptr_t)("_");
+            const char* pk = (const char*)(intptr_t)(compiler__peekKind(p));
+            if ((strcmp(pk, "_") == 0)) {
+                (void)(compiler__advance(p));
+            }
+            else {
+                if (((haki_string_length(pk) > ((int64_t)6LL)) && (strcmp(haki_string_substring(pk, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+                    pat = haki_string_substring(pk, ((int64_t)6LL), (haki_string_length(pk) - ((int64_t)1LL)));
+                    (void)(compiler__advance(p));
+                }
+                else {
+                    if (((haki_string_length(pk) > ((int64_t)4LL)) && (strcmp(haki_string_substring(pk, ((int64_t)0LL), ((int64_t)4LL)), "Str(") == 0))) {
+                        pat = pk;
+                        (void)(compiler__advance(p));
+                    }
+                    else {
+                        if (((haki_string_length(pk) > ((int64_t)4LL)) && (strcmp(haki_string_substring(pk, ((int64_t)0LL), ((int64_t)4LL)), "Int(") == 0))) {
+                            pat = pk;
+                            (void)(compiler__advance(p));
+                        }
+                    }
+                }
+            }
+            void* bindings = haki_array_new(sizeof(void*));
+            if ((strcmp(compiler__peekKind(p), "(") == 0)) {
+                (void)(compiler__advance(p));
+                while (((strcmp(compiler__peekKind(p), ")") != 0) && (strcmp(compiler__peekKind(p), "EOF") != 0))) {
+                    const char* bk = (const char*)(intptr_t)(compiler__peekKind(p));
+                    if ((strcmp(bk, "_") == 0)) {
+                        ({ void* __el = (void*)(intptr_t)("_"); haki_array_append(bindings, &__el); });
+                        (void)(compiler__advance(p));
+                    }
+                    else {
+                        if (((haki_string_length(bk) > ((int64_t)6LL)) && (strcmp(haki_string_substring(bk, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+                            ({ void* __el = (void*)(intptr_t)(haki_string_substring(bk, ((int64_t)6LL), (haki_string_length(bk) - ((int64_t)1LL)))); haki_array_append(bindings, &__el); });
+                            (void)(compiler__advance(p));
+                        }
+                    }
+                    (void)(compiler__eat(p, ","));
+                }
+                void* __mr_rpe = (void*)(compiler__expect(p, ")"));
+                void* rpe = (void*)((intptr_t)((void**)(__mr_rpe))[1]);
+                if ((rpe != NULL)) {
+                    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                    __ret->f0 = (void*)(scrutinee);
+                    __ret->f1 = (void*)(rpe);
+                    return __ret;
+                }
+            }
+            void* guardExpr = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = NULL; __ev; }));
+            if ((strcmp(compiler__peekKind(p), "if") == 0)) {
+                (void)(compiler__advance(p));
+                void* __mr_ge = (void*)(compiler__parseExpr(p));
+                Expr* ge = (Expr*)((intptr_t)((void**)(__mr_ge))[0]);
+                void* gee = (void*)((intptr_t)((void**)(__mr_ge))[1]);
+                if ((gee != NULL)) {
+                    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                    __ret->f0 = (void*)(scrutinee);
+                    __ret->f1 = (void*)(gee);
+                    return __ret;
+                }
+                guardExpr = ge;
+            }
+            void* __mr_body = (void*)(compiler__parseBlock(p));
+            void* body = (void*)((intptr_t)((void**)(__mr_body))[0]);
+            void* be = (void*)((intptr_t)((void**)(__mr_body))[1]);
+            if ((be != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(scrutinee);
+                __ret->f1 = (void*)(be);
+                return __ret;
+            }
+            ({ void* __el = (void*)(intptr_t)(({ MatchArm* __c_MatchArm = (MatchArm*)malloc(sizeof(MatchArm)); __c_MatchArm->pattern = pat; __c_MatchArm->bindings = bindings; __c_MatchArm->guard = guardExpr; __c_MatchArm->body = body; __c_MatchArm; })); haki_array_append(arms, &__el); });
+        }
+        void* __mr_rbe = (void*)(compiler__expect(p, "}"));
+        void* rbe = (void*)((intptr_t)((void**)(__mr_rbe))[1]);
+        if ((rbe != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(scrutinee);
+            __ret->f1 = (void*)(rbe);
+            return __ret;
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EMatch = (void**)malloc(sizeof(void*) * 2); __pay_EMatch[0] = (void*)(scrutinee); __pay_EMatch[1] = (void*)(arms); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 17LL; ((void**)__ev)[1] = (void*)__pay_EMatch; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "{") == 0)) {
+        void* __mr_body = (void*)(compiler__parseBlock(p));
+        void* body = (void*)((intptr_t)((void**)(__mr_body))[0]);
+        void* be = (void*)((intptr_t)((void**)(__mr_body))[1]);
+        if ((be != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = NULL; __ev; }));
+            __ret->f1 = (void*)(be);
+            return __ret;
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EBlock = (void**)malloc(sizeof(void*) * 1); __pay_EBlock[0] = (void*)(body); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 18LL; ((void**)__ev)[1] = (void*)__pay_EBlock; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "if") == 0)) {
+        (void)(compiler__advance(p));
+        void* __mr_cond = (void*)(compiler__parseExpr(p));
+        Expr* cond = (Expr*)((intptr_t)((void**)(__mr_cond))[0]);
+        void* ce = (void*)((intptr_t)((void**)(__mr_cond))[1]);
+        if ((ce != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(cond);
+            __ret->f1 = (void*)(ce);
+            return __ret;
+        }
+        void* __mr_then = (void*)(compiler__parseBlock(p));
+        void* then = (void*)((intptr_t)((void**)(__mr_then))[0]);
+        void* te = (void*)((intptr_t)((void**)(__mr_then))[1]);
+        if ((te != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_EIf = (void**)malloc(sizeof(void*) * 3); __pay_EIf[0] = (void*)(cond); __pay_EIf[1] = (void*)(then); __pay_EIf[2] = (void*)(haki_array_new(sizeof(void*))); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 16LL; ((void**)__ev)[1] = (void*)__pay_EIf; __ev; }));
+            __ret->f1 = (void*)(te);
+            return __ret;
+        }
+        void* els = haki_array_new(sizeof(void*));
+        if ((strcmp(compiler__peekKind(p), "else") == 0)) {
+            (void)(compiler__advance(p));
+            void* __mr_elsBody = (void*)(compiler__parseBlock(p));
+            void* elsBody = (void*)((intptr_t)((void**)(__mr_elsBody))[0]);
+            void* ee = (void*)((intptr_t)((void**)(__mr_elsBody))[1]);
+            if ((ee != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(({ void** __pay_EIf = (void**)malloc(sizeof(void*) * 3); __pay_EIf[0] = (void*)(cond); __pay_EIf[1] = (void*)(then); __pay_EIf[2] = (void*)(els); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 16LL; ((void**)__ev)[1] = (void*)__pay_EIf; __ev; }));
+                __ret->f1 = (void*)(ee);
+                return __ret;
+            }
+            els = elsBody;
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EIf = (void**)malloc(sizeof(void*) * 3); __pay_EIf[0] = (void*)(cond); __pay_EIf[1] = (void*)(then); __pay_EIf[2] = (void*)(els); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 16LL; ((void**)__ev)[1] = (void*)__pay_EIf; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "(") == 0)) {
+        (void)(compiler__advance(p));
+        void* __mr_e = (void*)(compiler__parseExpr(p));
+        Expr* e = (Expr*)((intptr_t)((void**)(__mr_e))[0]);
+        void* ee = (void*)((intptr_t)((void**)(__mr_e))[1]);
+        if ((ee != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(e);
+            __ret->f1 = (void*)(ee);
+            return __ret;
+        }
+        void* __mr_pe = (void*)(compiler__expect(p, ")"));
+        void* pe = (void*)((intptr_t)((void**)(__mr_pe))[1]);
+        if ((pe != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(e);
+            __ret->f1 = (void*)(pe);
+            return __ret;
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(e);
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "[") == 0)) {
+        (void)(compiler__advance(p));
+        void* elems = haki_array_new(sizeof(void*));
+        while (((strcmp(compiler__peekKind(p), "]") != 0) && (strcmp(compiler__peekKind(p), "EOF") != 0))) {
+            void* __mr_el = (void*)(compiler__parseExpr(p));
+            Expr* el = (Expr*)((intptr_t)((void**)(__mr_el))[0]);
+            void* ee = (void*)((intptr_t)((void**)(__mr_el))[1]);
+            if ((ee != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(({ void** __pay_EArray = (void**)malloc(sizeof(void*) * 1); __pay_EArray[0] = (void*)(elems); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 15LL; ((void**)__ev)[1] = (void*)__pay_EArray; __ev; }));
+                __ret->f1 = (void*)(ee);
+                return __ret;
+            }
+            ({ void* __el = (void*)(intptr_t)(el); haki_array_append(elems, &__el); });
+            (void)(compiler__eat(p, ","));
+        }
+        void* __mr_be = (void*)(compiler__expect(p, "]"));
+        void* be = (void*)((intptr_t)((void**)(__mr_be))[1]);
+        if ((be != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_EArray = (void**)malloc(sizeof(void*) * 1); __pay_EArray[0] = (void*)(elems); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 15LL; ((void**)__ev)[1] = (void*)__pay_EArray; __ev; }));
+            __ret->f1 = (void*)(be);
+            return __ret;
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EArray = (void**)malloc(sizeof(void*) * 1); __pay_EArray[0] = (void*)(elems); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 15LL; ((void**)__ev)[1] = (void*)__pay_EArray; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "fn") == 0)) {
+        void* __mr_lf = (void*)(compiler__parseFn(p));
+        FnDef* lf = (FnDef*)((intptr_t)((void**)(__mr_lf))[0]);
+        void* lfe = (void*)((intptr_t)((void**)(__mr_lf))[1]);
+        const char* litName = (const char*)(intptr_t)(haki_string_concat("__fn_lit_", haki_int_to_string(p->litCount)));
+        p->litCount = (p->litCount + ((int64_t)1LL));
+        FnDef* named = (FnDef*)(compiler__makeFnDef(litName, lf->params, lf->retTy, lf->body));
+        if ((lfe != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_EFnLit = (void**)malloc(sizeof(void*) * 1); __pay_EFnLit[0] = (void*)(named); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 20LL; ((void**)__ev)[1] = (void*)__pay_EFnLit; __ev; }));
+            __ret->f1 = (void*)(lfe);
+            return __ret;
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EFnLit = (void**)malloc(sizeof(void*) * 1); __pay_EFnLit[0] = (void*)(named); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 20LL; ((void**)__ev)[1] = (void*)__pay_EFnLit; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(({ void** __pay_EIdent = (void**)malloc(sizeof(void*) * 1); __pay_EIdent[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ("__error__"); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 8LL; ((void**)__ev)[1] = (void*)__pay_EIdent; __ev; }));
+    __ret->f1 = (void*)(haki_error_new(haki_string_concat("unexpected token in expr: ", kind)));
+    return __ret;
+}
+
+void* compiler__parseBlock(Parser* p) {
+    void* __mr_lbe = (void*)(compiler__expect(p, "{"));
+    void* lbe = (void*)((intptr_t)((void**)(__mr_lbe))[1]);
+    if ((lbe != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(haki_array_new(sizeof(void*)));
+        __ret->f1 = (void*)(lbe);
+        return __ret;
+    }
+    void* stmts = haki_array_new(sizeof(void*));
+    while (((strcmp(compiler__peekKind(p), "}") != 0) && (strcmp(compiler__peekKind(p), "EOF") != 0))) {
+        void* __mr_stmt = (void*)(compiler__parseStmt(p));
+        Stmt* stmt = (Stmt*)((intptr_t)((void**)(__mr_stmt))[0]);
+        void* se = (void*)((intptr_t)((void**)(__mr_stmt))[1]);
+        if ((se != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(stmts);
+            __ret->f1 = (void*)(se);
+            return __ret;
+        }
+        ({ void* __el = (void*)(intptr_t)(stmt); haki_array_append(stmts, &__el); });
+    }
+    void* __mr_rbe = (void*)(compiler__expect(p, "}"));
+    void* rbe = (void*)((intptr_t)((void**)(__mr_rbe))[1]);
+    if ((rbe != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(stmts);
+        __ret->f1 = (void*)(rbe);
+        return __ret;
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(stmts);
+    __ret->f1 = (void*)(NULL);
+    return __ret;
+}
+
+void* compiler__parseStmt(Parser* p) {
+    const char* kind = (const char*)(intptr_t)(compiler__peekKind(p));
+    if ((strcmp(kind, ";") == 0)) {
+        (void)(compiler__advance(p));
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_SExpr = (void**)malloc(sizeof(void*) * 1); __pay_SExpr[0] = (void*)(({ void** __pay_EInt = (void**)malloc(sizeof(void*) * 1); __pay_EInt[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(((int64_t)0LL)); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_EInt; __ev; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 6LL; ((void**)__ev)[1] = (void*)__pay_SExpr; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if (((strcmp(kind, "spawn") == 0) || (strcmp(kind, "Ident(spawn)") == 0))) {
+        (void)(compiler__advance(p));
+        void* __mr_se2 = (void*)(compiler__parseExpr(p));
+        Expr* se2 = (Expr*)((intptr_t)((void**)(__mr_se2))[0]);
+        void* spe = (void*)((intptr_t)((void**)(__mr_se2))[1]);
+        if ((spe != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_SExpr = (void**)malloc(sizeof(void*) * 1); __pay_SExpr[0] = (void*)(se2); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 6LL; ((void**)__ev)[1] = (void*)__pay_SExpr; __ev; }));
+            __ret->f1 = (void*)(spe);
+            return __ret;
+        }
+        void* spArgs = haki_array_new(sizeof(void*));
+        ({ void* __el = (void*)(intptr_t)(se2); haki_array_append(spArgs, &__el); });
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_SExpr = (void**)malloc(sizeof(void*) * 1); __pay_SExpr[0] = (void*)(({ void** __pay_ECall = (void**)malloc(sizeof(void*) * 2); __pay_ECall[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ("__spawn__"); (void*)__ps; }); __pay_ECall[1] = (void*)(spArgs); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 11LL; ((void**)__ev)[1] = (void*)__pay_ECall; __ev; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 6LL; ((void**)__ev)[1] = (void*)__pay_SExpr; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "return") == 0)) {
+        (void)(compiler__advance(p));
+        void* vals = haki_array_new(sizeof(void*));
+        if (((strcmp(compiler__peekKind(p), "}") != 0) && (strcmp(compiler__peekKind(p), "EOF") != 0))) {
+            void* __mr_e = (void*)(compiler__parseExpr(p));
+            Expr* e = (Expr*)((intptr_t)((void**)(__mr_e))[0]);
+            void* ee = (void*)((intptr_t)((void**)(__mr_e))[1]);
+            if ((ee != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(({ void** __pay_SReturn = (void**)malloc(sizeof(void*) * 1); __pay_SReturn[0] = (void*)(vals); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_SReturn; __ev; }));
+                __ret->f1 = (void*)(ee);
+                return __ret;
+            }
+            ({ void* __el = (void*)(intptr_t)(e); haki_array_append(vals, &__el); });
+            while ((strcmp(compiler__peekKind(p), ",") == 0)) {
+                (void)(compiler__advance(p));
+                void* __mr_e2 = (void*)(compiler__parseExpr(p));
+                Expr* e2 = (Expr*)((intptr_t)((void**)(__mr_e2))[0]);
+                void* e2e = (void*)((intptr_t)((void**)(__mr_e2))[1]);
+                if ((e2e != NULL)) {
+                    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                    __ret->f0 = (void*)(({ void** __pay_SReturn = (void**)malloc(sizeof(void*) * 1); __pay_SReturn[0] = (void*)(vals); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_SReturn; __ev; }));
+                    __ret->f1 = (void*)(e2e);
+                    return __ret;
+                }
+                ({ void* __el = (void*)(intptr_t)(e2); haki_array_append(vals, &__el); });
+            }
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_SReturn = (void**)malloc(sizeof(void*) * 1); __pay_SReturn[0] = (void*)(vals); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_SReturn; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "yield") == 0)) {
+        (void)(compiler__advance(p));
+        void* __mr_e = (void*)(compiler__parseExpr(p));
+        Expr* e = (Expr*)((intptr_t)((void**)(__mr_e))[0]);
+        void* ee = (void*)((intptr_t)((void**)(__mr_e))[1]);
+        if ((ee != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_SYield = (void**)malloc(sizeof(void*) * 1); __pay_SYield[0] = (void*)(e); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = (void*)__pay_SYield; __ev; }));
+            __ret->f1 = (void*)(ee);
+            return __ret;
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_SYield = (void**)malloc(sizeof(void*) * 1); __pay_SYield[0] = (void*)(e); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = (void*)__pay_SYield; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "defer") == 0)) {
+        (void)(compiler__advance(p));
+        void* __mr_e = (void*)(compiler__parseExpr(p));
+        Expr* e = (Expr*)((intptr_t)((void**)(__mr_e))[0]);
+        void* ee = (void*)((intptr_t)((void**)(__mr_e))[1]);
+        if ((ee != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_SDefer = (void**)malloc(sizeof(void*) * 1); __pay_SDefer[0] = (void*)(e); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 3LL; ((void**)__ev)[1] = (void*)__pay_SDefer; __ev; }));
+            __ret->f1 = (void*)(ee);
+            return __ret;
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_SDefer = (void**)malloc(sizeof(void*) * 1); __pay_SDefer[0] = (void*)(e); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 3LL; ((void**)__ev)[1] = (void*)__pay_SDefer; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "continue") == 0)) {
+        (void)(compiler__advance(p));
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 4LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "break") == 0)) {
+        (void)(compiler__advance(p));
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 5LL; ((void**)__ev)[1] = NULL; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if (((strcmp(kind, "const") == 0) || (strcmp(kind, "let") == 0))) {
+        int8_t isMut = (int8_t)(intptr_t)((strcmp(kind, "let") == 0));
+        (void)(compiler__advance(p));
+        const char* firstK = (const char*)(intptr_t)(compiler__peekKind(p));
+        if (((haki_string_length(firstK) > ((int64_t)6LL)) && (strcmp(haki_string_substring(firstK, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+            const char* firstName = (const char*)(intptr_t)(haki_string_substring(firstK, ((int64_t)6LL), (haki_string_length(firstK) - ((int64_t)1LL))));
+            (void)(compiler__advance(p));
+            const char* declaredTy = (const char*)(intptr_t)("");
+            if ((strcmp(compiler__peekKind(p), ":") == 0)) {
+                (void)(compiler__advance(p));
+                void* __mr_tyStr = (void*)(compiler__parseSimpleTyStr(p));
+                const char* tyStr = (const char*)(intptr_t)((intptr_t)((void**)(__mr_tyStr))[0]);
+                void* te = (void*)((intptr_t)((void**)(__mr_tyStr))[1]);
+                if ((te != NULL)) {
+                    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                    __ret->f0 = (void*)(({ void** __pay_SLet = (void**)malloc(sizeof(void*) * 3); __pay_SLet[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(isMut); (void*)__pi; }); __pay_SLet[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (firstName); (void*)__ps; }); __pay_SLet[2] = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = NULL; __ev; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_SLet; __ev; }));
+                    __ret->f1 = (void*)(te);
+                    return __ret;
+                }
+                declaredTy = tyStr;
+            }
+            else {
+                if ((strcmp(compiler__peekKind(p), ",") == 0)) {
+                    void* names = haki_array_new(sizeof(void*));
+                    { void* __el = (void*)(intptr_t)(firstName); haki_array_append(names, &__el); }
+                    while ((strcmp(compiler__peekKind(p), ",") == 0)) {
+                        (void)(compiler__advance(p));
+                        if ((strcmp(compiler__peekKind(p), "_") == 0)) {
+                            ({ void* __el = (void*)(intptr_t)("__sink__"); haki_array_append(names, &__el); });
+                            (void)(compiler__advance(p));
+                        }
+                        else {
+                            if (((haki_string_length(compiler__peekKind(p)) > ((int64_t)6LL)) && (strcmp(haki_string_substring(compiler__peekKind(p), ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+                                const char* nk = (const char*)(intptr_t)(compiler__peekKind(p));
+                                ({ void* __el = (void*)(intptr_t)(haki_string_substring(nk, ((int64_t)6LL), (haki_string_length(nk) - ((int64_t)1LL)))); haki_array_append(names, &__el); });
+                                (void)(compiler__advance(p));
+                            }
+                        }
+                    }
+                    void* __mr_eqe = (void*)(compiler__expect(p, "="));
+                    void* eqe = (void*)((intptr_t)((void**)(__mr_eqe))[1]);
+                    if ((eqe != NULL)) {
+                        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                        __ret->f0 = (void*)(({ void** __pay_SLet = (void**)malloc(sizeof(void*) * 3); __pay_SLet[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(isMut); (void*)__pi; }); __pay_SLet[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (firstName); (void*)__ps; }); __pay_SLet[2] = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = NULL; __ev; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_SLet; __ev; }));
+                        __ret->f1 = (void*)(eqe);
+                        return __ret;
+                    }
+                    void* __mr_init = (void*)(compiler__parseExpr(p));
+                    Expr* init = (Expr*)((intptr_t)((void**)(__mr_init))[0]);
+                    void* ie = (void*)((intptr_t)((void**)(__mr_init))[1]);
+                    if ((ie != NULL)) {
+                        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                        __ret->f0 = (void*)(({ void** __pay_SLet = (void**)malloc(sizeof(void*) * 3); __pay_SLet[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(isMut); (void*)__pi; }); __pay_SLet[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (firstName); (void*)__ps; }); __pay_SLet[2] = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = NULL; __ev; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_SLet; __ev; }));
+                        __ret->f1 = (void*)(ie);
+                        return __ret;
+                    }
+                    const char* tempBase = (const char*)(intptr_t)(firstName);
+                    if ((strcmp(tempBase, "_") == 0)) {
+                        int64_t tni = (int64_t)(intptr_t)(((int64_t)0LL));
+                        while ((tni < haki_array_length(names))) {
+                            if (((strcmp((*((void**)haki_array_get(names, tni))), "_") != 0) && (strcmp((*((void**)haki_array_get(names, tni))), "__sink__") != 0))) {
+                                if ((strcmp(tempBase, "_") == 0)) {
+                                    tempBase = (*((void**)haki_array_get(names, tni)));
+                                }
+                            }
+                            tni = (tni + ((int64_t)1LL));
+                        }
+                    }
+                    const char* tempName = (const char*)(intptr_t)(haki_string_concat("__mr_", tempBase));
+                    void* stmts = haki_array_new(sizeof(void*));
+                    ({ void* __el = (void*)(intptr_t)(({ void** __pay_SLet = (void**)malloc(sizeof(void*) * 3); __pay_SLet[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(0); (void*)__pi; }); __pay_SLet[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (tempName); (void*)__ps; }); __pay_SLet[2] = (void*)(init); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_SLet; __ev; })); haki_array_append(stmts, &__el); });
+                    int64_t bi = (int64_t)(intptr_t)(((int64_t)0LL));
+                    while ((bi < haki_array_length(names))) {
+                        if (((strcmp((*((void**)haki_array_get(names, bi))), "_") != 0) && (strcmp((*((void**)haki_array_get(names, bi))), "__sink__") != 0))) {
+                            ({ void* __el = (void*)(intptr_t)(({ void** __pay_SLet = (void**)malloc(sizeof(void*) * 3); __pay_SLet[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(0); (void*)__pi; }); __pay_SLet[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ((*((void**)haki_array_get(names, bi)))); (void*)__ps; }); __pay_SLet[2] = (void*)(({ void** __pay_ECall = (void**)malloc(sizeof(void*) * 2); __pay_ECall[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (haki_string_concat("__mr_get_", haki_int_to_string(bi))); (void*)__ps; }); __pay_ECall[1] = (void*)(({ void* __ial = haki_array_new(sizeof(void*)); { void* __el = (void*)(intptr_t)(({ void** __pay_EIdent = (void**)malloc(sizeof(void*) * 1); __pay_EIdent[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (tempName); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 8LL; ((void**)__ev)[1] = (void*)__pay_EIdent; __ev; })); haki_array_append(__ial, &__el); } __ial; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 11LL; ((void**)__ev)[1] = (void*)__pay_ECall; __ev; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_SLet; __ev; })); haki_array_append(stmts, &__el); });
+                        }
+                        bi = (bi + ((int64_t)1LL));
+                    }
+                    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                    __ret->f0 = (void*)(({ void** __pay_SBlock = (void**)malloc(sizeof(void*) * 1); __pay_SBlock[0] = (void*)(stmts); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 13LL; ((void**)__ev)[1] = (void*)__pay_SBlock; __ev; }));
+                    __ret->f1 = (void*)(NULL);
+                    return __ret;
+                }
+            }
+            void* __mr_eqe = (void*)(compiler__expect(p, "="));
+            void* eqe = (void*)((intptr_t)((void**)(__mr_eqe))[1]);
+            if ((eqe != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(({ void** __pay_SLet = (void**)malloc(sizeof(void*) * 3); __pay_SLet[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(isMut); (void*)__pi; }); __pay_SLet[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (firstName); (void*)__ps; }); __pay_SLet[2] = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = NULL; __ev; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_SLet; __ev; }));
+                __ret->f1 = (void*)(eqe);
+                return __ret;
+            }
+            void* __mr_init = (void*)(compiler__parseExpr(p));
+            Expr* init = (Expr*)((intptr_t)((void**)(__mr_init))[0]);
+            void* ie = (void*)((intptr_t)((void**)(__mr_init))[1]);
+            if ((ie != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(({ void** __pay_SLet = (void**)malloc(sizeof(void*) * 3); __pay_SLet[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(isMut); (void*)__pi; }); __pay_SLet[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (firstName); (void*)__ps; }); __pay_SLet[2] = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = NULL; __ev; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_SLet; __ev; }));
+                __ret->f1 = (void*)(ie);
+                return __ret;
+            }
+            Expr* finalInit = (Expr*)(init);
+            if (((haki_string_length(declaredTy) > ((int64_t)6LL)) && (strcmp(haki_string_substring(declaredTy, ((int64_t)0LL), ((int64_t)6LL)), "Array<") == 0))) {
+                int8_t isEmptyArr = (int8_t)(intptr_t)(({ void* __msc = (void*)(init); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 15LL) { void* elems = (void*)((void**)__mpayload)[0]; __mr = (void*)((haki_array_length(elems) == ((int64_t)0LL))); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+                if (isEmptyArr) {
+                    const char* elemTy = (const char*)(intptr_t)(haki_string_substring(declaredTy, ((int64_t)6LL), (haki_string_length(declaredTy) - ((int64_t)1LL))));
+                    finalInit = ({ void** __pay_ECall = (void**)malloc(sizeof(void*) * 2); __pay_ECall[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (haki_string_concat("__typed_array__", elemTy)); (void*)__ps; }); __pay_ECall[1] = (void*)(haki_array_new(sizeof(void*))); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 11LL; ((void**)__ev)[1] = (void*)__pay_ECall; __ev; });
+                }
+            }
+            if (((haki_string_length(declaredTy) > ((int64_t)4LL)) && (strcmp(haki_string_substring(declaredTy, ((int64_t)0LL), ((int64_t)4LL)), "Map<") == 0))) {
+                int8_t isMapCtor = (int8_t)(intptr_t)(({ void* __msc = (void*)(init); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)((strcmp(n, "Map") == 0)); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+                if (isMapCtor) {
+                    finalInit = ({ void** __pay_ECall = (void**)malloc(sizeof(void*) * 2); __pay_ECall[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (haki_string_concat("__typed_map__", declaredTy)); (void*)__ps; }); __pay_ECall[1] = (void*)(haki_array_new(sizeof(void*))); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 11LL; ((void**)__ev)[1] = (void*)__pay_ECall; __ev; });
+                }
+            }
+            if (((haki_string_length(declaredTy) > ((int64_t)5LL)) && (strcmp(haki_string_substring(declaredTy, ((int64_t)0LL), ((int64_t)5LL)), "Chan<") == 0))) {
+                int8_t isChanCtor = (int8_t)(intptr_t)(({ void* __msc = (void*)(init); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)((strcmp(n, "Chan") == 0)); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+                if (isChanCtor) {
+                    finalInit = ({ void** __pay_ECall = (void**)malloc(sizeof(void*) * 2); __pay_ECall[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (haki_string_concat("__typed_ctor__", declaredTy)); (void*)__ps; }); __pay_ECall[1] = (void*)(haki_array_new(sizeof(void*))); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 11LL; ((void**)__ev)[1] = (void*)__pay_ECall; __ev; });
+                }
+            }
+            if (((haki_string_length(declaredTy) > ((int64_t)10LL)) && (strcmp(haki_string_substring(declaredTy, ((int64_t)0LL), ((int64_t)10LL)), "TaskGroup<") == 0))) {
+                int8_t isTgCtor = (int8_t)(intptr_t)(({ void* __msc = (void*)(init); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)((strcmp(n, "TaskGroup") == 0)); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+                if (isTgCtor) {
+                    finalInit = ({ void** __pay_ECall = (void**)malloc(sizeof(void*) * 2); __pay_ECall[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (haki_string_concat("__typed_ctor__", declaredTy)); (void*)__ps; }); __pay_ECall[1] = (void*)(haki_array_new(sizeof(void*))); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 11LL; ((void**)__ev)[1] = (void*)__pay_ECall; __ev; });
+                }
+            }
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_SLet = (void**)malloc(sizeof(void*) * 3); __pay_SLet[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(isMut); (void*)__pi; }); __pay_SLet[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (firstName); (void*)__ps; }); __pay_SLet[2] = (void*)(finalInit); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_SLet; __ev; }));
+            __ret->f1 = (void*)(NULL);
+            return __ret;
+        }
+        if ((strcmp(compiler__peekKind(p), "_") == 0)) {
+            (void)(compiler__advance(p));
+            if ((strcmp(compiler__peekKind(p), ",") == 0)) {
+                void* names = haki_array_new(sizeof(void*));
+                { void* __el = (void*)(intptr_t)("__sink__"); haki_array_append(names, &__el); }
+                while ((strcmp(compiler__peekKind(p), ",") == 0)) {
+                    (void)(compiler__advance(p));
+                    if ((strcmp(compiler__peekKind(p), "_") == 0)) {
+                        ({ void* __el = (void*)(intptr_t)("__sink__"); haki_array_append(names, &__el); });
+                        (void)(compiler__advance(p));
+                    }
+                    else {
+                        if (((haki_string_length(compiler__peekKind(p)) > ((int64_t)6LL)) && (strcmp(haki_string_substring(compiler__peekKind(p), ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+                            const char* nk = (const char*)(intptr_t)(compiler__peekKind(p));
+                            ({ void* __el = (void*)(intptr_t)(haki_string_substring(nk, ((int64_t)6LL), (haki_string_length(nk) - ((int64_t)1LL)))); haki_array_append(names, &__el); });
+                            (void)(compiler__advance(p));
+                        }
+                    }
+                }
+                void* __mr_eqe2 = (void*)(compiler__expect(p, "="));
+                void* eqe2 = (void*)((intptr_t)((void**)(__mr_eqe2))[1]);
+                if ((eqe2 != NULL)) {
+                    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                    __ret->f0 = (void*)(({ void** __pay_SLet = (void**)malloc(sizeof(void*) * 3); __pay_SLet[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(0); (void*)__pi; }); __pay_SLet[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ("_"); (void*)__ps; }); __pay_SLet[2] = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = NULL; __ev; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_SLet; __ev; }));
+                    __ret->f1 = (void*)(eqe2);
+                    return __ret;
+                }
+                void* __mr_init2 = (void*)(compiler__parseExpr(p));
+                Expr* init2 = (Expr*)((intptr_t)((void**)(__mr_init2))[0]);
+                void* ie2 = (void*)((intptr_t)((void**)(__mr_init2))[1]);
+                if ((ie2 != NULL)) {
+                    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                    __ret->f0 = (void*)(({ void** __pay_SLet = (void**)malloc(sizeof(void*) * 3); __pay_SLet[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(0); (void*)__pi; }); __pay_SLet[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ("_"); (void*)__ps; }); __pay_SLet[2] = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = NULL; __ev; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_SLet; __ev; }));
+                    __ret->f1 = (void*)(ie2);
+                    return __ret;
+                }
+                const char* tempName2 = (const char*)(intptr_t)("__mr_discard__");
+                int64_t ni2 = (int64_t)(intptr_t)(((int64_t)0LL));
+                while ((ni2 < haki_array_length(names))) {
+                    if ((strcmp((*((void**)haki_array_get(names, ni2))), "__sink__") != 0)) {
+                        if ((strcmp(tempName2, "__mr_discard__") == 0)) {
+                            tempName2 = haki_string_concat("__mr_", (*((void**)haki_array_get(names, ni2))));
+                        }
+                    }
+                    ni2 = (ni2 + ((int64_t)1LL));
+                }
+                void* stmts2 = haki_array_new(sizeof(void*));
+                ({ void* __el = (void*)(intptr_t)(({ void** __pay_SLet = (void**)malloc(sizeof(void*) * 3); __pay_SLet[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(0); (void*)__pi; }); __pay_SLet[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (tempName2); (void*)__ps; }); __pay_SLet[2] = (void*)(init2); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_SLet; __ev; })); haki_array_append(stmts2, &__el); });
+                int64_t bi2 = (int64_t)(intptr_t)(((int64_t)0LL));
+                while ((bi2 < haki_array_length(names))) {
+                    if ((strcmp((*((void**)haki_array_get(names, bi2))), "__sink__") != 0)) {
+                        ({ void* __el = (void*)(intptr_t)(({ void** __pay_SLet = (void**)malloc(sizeof(void*) * 3); __pay_SLet[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(0); (void*)__pi; }); __pay_SLet[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ((*((void**)haki_array_get(names, bi2)))); (void*)__ps; }); __pay_SLet[2] = (void*)(({ void** __pay_ECall = (void**)malloc(sizeof(void*) * 2); __pay_ECall[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (haki_string_concat("__mr_get_", haki_int_to_string(bi2))); (void*)__ps; }); __pay_ECall[1] = (void*)(({ void* __ial = haki_array_new(sizeof(void*)); { void* __el = (void*)(intptr_t)(({ void** __pay_EIdent = (void**)malloc(sizeof(void*) * 1); __pay_EIdent[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (tempName2); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 8LL; ((void**)__ev)[1] = (void*)__pay_EIdent; __ev; })); haki_array_append(__ial, &__el); } __ial; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 11LL; ((void**)__ev)[1] = (void*)__pay_ECall; __ev; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_SLet; __ev; })); haki_array_append(stmts2, &__el); });
+                    }
+                    bi2 = (bi2 + ((int64_t)1LL));
+                }
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(({ void** __pay_SBlock = (void**)malloc(sizeof(void*) * 1); __pay_SBlock[0] = (void*)(stmts2); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 13LL; ((void**)__ev)[1] = (void*)__pay_SBlock; __ev; }));
+                __ret->f1 = (void*)(NULL);
+                return __ret;
+            }
+            void* __mr_eqe = (void*)(compiler__expect(p, "="));
+            void* eqe = (void*)((intptr_t)((void**)(__mr_eqe))[1]);
+            if ((eqe != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(({ void** __pay_SLet = (void**)malloc(sizeof(void*) * 3); __pay_SLet[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(isMut); (void*)__pi; }); __pay_SLet[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ("_"); (void*)__ps; }); __pay_SLet[2] = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = NULL; __ev; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_SLet; __ev; }));
+                __ret->f1 = (void*)(eqe);
+                return __ret;
+            }
+            void* __mr_init = (void*)(compiler__parseExpr(p));
+            Expr* init = (Expr*)((intptr_t)((void**)(__mr_init))[0]);
+            void* ie = (void*)((intptr_t)((void**)(__mr_init))[1]);
+            if ((ie != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(({ void** __pay_SLet = (void**)malloc(sizeof(void*) * 3); __pay_SLet[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(isMut); (void*)__pi; }); __pay_SLet[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ("_"); (void*)__ps; }); __pay_SLet[2] = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = NULL; __ev; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_SLet; __ev; }));
+                __ret->f1 = (void*)(ie);
+                return __ret;
+            }
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_SLet = (void**)malloc(sizeof(void*) * 3); __pay_SLet[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(isMut); (void*)__pi; }); __pay_SLet[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ("_"); (void*)__ps; }); __pay_SLet[2] = (void*)(init); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_SLet; __ev; }));
+            __ret->f1 = (void*)(NULL);
+            return __ret;
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_SLet = (void**)malloc(sizeof(void*) * 3); __pay_SLet[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(0); (void*)__pi; }); __pay_SLet[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ("__error__"); (void*)__ps; }); __pay_SLet[2] = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = NULL; __ev; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_SLet; __ev; }));
+        __ret->f1 = (void*)(haki_error_new("expected name after let/const"));
+        return __ret;
+    }
+    if ((strcmp(kind, "if") == 0)) {
+        void* __mr_s = (void*)(compiler__parseIfStmt(p));
+        Stmt* s = (Stmt*)((intptr_t)((void**)(__mr_s))[0]);
+        void* se = (void*)((intptr_t)((void**)(__mr_s))[1]);
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(s);
+        __ret->f1 = (void*)(se);
+        return __ret;
+    }
+    if ((strcmp(kind, "while") == 0)) {
+        (void)(compiler__advance(p));
+        void* __mr_cond = (void*)(compiler__parseExpr(p));
+        Expr* cond = (Expr*)((intptr_t)((void**)(__mr_cond))[0]);
+        void* ce = (void*)((intptr_t)((void**)(__mr_cond))[1]);
+        if ((ce != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_SWhile = (void**)malloc(sizeof(void*) * 2); __pay_SWhile[0] = (void*)(cond); __pay_SWhile[1] = (void*)(haki_array_new(sizeof(void*))); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 8LL; ((void**)__ev)[1] = (void*)__pay_SWhile; __ev; }));
+            __ret->f1 = (void*)(ce);
+            return __ret;
+        }
+        void* __mr_body = (void*)(compiler__parseBlock(p));
+        void* body = (void*)((intptr_t)((void**)(__mr_body))[0]);
+        void* be = (void*)((intptr_t)((void**)(__mr_body))[1]);
+        if ((be != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_SWhile = (void**)malloc(sizeof(void*) * 2); __pay_SWhile[0] = (void*)(cond); __pay_SWhile[1] = (void*)(body); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 8LL; ((void**)__ev)[1] = (void*)__pay_SWhile; __ev; }));
+            __ret->f1 = (void*)(be);
+            return __ret;
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_SWhile = (void**)malloc(sizeof(void*) * 2); __pay_SWhile[0] = (void*)(cond); __pay_SWhile[1] = (void*)(body); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 8LL; ((void**)__ev)[1] = (void*)__pay_SWhile; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "for") == 0)) {
+        (void)(compiler__advance(p));
+        const char* varK = (const char*)(intptr_t)(compiler__peekKind(p));
+        const char* varName = (const char*)(intptr_t)("__it__");
+        if (((haki_string_length(varK) > ((int64_t)6LL)) && (strcmp(haki_string_substring(varK, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+            varName = haki_string_substring(varK, ((int64_t)6LL), (haki_string_length(varK) - ((int64_t)1LL)));
+            (void)(compiler__advance(p));
+        }
+        if ((strcmp(compiler__peekKind(p), ",") == 0)) {
+            (void)(compiler__advance(p));
+            const char* vk = (const char*)(intptr_t)(compiler__peekKind(p));
+            if (((haki_string_length(vk) > ((int64_t)6LL)) && (strcmp(haki_string_substring(vk, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+                varName = haki_string_substring(vk, ((int64_t)6LL), (haki_string_length(vk) - ((int64_t)1LL)));
+                (void)(compiler__advance(p));
+            }
+        }
+        void* __mr_ine = (void*)(compiler__expect(p, "in"));
+        void* ine = (void*)((intptr_t)((void**)(__mr_ine))[1]);
+        if ((ine != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_SFor = (void**)malloc(sizeof(void*) * 3); __pay_SFor[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (varName); (void*)__ps; }); __pay_SFor[1] = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = NULL; __ev; })); __pay_SFor[2] = (void*)(haki_array_new(sizeof(void*))); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 9LL; ((void**)__ev)[1] = (void*)__pay_SFor; __ev; }));
+            __ret->f1 = (void*)(ine);
+            return __ret;
+        }
+        void* __mr_iter = (void*)(compiler__parseExpr(p));
+        Expr* iter = (Expr*)((intptr_t)((void**)(__mr_iter))[0]);
+        void* ie = (void*)((intptr_t)((void**)(__mr_iter))[1]);
+        if ((ie != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_SFor = (void**)malloc(sizeof(void*) * 3); __pay_SFor[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (varName); (void*)__ps; }); __pay_SFor[1] = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = NULL; __ev; })); __pay_SFor[2] = (void*)(haki_array_new(sizeof(void*))); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 9LL; ((void**)__ev)[1] = (void*)__pay_SFor; __ev; }));
+            __ret->f1 = (void*)(ie);
+            return __ret;
+        }
+        void* __mr_body = (void*)(compiler__parseBlock(p));
+        void* body = (void*)((intptr_t)((void**)(__mr_body))[0]);
+        void* be = (void*)((intptr_t)((void**)(__mr_body))[1]);
+        if ((be != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_SFor = (void**)malloc(sizeof(void*) * 3); __pay_SFor[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (varName); (void*)__ps; }); __pay_SFor[1] = (void*)(iter); __pay_SFor[2] = (void*)(body); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 9LL; ((void**)__ev)[1] = (void*)__pay_SFor; __ev; }));
+            __ret->f1 = (void*)(be);
+            return __ret;
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_SFor = (void**)malloc(sizeof(void*) * 3); __pay_SFor[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (varName); (void*)__ps; }); __pay_SFor[1] = (void*)(iter); __pay_SFor[2] = (void*)(body); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 9LL; ((void**)__ev)[1] = (void*)__pay_SFor; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "@") == 0)) {
+        (void)(compiler__advance(p));
+        const char* annName = (const char*)(intptr_t)("");
+        if (((haki_string_length(compiler__peekKind(p)) > ((int64_t)6LL)) && (strcmp(haki_string_substring(compiler__peekKind(p), ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+            annName = haki_string_substring(compiler__peekKind(p), ((int64_t)6LL), (haki_string_length(compiler__peekKind(p)) - ((int64_t)1LL)));
+            (void)(compiler__advance(p));
+        }
+        if ((strcmp(compiler__peekKind(p), "(") == 0)) {
+            int64_t ad = (int64_t)(intptr_t)(((int64_t)0LL));
+            while ((strcmp(compiler__peekKind(p), "EOF") != 0)) {
+                const char* atk = (const char*)(intptr_t)(compiler__peekKind(p));
+                (void)(compiler__advance(p));
+                if ((strcmp(atk, "(") == 0)) {
+                    ad = (ad + ((int64_t)1LL));
+                }
+                if ((strcmp(atk, ")") == 0)) {
+                    ad = (ad - ((int64_t)1LL));
+                }
+                if ((ad <= ((int64_t)0LL))) {
+                    break;
+                }
+            }
+        }
+        if ((strcmp(annName, "skip") == 0)) {
+            void* __mr__s = (void*)(compiler__parseStmt(p));
+            Stmt* _s = (Stmt*)((intptr_t)((void**)(__mr__s))[0]);
+            void* _se = (void*)((intptr_t)((void**)(__mr__s))[1]);
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_SExpr = (void**)malloc(sizeof(void*) * 1); __pay_SExpr[0] = (void*)(({ void** __pay_EInt = (void**)malloc(sizeof(void*) * 1); __pay_EInt[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(((int64_t)0LL)); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_EInt; __ev; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 6LL; ((void**)__ev)[1] = (void*)__pay_SExpr; __ev; }));
+            __ret->f1 = (void*)(NULL);
+            return __ret;
+        }
+        void* __mr_ns = (void*)(compiler__parseStmt(p));
+        Stmt* ns = (Stmt*)((intptr_t)((void**)(__mr_ns))[0]);
+        void* nse = (void*)((intptr_t)((void**)(__mr_ns))[1]);
+        if ((nse != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_SExpr = (void**)malloc(sizeof(void*) * 1); __pay_SExpr[0] = (void*)(({ void** __pay_EInt = (void**)malloc(sizeof(void*) * 1); __pay_EInt[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(((int64_t)0LL)); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_EInt; __ev; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 6LL; ((void**)__ev)[1] = (void*)__pay_SExpr; __ev; }));
+            __ret->f1 = (void*)(NULL);
+            return __ret;
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(ns);
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "import") == 0)) {
+        (void)(compiler__advance(p));
+        (void)(compiler__advance(p));
+        if ((strcmp(compiler__peekKind(p), "as") == 0)) {
+            (void)(compiler__advance(p));
+            (void)(compiler__advance(p));
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_SExpr = (void**)malloc(sizeof(void*) * 1); __pay_SExpr[0] = (void*)(({ void** __pay_EInt = (void**)malloc(sizeof(void*) * 1); __pay_EInt[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(((int64_t)0LL)); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_EInt; __ev; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 6LL; ((void**)__ev)[1] = (void*)__pay_SExpr; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    void* __mr_e = (void*)(compiler__parseExpr(p));
+    Expr* e = (Expr*)((intptr_t)((void**)(__mr_e))[0]);
+    void* ee = (void*)((intptr_t)((void**)(__mr_e))[1]);
+    if ((ee != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_SExpr = (void**)malloc(sizeof(void*) * 1); __pay_SExpr[0] = (void*)(e); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 6LL; ((void**)__ev)[1] = (void*)__pay_SExpr; __ev; }));
+        __ret->f1 = (void*)(ee);
+        return __ret;
+    }
+    if ((strcmp(compiler__peekKind(p), "=") == 0)) {
+        (void)(compiler__advance(p));
+        void* __mr_rhs = (void*)(compiler__parseExpr(p));
+        Expr* rhs = (Expr*)((intptr_t)((void**)(__mr_rhs))[0]);
+        void* re = (void*)((intptr_t)((void**)(__mr_rhs))[1]);
+        if ((re != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_SExpr = (void**)malloc(sizeof(void*) * 1); __pay_SExpr[0] = (void*)(e); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 6LL; ((void**)__ev)[1] = (void*)__pay_SExpr; __ev; }));
+            __ret->f1 = (void*)(re);
+            return __ret;
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_SAssign = (void**)malloc(sizeof(void*) * 2); __pay_SAssign[0] = (void*)(e); __pay_SAssign[1] = (void*)(rhs); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 10LL; ((void**)__ev)[1] = (void*)__pay_SAssign; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(({ void** __pay_SExpr = (void**)malloc(sizeof(void*) * 1); __pay_SExpr[0] = (void*)(e); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 6LL; ((void**)__ev)[1] = (void*)__pay_SExpr; __ev; }));
+    __ret->f1 = (void*)(NULL);
+    return __ret;
+}
+
+void* compiler__parseIfStmt(Parser* p) {
+    (void)(compiler__advance(p));
+    void* __mr_cond = (void*)(compiler__parseExpr(p));
+    Expr* cond = (Expr*)((intptr_t)((void**)(__mr_cond))[0]);
+    void* ce = (void*)((intptr_t)((void**)(__mr_cond))[1]);
+    if ((ce != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_SIf = (void**)malloc(sizeof(void*) * 3); __pay_SIf[0] = (void*)(cond); __pay_SIf[1] = (void*)(haki_array_new(sizeof(void*))); __pay_SIf[2] = (void*)(haki_array_new(sizeof(void*))); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 7LL; ((void**)__ev)[1] = (void*)__pay_SIf; __ev; }));
+        __ret->f1 = (void*)(ce);
+        return __ret;
+    }
+    void* __mr_then = (void*)(compiler__parseBlock(p));
+    void* then = (void*)((intptr_t)((void**)(__mr_then))[0]);
+    void* te = (void*)((intptr_t)((void**)(__mr_then))[1]);
+    if ((te != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_SIf = (void**)malloc(sizeof(void*) * 3); __pay_SIf[0] = (void*)(cond); __pay_SIf[1] = (void*)(then); __pay_SIf[2] = (void*)(haki_array_new(sizeof(void*))); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 7LL; ((void**)__ev)[1] = (void*)__pay_SIf; __ev; }));
+        __ret->f1 = (void*)(te);
+        return __ret;
+    }
+    void* els = haki_array_new(sizeof(void*));
+    if ((strcmp(compiler__peekKind(p), "else") == 0)) {
+        (void)(compiler__advance(p));
+        if ((strcmp(compiler__peekKind(p), "if") == 0)) {
+            void* __mr_nested = (void*)(compiler__parseIfStmt(p));
+            Stmt* nested = (Stmt*)((intptr_t)((void**)(__mr_nested))[0]);
+            void* ne = (void*)((intptr_t)((void**)(__mr_nested))[1]);
+            if ((ne != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(({ void** __pay_SIf = (void**)malloc(sizeof(void*) * 3); __pay_SIf[0] = (void*)(cond); __pay_SIf[1] = (void*)(then); __pay_SIf[2] = (void*)(els); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 7LL; ((void**)__ev)[1] = (void*)__pay_SIf; __ev; }));
+                __ret->f1 = (void*)(ne);
+                return __ret;
+            }
+            ({ void* __el = (void*)(intptr_t)(nested); haki_array_append(els, &__el); });
+        }
+        else {
+            void* __mr_elseBody = (void*)(compiler__parseBlock(p));
+            void* elseBody = (void*)((intptr_t)((void**)(__mr_elseBody))[0]);
+            void* ee2 = (void*)((intptr_t)((void**)(__mr_elseBody))[1]);
+            if ((ee2 != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(({ void** __pay_SIf = (void**)malloc(sizeof(void*) * 3); __pay_SIf[0] = (void*)(cond); __pay_SIf[1] = (void*)(then); __pay_SIf[2] = (void*)(els); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 7LL; ((void**)__ev)[1] = (void*)__pay_SIf; __ev; }));
+                __ret->f1 = (void*)(ee2);
+                return __ret;
+            }
+            els = elseBody;
+        }
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(({ void** __pay_SIf = (void**)malloc(sizeof(void*) * 3); __pay_SIf[0] = (void*)(cond); __pay_SIf[1] = (void*)(then); __pay_SIf[2] = (void*)(els); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 7LL; ((void**)__ev)[1] = (void*)__pay_SIf; __ev; }));
+    __ret->f1 = (void*)(NULL);
+    return __ret;
+}
+
+void* compiler__parseFn(Parser* p) {
+    void* __mr_fe = (void*)(compiler__expect(p, "fn"));
+    void* fe = (void*)((intptr_t)((void**)(__mr_fe))[1]);
+    if ((fe != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ FnDef* __c_FnDef = (FnDef*)malloc(sizeof(FnDef)); __c_FnDef->name = ""; __c_FnDef->params = haki_array_new(sizeof(void*)); __c_FnDef->retTy = "void"; __c_FnDef->body = haki_array_new(sizeof(void*)); __c_FnDef; }));
+        __ret->f1 = (void*)(fe);
+        return __ret;
+    }
+    const char* nameK = (const char*)(intptr_t)(compiler__peekKind(p));
+    const char* name = (const char*)(intptr_t)("__anonymous__");
+    if (((haki_string_length(nameK) > ((int64_t)6LL)) && (strcmp(haki_string_substring(nameK, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+        name = haki_string_substring(nameK, ((int64_t)6LL), (haki_string_length(nameK) - ((int64_t)1LL)));
+        (void)(compiler__advance(p));
+    }
+    if ((strcmp(compiler__peekKind(p), "<") == 0)) {
+        while (((strcmp(compiler__peekKind(p), ">") != 0) && (strcmp(compiler__peekKind(p), "EOF") != 0))) {
+            (void)(compiler__advance(p));
+        }
+        if ((strcmp(compiler__peekKind(p), ">") == 0)) {
+            (void)(compiler__advance(p));
+        }
+    }
+    void* __mr_lpe = (void*)(compiler__expect(p, "("));
+    void* lpe = (void*)((intptr_t)((void**)(__mr_lpe))[1]);
+    if ((lpe != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ FnDef* __c_FnDef = (FnDef*)malloc(sizeof(FnDef)); __c_FnDef->name = name; __c_FnDef->params = haki_array_new(sizeof(void*)); __c_FnDef->retTy = "void"; __c_FnDef->body = haki_array_new(sizeof(void*)); __c_FnDef; }));
+        __ret->f1 = (void*)(lpe);
+        return __ret;
+    }
+    void* params = haki_array_new(sizeof(void*));
+    while (((strcmp(compiler__peekKind(p), ")") != 0) && (strcmp(compiler__peekKind(p), "EOF") != 0))) {
+        const char* pk = (const char*)(intptr_t)(compiler__peekKind(p));
+        const char* pname = (const char*)(intptr_t)("__param__");
+        if (((haki_string_length(pk) > ((int64_t)6LL)) && (strcmp(haki_string_substring(pk, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+            pname = haki_string_substring(pk, ((int64_t)6LL), (haki_string_length(pk) - ((int64_t)1LL)));
+            (void)(compiler__advance(p));
+        }
+        const char* ty = (const char*)(intptr_t)("void*");
+        if ((strcmp(compiler__peekKind(p), ":") == 0)) {
+            (void)(compiler__advance(p));
+            void* __mr_parsedTy = (void*)(compiler__parseSimpleTyStr(p));
+            const char* parsedTy = (const char*)(intptr_t)((intptr_t)((void**)(__mr_parsedTy))[0]);
+            void* te = (void*)((intptr_t)((void**)(__mr_parsedTy))[1]);
+            if ((te != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(({ FnDef* __c_FnDef = (FnDef*)malloc(sizeof(FnDef)); __c_FnDef->name = name; __c_FnDef->params = params; __c_FnDef->retTy = "void"; __c_FnDef->body = haki_array_new(sizeof(void*)); __c_FnDef; }));
+                __ret->f1 = (void*)(te);
+                return __ret;
+            }
+            ty = parsedTy;
+        }
+        ({ void* __el = (void*)(intptr_t)(({ Param* __c_Param = (Param*)malloc(sizeof(Param)); __c_Param->name = pname; __c_Param->ty = ty; __c_Param; })); haki_array_append(params, &__el); });
+        (void)(compiler__eat(p, ","));
+    }
+    void* __mr_rpe = (void*)(compiler__expect(p, ")"));
+    void* rpe = (void*)((intptr_t)((void**)(__mr_rpe))[1]);
+    if ((rpe != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ FnDef* __c_FnDef = (FnDef*)malloc(sizeof(FnDef)); __c_FnDef->name = name; __c_FnDef->params = params; __c_FnDef->retTy = "void"; __c_FnDef->body = haki_array_new(sizeof(void*)); __c_FnDef; }));
+        __ret->f1 = (void*)(rpe);
+        return __ret;
+    }
+    const char* retTy = (const char*)(intptr_t)("void");
+    if ((strcmp(compiler__peekKind(p), "->") == 0)) {
+        (void)(compiler__advance(p));
+        void* __mr_ty = (void*)(compiler__parseSimpleTyStr(p));
+        const char* ty = (const char*)(intptr_t)((intptr_t)((void**)(__mr_ty))[0]);
+        void* te = (void*)((intptr_t)((void**)(__mr_ty))[1]);
+        if ((te != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ FnDef* __c_FnDef = (FnDef*)malloc(sizeof(FnDef)); __c_FnDef->name = name; __c_FnDef->params = params; __c_FnDef->retTy = "void"; __c_FnDef->body = haki_array_new(sizeof(void*)); __c_FnDef; }));
+            __ret->f1 = (void*)(te);
+            return __ret;
+        }
+        retTy = ty;
+    }
+    if ((strcmp(compiler__peekKind(p), "{") != 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ FnDef* __c_FnDef = (FnDef*)malloc(sizeof(FnDef)); __c_FnDef->name = name; __c_FnDef->params = params; __c_FnDef->retTy = retTy; __c_FnDef->body = haki_array_new(sizeof(void*)); __c_FnDef; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    void* __mr_body = (void*)(compiler__parseBlock(p));
+    void* body = (void*)((intptr_t)((void**)(__mr_body))[0]);
+    void* be = (void*)((intptr_t)((void**)(__mr_body))[1]);
+    if ((be != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ FnDef* __c_FnDef = (FnDef*)malloc(sizeof(FnDef)); __c_FnDef->name = name; __c_FnDef->params = params; __c_FnDef->retTy = retTy; __c_FnDef->body = haki_array_new(sizeof(void*)); __c_FnDef; }));
+        __ret->f1 = (void*)(be);
+        return __ret;
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(({ FnDef* __c_FnDef = (FnDef*)malloc(sizeof(FnDef)); __c_FnDef->name = name; __c_FnDef->params = params; __c_FnDef->retTy = retTy; __c_FnDef->body = body; __c_FnDef; }));
+    __ret->f1 = (void*)(NULL);
+    return __ret;
+}
+
+void* compiler__parseItem(Parser* p) {
+    const char* kind = (const char*)(intptr_t)(compiler__peekKind(p));
+    if ((strcmp(kind, "import") == 0)) {
+        (void)(compiler__advance(p));
+        const char* pathK = (const char*)(intptr_t)(compiler__peekKind(p));
+        const char* path = (const char*)(intptr_t)("");
+        if (((haki_string_length(pathK) > ((int64_t)4LL)) && (strcmp(haki_string_substring(pathK, ((int64_t)0LL), ((int64_t)4LL)), "Str(") == 0))) {
+            path = haki_string_substring(pathK, ((int64_t)4LL), (haki_string_length(pathK) - ((int64_t)1LL)));
+            (void)(compiler__advance(p));
+        }
+        else {
+            if (((haki_string_length(pathK) > ((int64_t)6LL)) && (strcmp(haki_string_substring(pathK, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+                path = haki_string_substring(pathK, ((int64_t)6LL), (haki_string_length(pathK) - ((int64_t)1LL)));
+                (void)(compiler__advance(p));
+            }
+        }
+        const char* alias = (const char*)(intptr_t)(path);
+        if ((strcmp(compiler__peekKind(p), "as") == 0)) {
+            (void)(compiler__advance(p));
+            const char* ak = (const char*)(intptr_t)(compiler__peekKind(p));
+            if (((haki_string_length(ak) > ((int64_t)6LL)) && (strcmp(haki_string_substring(ak, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+                alias = haki_string_substring(ak, ((int64_t)6LL), (haki_string_length(ak) - ((int64_t)1LL)));
+                (void)(compiler__advance(p));
+            }
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_IImport = (void**)malloc(sizeof(void*) * 2); __pay_IImport[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (path); (void*)__ps; }); __pay_IImport[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (alias); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = (void*)__pay_IImport; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "fn") == 0)) {
+        void* __mr_f = (void*)(compiler__parseFn(p));
+        FnDef* f = (FnDef*)((intptr_t)((void**)(__mr_f))[0]);
+        void* fe = (void*)((intptr_t)((void**)(__mr_f))[1]);
+        if ((fe != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_IFn = (void**)malloc(sizeof(void*) * 1); __pay_IFn[0] = (void*)(f); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_IFn; __ev; }));
+            __ret->f1 = (void*)(fe);
+            return __ret;
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_IFn = (void**)malloc(sizeof(void*) * 1); __pay_IFn[0] = (void*)(f); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_IFn; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "struct") == 0)) {
+        (void)(compiler__advance(p));
+        const char* nk = (const char*)(intptr_t)(compiler__peekKind(p));
+        const char* sname = (const char*)(intptr_t)("__struct__");
+        if (((haki_string_length(nk) > ((int64_t)6LL)) && (strcmp(haki_string_substring(nk, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+            sname = haki_string_substring(nk, ((int64_t)6LL), (haki_string_length(nk) - ((int64_t)1LL)));
+            (void)(compiler__advance(p));
+        }
+        void* __mr_lbe = (void*)(compiler__expect(p, "{"));
+        void* lbe = (void*)((intptr_t)((void**)(__mr_lbe))[1]);
+        if ((lbe != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_IStruct = (void**)malloc(sizeof(void*) * 1); __pay_IStruct[0] = (void*)(({ StructDef* __c_StructDef = (StructDef*)malloc(sizeof(StructDef)); __c_StructDef->name = sname; __c_StructDef->fields = haki_array_new(sizeof(void*)); __c_StructDef; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_IStruct; __ev; }));
+            __ret->f1 = (void*)(lbe);
+            return __ret;
+        }
+        void* fields = haki_array_new(sizeof(void*));
+        while (((strcmp(compiler__peekKind(p), "}") != 0) && (strcmp(compiler__peekKind(p), "EOF") != 0))) {
+            if (((strcmp(compiler__peekKind(p), "const") == 0) || (strcmp(compiler__peekKind(p), "let") == 0))) {
+                (void)(compiler__advance(p));
+            }
+            const char* fk = (const char*)(intptr_t)(compiler__peekKind(p));
+            const char* fname = (const char*)(intptr_t)("__field__");
+            if (((haki_string_length(fk) > ((int64_t)6LL)) && (strcmp(haki_string_substring(fk, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+                fname = haki_string_substring(fk, ((int64_t)6LL), (haki_string_length(fk) - ((int64_t)1LL)));
+                (void)(compiler__advance(p));
+            }
+            void* __mr_ce = (void*)(compiler__expect(p, ":"));
+            void* ce = (void*)((intptr_t)((void**)(__mr_ce))[1]);
+            if ((ce != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(({ void** __pay_IStruct = (void**)malloc(sizeof(void*) * 1); __pay_IStruct[0] = (void*)(({ StructDef* __c_StructDef = (StructDef*)malloc(sizeof(StructDef)); __c_StructDef->name = sname; __c_StructDef->fields = fields; __c_StructDef; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_IStruct; __ev; }));
+                __ret->f1 = (void*)(ce);
+                return __ret;
+            }
+            void* __mr_ty = (void*)(compiler__parseSimpleTyStr(p));
+            const char* ty = (const char*)(intptr_t)((intptr_t)((void**)(__mr_ty))[0]);
+            void* te = (void*)((intptr_t)((void**)(__mr_ty))[1]);
+            if ((te != NULL)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(({ void** __pay_IStruct = (void**)malloc(sizeof(void*) * 1); __pay_IStruct[0] = (void*)(({ StructDef* __c_StructDef = (StructDef*)malloc(sizeof(StructDef)); __c_StructDef->name = sname; __c_StructDef->fields = fields; __c_StructDef; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_IStruct; __ev; }));
+                __ret->f1 = (void*)(te);
+                return __ret;
+            }
+            ({ void* __el = (void*)(intptr_t)(({ Param* __c_Param = (Param*)malloc(sizeof(Param)); __c_Param->name = fname; __c_Param->ty = ty; __c_Param; })); haki_array_append(fields, &__el); });
+        }
+        void* __mr_rbe = (void*)(compiler__expect(p, "}"));
+        void* rbe = (void*)((intptr_t)((void**)(__mr_rbe))[1]);
+        if ((rbe != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_IStruct = (void**)malloc(sizeof(void*) * 1); __pay_IStruct[0] = (void*)(({ StructDef* __c_StructDef = (StructDef*)malloc(sizeof(StructDef)); __c_StructDef->name = sname; __c_StructDef->fields = fields; __c_StructDef; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_IStruct; __ev; }));
+            __ret->f1 = (void*)(rbe);
+            return __ret;
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_IStruct = (void**)malloc(sizeof(void*) * 1); __pay_IStruct[0] = (void*)(({ StructDef* __c_StructDef = (StructDef*)malloc(sizeof(StructDef)); __c_StructDef->name = sname; __c_StructDef->fields = fields; __c_StructDef; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_IStruct; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "enum") == 0)) {
+        (void)(compiler__advance(p));
+        const char* nk = (const char*)(intptr_t)(compiler__peekKind(p));
+        const char* ename = (const char*)(intptr_t)("__enum__");
+        if (((haki_string_length(nk) > ((int64_t)6LL)) && (strcmp(haki_string_substring(nk, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+            ename = haki_string_substring(nk, ((int64_t)6LL), (haki_string_length(nk) - ((int64_t)1LL)));
+            (void)(compiler__advance(p));
+        }
+        if ((strcmp(compiler__peekKind(p), "<") == 0)) {
+            while (((strcmp(compiler__peekKind(p), ">") != 0) && (strcmp(compiler__peekKind(p), "EOF") != 0))) {
+                (void)(compiler__advance(p));
+            }
+            if ((strcmp(compiler__peekKind(p), ">") == 0)) {
+                (void)(compiler__advance(p));
+            }
+        }
+        void* __mr_lbe = (void*)(compiler__expect(p, "{"));
+        void* lbe = (void*)((intptr_t)((void**)(__mr_lbe))[1]);
+        if ((lbe != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_IEnum = (void**)malloc(sizeof(void*) * 2); __pay_IEnum[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (ename); (void*)__ps; }); __pay_IEnum[1] = (void*)(haki_array_new(sizeof(void*))); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 3LL; ((void**)__ev)[1] = (void*)__pay_IEnum; __ev; }));
+            __ret->f1 = (void*)(lbe);
+            return __ret;
+        }
+        void* variants = haki_array_new(sizeof(void*));
+        while (((strcmp(compiler__peekKind(p), "}") != 0) && (strcmp(compiler__peekKind(p), "EOF") != 0))) {
+            const char* vk = (const char*)(intptr_t)(compiler__peekKind(p));
+            if (((haki_string_length(vk) > ((int64_t)6LL)) && (strcmp(haki_string_substring(vk, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+                ({ void* __el = (void*)(intptr_t)(haki_string_substring(vk, ((int64_t)6LL), (haki_string_length(vk) - ((int64_t)1LL)))); haki_array_append(variants, &__el); });
+                (void)(compiler__advance(p));
+                if ((strcmp(compiler__peekKind(p), "(") == 0)) {
+                    int64_t pd = (int64_t)(intptr_t)(((int64_t)0LL));
+                    const char* payloadTy = (const char*)(intptr_t)("");
+                    int8_t expectTy = (int8_t)(intptr_t)(0);
+                    while ((strcmp(compiler__peekKind(p), "EOF") != 0)) {
+                        const char* tk = (const char*)(intptr_t)(compiler__peekKind(p));
+                        (void)(compiler__advance(p));
+                        if ((strcmp(tk, "(") == 0)) {
+                            pd = (pd + ((int64_t)1LL));
+                            if ((pd == ((int64_t)1LL))) {
+                                expectTy = 1;
+                            }
+                        }
+                        if ((strcmp(tk, ")") == 0)) {
+                            pd = (pd - ((int64_t)1LL));
+                        }
+                        if (((strcmp(tk, ",") == 0) && (pd == ((int64_t)1LL)))) {
+                            expectTy = 1;
+                        }
+                        if ((expectTy && (pd == ((int64_t)1LL)))) {
+                            const char* ptk = (const char*)(intptr_t)(compiler__peekKind(p));
+                            if (((haki_string_length(ptk) > ((int64_t)6LL)) && (strcmp(haki_string_substring(ptk, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+                                const char* typeName = (const char*)(intptr_t)(haki_string_substring(ptk, ((int64_t)6LL), (haki_string_length(ptk) - ((int64_t)1LL))));
+                                if ((haki_string_length(payloadTy) == ((int64_t)0LL))) {
+                                    payloadTy = typeName;
+                                }
+                                else {
+                                    payloadTy = haki_string_concat(haki_string_concat(payloadTy, ";"), typeName);
+                                }
+                            }
+                            expectTy = 0;
+                        }
+                        if ((pd == ((int64_t)0LL))) {
+                            break;
+                        }
+                    }
+                    if (((haki_string_length(payloadTy) > ((int64_t)0LL)) && (haki_array_length(variants) > ((int64_t)0LL)))) {
+                        int64_t lastIdx = (int64_t)(intptr_t)((haki_array_length(variants) - ((int64_t)1LL)));
+                        *((void**)haki_array_get(variants, lastIdx)) = (void*)(intptr_t)(haki_string_concat(haki_string_concat((*((void**)haki_array_get(variants, lastIdx))), ":"), payloadTy));
+                    }
+                }
+                else {
+                    if ((strcmp(compiler__peekKind(p), "{") == 0)) {
+                        int64_t pd = (int64_t)(intptr_t)(((int64_t)0LL));
+                        while ((strcmp(compiler__peekKind(p), "EOF") != 0)) {
+                            const char* tk = (const char*)(intptr_t)(compiler__peekKind(p));
+                            (void)(compiler__advance(p));
+                            if ((strcmp(tk, "{") == 0)) {
+                                pd = (pd + ((int64_t)1LL));
+                            }
+                            if ((strcmp(tk, "}") == 0)) {
+                                pd = (pd - ((int64_t)1LL));
+                            }
+                            if ((pd == ((int64_t)0LL))) {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            else {
+                (void)(compiler__advance(p));
+            }
+        }
+        void* __mr_rbe = (void*)(compiler__expect(p, "}"));
+        void* rbe = (void*)((intptr_t)((void**)(__mr_rbe))[1]);
+        if ((rbe != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_IEnum = (void**)malloc(sizeof(void*) * 2); __pay_IEnum[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (ename); (void*)__ps; }); __pay_IEnum[1] = (void*)(variants); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 3LL; ((void**)__ev)[1] = (void*)__pay_IEnum; __ev; }));
+            __ret->f1 = (void*)(rbe);
+            return __ret;
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_IEnum = (void**)malloc(sizeof(void*) * 2); __pay_IEnum[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (ename); (void*)__ps; }); __pay_IEnum[1] = (void*)(variants); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 3LL; ((void**)__ev)[1] = (void*)__pay_IEnum; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "class") == 0)) {
+        (void)(compiler__advance(p));
+        const char* nk = (const char*)(intptr_t)(compiler__peekKind(p));
+        const char* cname = (const char*)(intptr_t)("__class__");
+        if (((haki_string_length(nk) > ((int64_t)6LL)) && (strcmp(haki_string_substring(nk, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+            cname = haki_string_substring(nk, ((int64_t)6LL), (haki_string_length(nk) - ((int64_t)1LL)));
+            (void)(compiler__advance(p));
+        }
+        void* fields = haki_array_new(sizeof(void*));
+        const char* cfInfoStr = (const char*)(intptr_t)("");
+        if (((strcmp(compiler__peekKind(p), "extends") == 0) || (strcmp(compiler__peekKind(p), "Ident(extends)") == 0))) {
+            (void)(compiler__advance(p));
+            const char* epk = (const char*)(intptr_t)(compiler__peekKind(p));
+            if (((haki_string_length(epk) > ((int64_t)6LL)) && (strcmp(haki_string_substring(epk, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+                const char* parentName = (const char*)(intptr_t)(haki_string_substring(epk, ((int64_t)6LL), (haki_string_length(epk) - ((int64_t)1LL))));
+                (void)(compiler__advance(p));
+                const char* pfStr = (const char*)(intptr_t)(compiler__resolveAlias(p, haki_string_concat("__classfields__", parentName)));
+                if ((haki_string_length(pfStr) > ((int64_t)0LL))) {
+                    cfInfoStr = pfStr;
+                    int64_t pi3 = (int64_t)(intptr_t)(((int64_t)0LL));
+                    const char* seg3 = (const char*)(intptr_t)("");
+                    while ((pi3 <= haki_string_length(pfStr))) {
+                        const char* ch3 = (const char*)(intptr_t)((((pi3 < haki_string_length(pfStr))) ? (haki_string_substring(pfStr, pi3, (pi3 + ((int64_t)1LL)))) : (",")));
+                        if ((strcmp(ch3, ",") == 0)) {
+                            int64_t colonPos3 = (int64_t)(intptr_t)(((int64_t)0LL));
+                            int64_t sj3 = (int64_t)(intptr_t)(((int64_t)0LL));
+                            while ((sj3 < haki_string_length(seg3))) {
+                                if ((strcmp(haki_string_substring(seg3, sj3, (sj3 + ((int64_t)1LL))), ":") == 0)) {
+                                    colonPos3 = sj3;
+                                }
+                                sj3 = (sj3 + ((int64_t)1LL));
+                            }
+                            if ((colonPos3 > ((int64_t)0LL))) {
+                                const char* pfname3 = (const char*)(intptr_t)(haki_string_substring(seg3, ((int64_t)0LL), colonPos3));
+                                const char* pfty3 = (const char*)(intptr_t)(haki_string_substring(seg3, (colonPos3 + ((int64_t)1LL)), haki_string_length(seg3)));
+                                if ((haki_string_length(pfname3) > ((int64_t)0LL))) {
+                                    ({ void* __el = (void*)(intptr_t)(({ Param* __c_Param = (Param*)malloc(sizeof(Param)); __c_Param->name = pfname3; __c_Param->ty = pfty3; __c_Param; })); haki_array_append(fields, &__el); });
+                                }
+                            }
+                            seg3 = "";
+                        }
+                        else {
+                            seg3 = haki_string_concat(seg3, ch3);
+                        }
+                        pi3 = (pi3 + ((int64_t)1LL));
+                    }
+                }
+                int64_t mdi = (int64_t)(intptr_t)(((int64_t)0LL));
+                { void* __arr_pmf = p->methodFnDefs;
+                  int64_t __len_pmf = haki_array_length(__arr_pmf);
+                  for (int64_t __i_pmf = 0; __i_pmf < __len_pmf; __i_pmf++) {
+                        FnDef* pmf = (FnDef*)*(void**)haki_array_get(__arr_pmf, __i_pmf);
+                        if ((strcmp((*((void**)haki_array_get(p->methodOwner, mdi))), parentName) == 0)) {
+                            int64_t prefixLen = (int64_t)(intptr_t)((haki_string_length(parentName) + ((int64_t)2LL)));
+                            const char* mshortName = (const char*)(intptr_t)(haki_string_substring(pmf->name, prefixLen, haki_string_length(pmf->name)));
+                            void* cprams = haki_array_new(sizeof(void*));
+                            ({ void* __el = (void*)(intptr_t)(({ Param* __c_Param = (Param*)malloc(sizeof(Param)); __c_Param->name = "self"; __c_Param->ty = cname; __c_Param; })); haki_array_append(cprams, &__el); });
+                            int64_t cpri = (int64_t)(intptr_t)(((int64_t)0LL));
+                            { void* __arr_cp = pmf->params;
+                              int64_t __len_cp = haki_array_length(__arr_cp);
+                              for (int64_t __i_cp = 0; __i_cp < __len_cp; __i_cp++) {
+                                    Param* cp = (Param*)*(void**)haki_array_get(__arr_cp, __i_cp);
+                                    if ((cpri > ((int64_t)0LL))) {
+                                        ({ void* __el = (void*)(intptr_t)(cp); haki_array_append(cprams, &__el); });
+                                    }
+                                    cpri = (cpri + ((int64_t)1LL));
+                              }
+                            }
+                            FnDef* childMethodFn = (FnDef*)(({ FnDef* __c_FnDef = (FnDef*)malloc(sizeof(FnDef)); __c_FnDef->name = haki_string_concat(haki_string_concat(cname, "__"), mshortName); __c_FnDef->params = cprams; __c_FnDef->retTy = pmf->retTy; __c_FnDef->body = pmf->body; __c_FnDef; }));
+                            ({ void* __el = (void*)(intptr_t)(({ void** __pay_IFn = (void**)malloc(sizeof(void*) * 1); __pay_IFn[0] = (void*)(childMethodFn); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_IFn; __ev; })); haki_array_append(p->pendingItems, &__el); });
+                            ({ void* __el = (void*)(intptr_t)(childMethodFn); haki_array_append(p->methodFnDefs, &__el); });
+                            ({ void* __el = (void*)(intptr_t)(cname); haki_array_append(p->methodOwner, &__el); });
+                        }
+                        mdi = (mdi + ((int64_t)1LL));
+                  }
+                }
+            }
+        }
+        void* __mr_cobe = (void*)(compiler__expect(p, "{"));
+        void* cobe = (void*)((intptr_t)((void**)(__mr_cobe))[1]);
+        if ((cobe != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_IStruct = (void**)malloc(sizeof(void*) * 1); __pay_IStruct[0] = (void*)(({ StructDef* __c_StructDef = (StructDef*)malloc(sizeof(StructDef)); __c_StructDef->name = cname; __c_StructDef->fields = fields; __c_StructDef; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_IStruct; __ev; }));
+            __ret->f1 = (void*)(cobe);
+            return __ret;
+        }
+        while (((strcmp(compiler__peekKind(p), "}") != 0) && (strcmp(compiler__peekKind(p), "EOF") != 0))) {
+            const char* ctok = (const char*)(intptr_t)(compiler__peekKind(p));
+            if (((strcmp(ctok, "const") == 0) || (strcmp(ctok, "let") == 0))) {
+                (void)(compiler__advance(p));
+                const char* fnk2 = (const char*)(intptr_t)(compiler__peekKind(p));
+                const char* fname2 = (const char*)(intptr_t)("");
+                if (((haki_string_length(fnk2) > ((int64_t)6LL)) && (strcmp(haki_string_substring(fnk2, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+                    fname2 = haki_string_substring(fnk2, ((int64_t)6LL), (haki_string_length(fnk2) - ((int64_t)1LL)));
+                    (void)(compiler__advance(p));
+                }
+                if ((strcmp(compiler__peekKind(p), ":") == 0)) {
+                    (void)(compiler__advance(p));
+                    void* __mr_fty2 = (void*)(compiler__parseSimpleTyStr(p));
+                    const char* fty2 = (const char*)(intptr_t)((intptr_t)((void**)(__mr_fty2))[0]);
+                    void* fte2 = (void*)((intptr_t)((void**)(__mr_fty2))[1]);
+                    if ((fte2 != NULL)) {
+                        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                        __ret->f0 = (void*)(({ void** __pay_IStruct = (void**)malloc(sizeof(void*) * 1); __pay_IStruct[0] = (void*)(({ StructDef* __c_StructDef = (StructDef*)malloc(sizeof(StructDef)); __c_StructDef->name = cname; __c_StructDef->fields = fields; __c_StructDef; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_IStruct; __ev; }));
+                        __ret->f1 = (void*)(fte2);
+                        return __ret;
+                    }
+                    if ((haki_string_length(fname2) > ((int64_t)0LL))) {
+                        ({ void* __el = (void*)(intptr_t)(({ Param* __c_Param = (Param*)malloc(sizeof(Param)); __c_Param->name = fname2; __c_Param->ty = fty2; __c_Param; })); haki_array_append(fields, &__el); });
+                        if ((haki_string_length(cfInfoStr) > ((int64_t)0LL))) {
+                            cfInfoStr = haki_string_concat(cfInfoStr, ",");
+                        }
+                        cfInfoStr = haki_string_concat(haki_string_concat(haki_string_concat(cfInfoStr, fname2), ":"), fty2);
+                    }
+                }
+            }
+            else {
+                if ((strcmp(ctok, "fn") == 0)) {
+                    void* __mr_mf2 = (void*)(compiler__parseFn(p));
+                    FnDef* mf2 = (FnDef*)((intptr_t)((void**)(__mr_mf2))[0]);
+                    void* mfe2 = (void*)((intptr_t)((void**)(__mr_mf2))[1]);
+                    if ((mfe2 != NULL)) {
+                        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                        __ret->f0 = (void*)(({ void** __pay_IStruct = (void**)malloc(sizeof(void*) * 1); __pay_IStruct[0] = (void*)(({ StructDef* __c_StructDef = (StructDef*)malloc(sizeof(StructDef)); __c_StructDef->name = cname; __c_StructDef->fields = fields; __c_StructDef; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_IStruct; __ev; }));
+                        __ret->f1 = (void*)(mfe2);
+                        return __ret;
+                    }
+                    void* mprams2 = haki_array_new(sizeof(void*));
+                    ({ void* __el = (void*)(intptr_t)(({ Param* __c_Param = (Param*)malloc(sizeof(Param)); __c_Param->name = "self"; __c_Param->ty = cname; __c_Param; })); haki_array_append(mprams2, &__el); });
+                    { void* __arr_mp2 = mf2->params;
+                      int64_t __len_mp2 = haki_array_length(__arr_mp2);
+                      for (int64_t __i_mp2 = 0; __i_mp2 < __len_mp2; __i_mp2++) {
+                            Param* mp2 = (Param*)*(void**)haki_array_get(__arr_mp2, __i_mp2);
+                            ({ void* __el = (void*)(intptr_t)(mp2); haki_array_append(mprams2, &__el); });
+                      }
+                    }
+                    FnDef* mangledFn2 = (FnDef*)(({ FnDef* __c_FnDef = (FnDef*)malloc(sizeof(FnDef)); __c_FnDef->name = haki_string_concat(haki_string_concat(cname, "__"), mf2->name); __c_FnDef->params = mprams2; __c_FnDef->retTy = mf2->retTy; __c_FnDef->body = mf2->body; __c_FnDef; }));
+                    ({ void* __el = (void*)(intptr_t)(({ void** __pay_IFn = (void**)malloc(sizeof(void*) * 1); __pay_IFn[0] = (void*)(mangledFn2); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_IFn; __ev; })); haki_array_append(p->pendingItems, &__el); });
+                    ({ void* __el = (void*)(intptr_t)(mangledFn2); haki_array_append(p->methodFnDefs, &__el); });
+                    ({ void* __el = (void*)(intptr_t)(cname); haki_array_append(p->methodOwner, &__el); });
+                }
+                else {
+                    (void)(compiler__advance(p));
+                }
+            }
+        }
+        void* __mr_crbe = (void*)(compiler__expect(p, "}"));
+        void* crbe = (void*)((intptr_t)((void**)(__mr_crbe))[1]);
+        if ((crbe != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(({ void** __pay_IStruct = (void**)malloc(sizeof(void*) * 1); __pay_IStruct[0] = (void*)(({ StructDef* __c_StructDef = (StructDef*)malloc(sizeof(StructDef)); __c_StructDef->name = cname; __c_StructDef->fields = fields; __c_StructDef; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_IStruct; __ev; }));
+            __ret->f1 = (void*)(crbe);
+            return __ret;
+        }
+        ({ void* __el = (void*)(intptr_t)(haki_string_concat("__classfields__", cname)); haki_array_append(p->aliasNames, &__el); });
+        ({ void* __el = (void*)(intptr_t)(cfInfoStr); haki_array_append(p->aliasTargets, &__el); });
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_IStruct = (void**)malloc(sizeof(void*) * 1); __pay_IStruct[0] = (void*)(({ StructDef* __c_StructDef = (StructDef*)malloc(sizeof(StructDef)); __c_StructDef->name = cname; __c_StructDef->fields = fields; __c_StructDef; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_IStruct; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if (((strcmp(kind, "protocol") == 0) || (strcmp(kind, "impl") == 0))) {
+        (void)(compiler__advance(p));
+        int64_t depth = (int64_t)(intptr_t)(((int64_t)0LL));
+        while ((strcmp(compiler__peekKind(p), "EOF") != 0)) {
+            const char* tok = (const char*)(intptr_t)(compiler__peekKind(p));
+            if ((strcmp(tok, "{") == 0)) {
+                depth = (depth + ((int64_t)1LL));
+            }
+            if ((strcmp(tok, "}") == 0)) {
+                depth = (depth - ((int64_t)1LL));
+                if ((depth <= ((int64_t)0LL))) {
+                    (void)(compiler__advance(p));
+                    break;
+                }
+            }
+            (void)(compiler__advance(p));
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_IImport = (void**)malloc(sizeof(void*) * 2); __pay_IImport[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ("__skip__"); (void*)__ps; }); __pay_IImport[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ("__skip__"); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = (void*)__pay_IImport; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "@") == 0)) {
+        (void)(compiler__advance(p));
+        const char* annK = (const char*)(intptr_t)(compiler__peekKind(p));
+        int8_t isAnnotIdent = (int8_t)(intptr_t)(((haki_string_length(annK) > ((int64_t)6LL)) && (strcmp(haki_string_substring(annK, ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0)));
+        int8_t isAnnotKw = (int8_t)(intptr_t)((((((strcmp(annK, "(") != 0) && (strcmp(annK, "EOF") != 0)) && (strcmp(annK, "{") != 0)) && (strcmp(annK, "fn") != 0)) && (strcmp(annK, "}") != 0)));
+        if ((isAnnotIdent || isAnnotKw)) {
+            (void)(compiler__advance(p));
+        }
+        if ((strcmp(compiler__peekKind(p), "(") == 0)) {
+            int64_t ad = (int64_t)(intptr_t)(((int64_t)0LL));
+            while ((strcmp(compiler__peekKind(p), "EOF") != 0)) {
+                const char* atk = (const char*)(intptr_t)(compiler__peekKind(p));
+                (void)(compiler__advance(p));
+                if ((strcmp(atk, "(") == 0)) {
+                    ad = (ad + ((int64_t)1LL));
+                }
+                if ((strcmp(atk, ")") == 0)) {
+                    ad = (ad - ((int64_t)1LL));
+                }
+                if ((ad <= ((int64_t)0LL))) {
+                    break;
+                }
+            }
+        }
+        return (void*)(intptr_t)(compiler__parseItem(p));
+    }
+    if ((strcmp(kind, "async") == 0)) {
+        (void)(compiler__advance(p));
+        return (void*)(intptr_t)(compiler__parseItem(p));
+    }
+    if ((strcmp(kind, "Ident(type)") == 0)) {
+        (void)(compiler__advance(p));
+        const char* aliasName = (const char*)(intptr_t)("");
+        if (((haki_string_length(compiler__peekKind(p)) > ((int64_t)6LL)) && (strcmp(haki_string_substring(compiler__peekKind(p), ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+            const char* nk = (const char*)(intptr_t)(compiler__peekKind(p));
+            aliasName = haki_string_substring(nk, ((int64_t)6LL), (haki_string_length(nk) - ((int64_t)1LL)));
+            (void)(compiler__advance(p));
+        }
+        if ((strcmp(compiler__peekKind(p), "=") == 0)) {
+            (void)(compiler__advance(p));
+        }
+        void* __mr_targetTy = (void*)(compiler__parseSimpleTyStr(p));
+        const char* targetTy = (const char*)(intptr_t)((intptr_t)((void**)(__mr_targetTy))[0]);
+        void* _ae = (void*)((intptr_t)((void**)(__mr_targetTy))[1]);
+        if (((haki_string_length(aliasName) > ((int64_t)0LL)) && (haki_string_length(targetTy) > ((int64_t)0LL)))) {
+            ({ void* __el = (void*)(intptr_t)(aliasName); haki_array_append(p->aliasNames, &__el); });
+            ({ void* __el = (void*)(intptr_t)(targetTy); haki_array_append(p->aliasTargets, &__el); });
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_IImport = (void**)malloc(sizeof(void*) * 2); __pay_IImport[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ("__skip__"); (void*)__ps; }); __pay_IImport[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ("__skip__"); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = (void*)__pay_IImport; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    if ((strcmp(kind, "extern") == 0)) {
+        (void)(compiler__advance(p));
+        const char* ek = (const char*)(intptr_t)(compiler__peekKind(p));
+        if (((haki_string_length(ek) > ((int64_t)4LL)) && (strcmp(haki_string_substring(ek, ((int64_t)0LL), ((int64_t)4LL)), "Str(") == 0))) {
+            (void)(compiler__advance(p));
+        }
+        if ((strcmp(compiler__peekKind(p), "fn") == 0)) {
+            (void)(compiler__advance(p));
+            if (((haki_string_length(compiler__peekKind(p)) > ((int64_t)6LL)) && (strcmp(haki_string_substring(compiler__peekKind(p), ((int64_t)0LL), ((int64_t)6LL)), "Ident(") == 0))) {
+                (void)(compiler__advance(p));
+            }
+            if ((strcmp(compiler__peekKind(p), "(") == 0)) {
+                int64_t epd = (int64_t)(intptr_t)(((int64_t)0LL));
+                while ((strcmp(compiler__peekKind(p), "EOF") != 0)) {
+                    const char* etk = (const char*)(intptr_t)(compiler__peekKind(p));
+                    (void)(compiler__advance(p));
+                    if ((strcmp(etk, "(") == 0)) {
+                        epd = (epd + ((int64_t)1LL));
+                    }
+                    if ((strcmp(etk, ")") == 0)) {
+                        epd = (epd - ((int64_t)1LL));
+                    }
+                    if ((epd <= ((int64_t)0LL))) {
+                        break;
+                    }
+                }
+            }
+            if ((strcmp(compiler__peekKind(p), "->") == 0)) {
+                (void)(compiler__advance(p));
+                void* __mr__ety = (void*)(compiler__parseSimpleTyStr(p));
+                const char* _ety = (const char*)(intptr_t)((intptr_t)((void**)(__mr__ety))[0]);
+                void* _ete = (void*)((intptr_t)((void**)(__mr__ety))[1]);
+            }
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_IImport = (void**)malloc(sizeof(void*) * 2); __pay_IImport[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ("__skip__"); (void*)__ps; }); __pay_IImport[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ("__skip__"); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = (void*)__pay_IImport; __ev; }));
+        __ret->f1 = (void*)(NULL);
+        return __ret;
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(({ void** __pay_IFn = (void**)malloc(sizeof(void*) * 1); __pay_IFn[0] = (void*)(({ FnDef* __c_FnDef = (FnDef*)malloc(sizeof(FnDef)); __c_FnDef->name = "__error__"; __c_FnDef->params = haki_array_new(sizeof(void*)); __c_FnDef->retTy = "void"; __c_FnDef->body = haki_array_new(sizeof(void*)); __c_FnDef; })); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_IFn; __ev; }));
+    __ret->f1 = (void*)(haki_error_new(haki_string_concat("unexpected top-level token: ", kind)));
+    return __ret;
+}
+
+void* compiler__parse(const char* src) {
+    void* tokens = (void*)(compiler__tokenize(src));
+    Parser* p = (Parser*)(compiler__parserNew(tokens));
+    void* items = haki_array_new(sizeof(void*));
+    while ((strcmp(compiler__peekKind(p), "EOF") != 0)) {
+        void* __mr_item = (void*)(compiler__parseItem(p));
+        Item* item = (Item*)((intptr_t)((void**)(__mr_item))[0]);
+        void* ie = (void*)((intptr_t)((void**)(__mr_item))[1]);
+        if ((ie != NULL)) {
+            __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+            __ret->f0 = (void*)(items);
+            __ret->f1 = (void*)(ie);
+            return __ret;
+        }
+        ({ void* __el = (void*)(intptr_t)(item); haki_array_append(items, &__el); });
+        int64_t pdi = (int64_t)(intptr_t)(((int64_t)0LL));
+        while ((pdi < haki_array_length(p->pendingItems))) {
+            ({ void* __el = (void*)(intptr_t)(((Item*)(*((void**)haki_array_get(p->pendingItems, pdi))))); haki_array_append(items, &__el); });
+            pdi = (pdi + ((int64_t)1LL));
+        }
+        void* emptyItems2 = haki_array_new(sizeof(void*));
+        p->pendingItems = emptyItems2;
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(items);
+    __ret->f1 = (void*)(NULL);
+    return __ret;
+}
+
+const char* compiler__showExpr(Expr* e) {
+    const char* s = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t n = *(int64_t*)((void**)__mpayload)[0]; __mr = (void*)(haki_string_concat(haki_string_concat("Int(", haki_int_to_string(n)), ")")); __mdone = 1; } if (!__mdone && __mtag == 1LL) { int64_t b = *(int64_t*)((void**)__mpayload)[0]; __mr = (void*)(((b) ? ("true") : ("false"))); __mdone = 1; } if (!__mdone && __mtag == 2LL) { __mr = (void*)("null"); __mdone = 1; } if (!__mdone && __mtag == 3LL) { const char* s = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(haki_string_concat(haki_string_concat("\"", s), "\"")); __mdone = 1; } if (!__mdone && __mtag == 5LL) { void* fsegs = (void*)((void**)__mpayload)[0]; __mr = (void*)("f\"...\""); __mdone = 1; } if (!__mdone && __mtag == 6LL) { Expr* tryinner = (Expr*)((void**)__mpayload)[0]; __mr = (void*)(haki_string_concat("try ", compiler__showExpr(tryinner))); __mdone = 1; } if (!__mdone && __mtag == 7LL) { const char* ncn = *(const char**)((void**)__mpayload)[0]; void* ncargs = (void*)((void**)__mpayload)[1]; __mr = (void*)(haki_string_concat(ncn, "(...)")); __mdone = 1; } if (!__mdone && __mtag == 8LL) { const char* s = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(s); __mdone = 1; } if (!__mdone && __mtag == 9LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* operand = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(haki_string_concat(op, compiler__showExpr(operand))); __mdone = 1; } if (!__mdone && __mtag == 10LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* l = (Expr*)((void**)__mpayload)[1]; Expr* r = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(", compiler__showExpr(l)), " "), op), " "), compiler__showExpr(r)), ")")); __mdone = 1; } if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(haki_string_concat(n, "(...)")); __mdone = 1; } if (!__mdone && __mtag == 12LL) { Expr* recv = (Expr*)((void**)__mpayload)[0]; const char* f = *(const char**)((void**)__mpayload)[1]; __mr = (void*)(haki_string_concat(haki_string_concat(compiler__showExpr(recv), "."), f)); __mdone = 1; } if (!__mdone && __mtag == 13LL) { Expr* r = (Expr*)((void**)__mpayload)[0]; const char* m = *(const char**)((void**)__mpayload)[1]; void* margs = (void*)((void**)__mpayload)[2]; __mr = (void*)(haki_string_concat(haki_string_concat(haki_string_concat(compiler__showExpr(r), "."), m), "(...)")); __mdone = 1; } if (!__mdone && __mtag == 14LL) { Expr* a = (Expr*)((void**)__mpayload)[0]; Expr* i = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(haki_string_concat(haki_string_concat(haki_string_concat(compiler__showExpr(a), "["), compiler__showExpr(i)), "]")); __mdone = 1; } if (!__mdone && __mtag == 15LL) { void* aelems = (void*)((void**)__mpayload)[0]; __mr = (void*)("[...]"); __mdone = 1; } if (!__mdone && __mtag == 16LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)(haki_string_concat(haki_string_concat("if ", compiler__showExpr(c)), " {...}")); __mdone = 1; } if (!__mdone && __mtag == 17LL) { Expr* s = (Expr*)((void**)__mpayload)[0]; void* arms = (void*)((void**)__mpayload)[1]; __mr = (void*)(haki_string_concat(haki_string_concat("match ", compiler__showExpr(s)), " {...}")); __mdone = 1; } if (!__mdone && __mtag == 18LL) { void* bstmts = (void*)((void**)__mpayload)[0]; __mr = (void*)("{...}"); __mdone = 1; } if (!__mdone && __mtag == 19LL) { Expr* inner = (Expr*)((void**)__mpayload)[0]; __mr = (void*)(haki_string_concat("async ", compiler__showExpr(inner))); __mdone = 1; } if (!__mdone && __mtag == 20LL) { FnDef* lf = (FnDef*)((void**)__mpayload)[0]; __mr = (void*)("fn(...) {...}"); __mdone = 1; } (void)__mdone; __mr;}));
+    return (const char*)(intptr_t)(s);
+}
+
+void compiler__main(void) {
+    const char* src = (const char*)(intptr_t)("fn add(a: int, b: int) -> int { return a + b }");
+    void* __mr_items = (void*)(compiler__parse(src));
+    void* items = (void*)((intptr_t)((void**)(__mr_items))[0]);
+    void* err = (void*)((intptr_t)((void**)(__mr_items))[1]);
+    if ((err != NULL)) {
+        haki_print(haki_string_concat("parse error: ", haki_error_message(err)));
+        return;
+    }
+    haki_print(haki_string_concat(haki_string_concat("parsed ", haki_int_to_string(haki_array_length(items))), " item(s)"));
+    { void* __arr_item = items;
+      int64_t __len_item = haki_array_length(__arr_item);
+      for (int64_t __i_item = 0; __i_item < __len_item; __i_item++) {
+            Item* item = (Item*)*(void**)haki_array_get(__arr_item, __i_item);
+            const char* desc = (const char*)(intptr_t)(({ void* __msc = (void*)(item); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { FnDef* f = (FnDef*)((void**)__mpayload)[0]; __mr = (void*)(haki_string_concat("fn ", f->name)); __mdone = 1; } if (!__mdone && __mtag == 1LL) { StructDef* s = (StructDef*)((void**)__mpayload)[0]; __mr = (void*)(haki_string_concat("struct ", s->name)); __mdone = 1; } if (!__mdone && __mtag == 2LL) { const char* p = *(const char**)((void**)__mpayload)[0]; const char* a = *(const char**)((void**)__mpayload)[1]; __mr = (void*)(haki_string_concat("import ", p)); __mdone = 1; } if (!__mdone && __mtag == 3LL) { const char* en = *(const char**)((void**)__mpayload)[0]; void* ev = (void*)((void**)__mpayload)[1]; __mr = (void*)(haki_string_concat("enum ", en)); __mdone = 1; } (void)__mdone; __mr;}));
+            haki_print(desc);
+      }
+    }
+}
+
+void compiler__test_parse_fn(void) {
+    void* __mr_items = (void*)(compiler__parse("fn add(a: int, b: int) -> int { return a + b }"));
+    void* items = (void*)((intptr_t)((void**)(__mr_items))[0]);
+    void* err = (void*)((intptr_t)((void**)(__mr_items))[1]);
+    if ((err != NULL)) {
+        haki_panic(haki_string_concat("parse error: ", haki_error_message(err)));
+    }
+    if ((haki_array_length(items) != ((int64_t)1LL))) {
+        haki_panic("expected 1 item");
+    }
+    const char* desc = (const char*)(intptr_t)(({ void* __msc = (void*)(((Item*)(*((void**)haki_array_get(items, ((int64_t)0LL)))))); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { FnDef* f = (FnDef*)((void**)__mpayload)[0]; __mr = (void*)(haki_string_concat("fn:", f->name)); __mdone = 1; } if (!__mdone && __mtag == 1LL) { StructDef* s = (StructDef*)((void**)__mpayload)[0]; __mr = (void*)(haki_string_concat("struct:", s->name)); __mdone = 1; } if (!__mdone && __mtag == 2LL) { const char* p = *(const char**)((void**)__mpayload)[0]; const char* a = *(const char**)((void**)__mpayload)[1]; __mr = (void*)(haki_string_concat("import:", p)); __mdone = 1; } if (!__mdone && __mtag == 3LL) { const char* en = *(const char**)((void**)__mpayload)[0]; void* ev = (void*)((void**)__mpayload)[1]; __mr = (void*)(haki_string_concat("enum:", en)); __mdone = 1; } (void)__mdone; __mr;}));
+    if ((strcmp(desc, "fn:add") != 0)) {
+        haki_panic(haki_string_concat("expected fn:add, got: ", desc));
+    }
+}
+
+void compiler__test_parse_params(void) {
+    void* __mr_items = (void*)(compiler__parse("fn greet(name: string, age: int) { return }"));
+    void* items = (void*)((intptr_t)((void**)(__mr_items))[0]);
+    void* err = (void*)((intptr_t)((void**)(__mr_items))[1]);
+    if ((err != NULL)) {
+        haki_panic(haki_string_concat("parse error: ", haki_error_message(err)));
+    }
+    FnDef* f = (FnDef*)(({ void* __msc = (void*)(((Item*)(*((void**)haki_array_get(items, ((int64_t)0LL)))))); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { FnDef* f = (FnDef*)((void**)__mpayload)[0]; __mr = (void*)(f); __mdone = 1; } if (!__mdone) { __mr = (void*)(({ FnDef* __c_FnDef = (FnDef*)malloc(sizeof(FnDef)); __c_FnDef->name = ""; __c_FnDef->params = haki_array_new(sizeof(void*)); __c_FnDef->retTy = ""; __c_FnDef->body = haki_array_new(sizeof(void*)); __c_FnDef; })); __mdone = 1; } (void)__mdone; __mr;}));
+    if ((haki_array_length(f->params) != ((int64_t)2LL))) {
+        haki_panic(haki_string_concat("expected 2 params, got: ", haki_int_to_string(haki_array_length(f->params))));
+    }
+    if ((strcmp(((Param*)(*((void**)haki_array_get(f->params, ((int64_t)0LL)))))->name, "name") != 0)) {
+        haki_panic(haki_string_concat("first param wrong: ", ((Param*)(*((void**)haki_array_get(f->params, ((int64_t)0LL)))))->name));
+    }
+    if ((strcmp(((Param*)(*((void**)haki_array_get(f->params, ((int64_t)1LL)))))->name, "age") != 0)) {
+        haki_panic(haki_string_concat("second param wrong: ", ((Param*)(*((void**)haki_array_get(f->params, ((int64_t)1LL)))))->name));
+    }
+}
+
+void compiler__test_parse_return_type(void) {
+    void* __mr_items = (void*)(compiler__parse("fn id(x: int) -> int { return x }"));
+    void* items = (void*)((intptr_t)((void**)(__mr_items))[0]);
+    void* err = (void*)((intptr_t)((void**)(__mr_items))[1]);
+    if ((err != NULL)) {
+        haki_panic(haki_string_concat("parse error: ", haki_error_message(err)));
+    }
+    FnDef* f = (FnDef*)(({ void* __msc = (void*)(((Item*)(*((void**)haki_array_get(items, ((int64_t)0LL)))))); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { FnDef* f = (FnDef*)((void**)__mpayload)[0]; __mr = (void*)(f); __mdone = 1; } if (!__mdone) { __mr = (void*)(({ FnDef* __c_FnDef = (FnDef*)malloc(sizeof(FnDef)); __c_FnDef->name = ""; __c_FnDef->params = haki_array_new(sizeof(void*)); __c_FnDef->retTy = ""; __c_FnDef->body = haki_array_new(sizeof(void*)); __c_FnDef; })); __mdone = 1; } (void)__mdone; __mr;}));
+    if ((strcmp(f->retTy, "int") != 0)) {
+        haki_panic(haki_string_concat("expected int return, got: ", f->retTy));
+    }
+}
+
+void compiler__test_parse_struct(void) {
+    void* __mr_items = (void*)(compiler__parse("struct Point { const x: int  const y: int }"));
+    void* items = (void*)((intptr_t)((void**)(__mr_items))[0]);
+    void* err = (void*)((intptr_t)((void**)(__mr_items))[1]);
+    if ((err != NULL)) {
+        haki_panic(haki_string_concat("parse error: ", haki_error_message(err)));
+    }
+    StructDef* s = (StructDef*)(({ void* __msc = (void*)(((Item*)(*((void**)haki_array_get(items, ((int64_t)0LL)))))); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 1LL) { StructDef* s = (StructDef*)((void**)__mpayload)[0]; __mr = (void*)(s); __mdone = 1; } if (!__mdone) { __mr = (void*)(({ StructDef* __c_StructDef = (StructDef*)malloc(sizeof(StructDef)); __c_StructDef->name = ""; __c_StructDef->fields = haki_array_new(sizeof(void*)); __c_StructDef; })); __mdone = 1; } (void)__mdone; __mr;}));
+    if ((strcmp(s->name, "Point") != 0)) {
+        haki_panic(haki_string_concat("struct name wrong: ", s->name));
+    }
+    if ((haki_array_length(s->fields) != ((int64_t)2LL))) {
+        haki_panic(haki_string_concat("expected 2 fields, got: ", haki_int_to_string(haki_array_length(s->fields))));
+    }
+}
+
+void compiler__test_parse_expr_binary(void) {
+    void* __mr_items = (void*)(compiler__parse("fn f() -> int { return 1 + 2 * 3 }"));
+    void* items = (void*)((intptr_t)((void**)(__mr_items))[0]);
+    void* err = (void*)((intptr_t)((void**)(__mr_items))[1]);
+    if ((err != NULL)) {
+        haki_panic(haki_string_concat("parse error: ", haki_error_message(err)));
+    }
+    FnDef* f = (FnDef*)(({ void* __msc = (void*)(((Item*)(*((void**)haki_array_get(items, ((int64_t)0LL)))))); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { FnDef* f = (FnDef*)((void**)__mpayload)[0]; __mr = (void*)(f); __mdone = 1; } if (!__mdone) { __mr = (void*)(({ FnDef* __c_FnDef = (FnDef*)malloc(sizeof(FnDef)); __c_FnDef->name = ""; __c_FnDef->params = haki_array_new(sizeof(void*)); __c_FnDef->retTy = ""; __c_FnDef->body = haki_array_new(sizeof(void*)); __c_FnDef; })); __mdone = 1; } (void)__mdone; __mr;}));
+    if ((haki_array_length(f->body) != ((int64_t)1LL))) {
+        haki_panic("expected 1 stmt");
+    }
+    const char* retExpr = (const char*)(intptr_t)(({ void* __msc = (void*)(((Stmt*)(*((void**)haki_array_get(f->body, ((int64_t)0LL)))))); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 1LL) { void* vals = (void*)((void**)__mpayload)[0]; __mr = (void*)((((haki_array_length(vals) > ((int64_t)0LL))) ? (compiler__showExpr((*((void**)haki_array_get(vals, ((int64_t)0LL)))))) : (""))); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+    if ((strcmp(retExpr, "(Int(1) + (Int(2) * Int(3)))") != 0)) {
+        haki_panic(haki_string_concat("wrong expr: ", retExpr));
+    }
+}
+
+void compiler__test_parse_if(void) {
+    void* __mr_items = (void*)(compiler__parse("fn f(x: int) -> int { if x > 0 { return x } return 0 }"));
+    void* items = (void*)((intptr_t)((void**)(__mr_items))[0]);
+    void* err = (void*)((intptr_t)((void**)(__mr_items))[1]);
+    if ((err != NULL)) {
+        haki_panic(haki_string_concat("parse error: ", haki_error_message(err)));
+    }
+    FnDef* f = (FnDef*)(({ void* __msc = (void*)(((Item*)(*((void**)haki_array_get(items, ((int64_t)0LL)))))); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { FnDef* f = (FnDef*)((void**)__mpayload)[0]; __mr = (void*)(f); __mdone = 1; } if (!__mdone) { __mr = (void*)(({ FnDef* __c_FnDef = (FnDef*)malloc(sizeof(FnDef)); __c_FnDef->name = ""; __c_FnDef->params = haki_array_new(sizeof(void*)); __c_FnDef->retTy = ""; __c_FnDef->body = haki_array_new(sizeof(void*)); __c_FnDef; })); __mdone = 1; } (void)__mdone; __mr;}));
+    if ((haki_array_length(f->body) != ((int64_t)2LL))) {
+        haki_panic(haki_string_concat("expected 2 stmts, got: ", haki_int_to_string(haki_array_length(f->body))));
+    }
+}
+
+void compiler__test_parse_multi_fn(void) {
+    const char* src = (const char*)(intptr_t)("fn a(x: int) -> int { return x }\nfn b(y: int) -> int { return y }");
+    void* __mr_items = (void*)(compiler__parse(src));
+    void* items = (void*)((intptr_t)((void**)(__mr_items))[0]);
+    void* err = (void*)((intptr_t)((void**)(__mr_items))[1]);
+    if ((err != NULL)) {
+        haki_panic(haki_string_concat("parse error: ", haki_error_message(err)));
+    }
+    if ((haki_array_length(items) != ((int64_t)2LL))) {
+        haki_panic(haki_string_concat("expected 2 items, got: ", haki_int_to_string(haki_array_length(items))));
+    }
+}
+
+FnDef* compiler__emptyFnDef(void) {
+    void* params = haki_array_new(sizeof(void*));
+    void* body = haki_array_new(sizeof(void*));
+    return (FnDef*)(intptr_t)(({ FnDef* __c_FnDef = (FnDef*)malloc(sizeof(FnDef)); __c_FnDef->name = ""; __c_FnDef->params = params; __c_FnDef->retTy = ""; __c_FnDef->body = body; __c_FnDef; }));
+}
+
+StructDef* compiler__emptyStructDef(void) {
+    void* fields = haki_array_new(sizeof(void*));
+    return (StructDef*)(intptr_t)(({ StructDef* __c_StructDef = (StructDef*)malloc(sizeof(StructDef)); __c_StructDef->name = ""; __c_StructDef->fields = fields; __c_StructDef; }));
+}
+
+FnDef* compiler__makeFnDef(const char* name, void* params, const char* retTy, void* body) {
+    return (FnDef*)(intptr_t)(({ FnDef* __c_FnDef = (FnDef*)malloc(sizeof(FnDef)); __c_FnDef->name = name; __c_FnDef->params = params; __c_FnDef->retTy = retTy; __c_FnDef->body = body; __c_FnDef; }));
+}
+
+Param* compiler__makeParam(const char* name, const char* ty) {
+    return (Param*)(intptr_t)(({ Param* __c_Param = (Param*)malloc(sizeof(Param)); __c_Param->name = name; __c_Param->ty = ty; __c_Param; }));
+}
+
+const char* compiler__fnDefName(FnDef* f) {
+    return (const char*)(intptr_t)(f->name);
+}
+
+void* compiler__fnDefParams(FnDef* f) {
+    return (void*)(intptr_t)(f->params);
+}
+
+const char* compiler__fnDefRetTy(FnDef* f) {
+    return (const char*)(intptr_t)(f->retTy);
+}
+
+void* compiler__fnDefBody(FnDef* f) {
+    return (void*)(intptr_t)(f->body);
+}
+
+void* compiler__armBindings(MatchArm* a) {
+    return (void*)(intptr_t)(a->bindings);
+}
+
+const char* compiler__paramName(Param* p) {
+    return (const char*)(intptr_t)(p->name);
+}
+
+void* compiler__armBody(MatchArm* a) {
+    return (void*)(intptr_t)(a->body);
+}
+
+const char* compiler__fnDefTyStr(FnDef* f) {
+    const char* s = (const char*)(intptr_t)("fn(");
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_array_length(f->params))) {
+        if ((i > ((int64_t)0LL))) {
+            s = haki_string_concat(s, ", ");
+        }
+        s = haki_string_concat(s, ((Param*)(*((void**)haki_array_get(f->params, i))))->ty);
+        i = (i + ((int64_t)1LL));
+    }
+    return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(s, ") -> "), f->retTy));
+}
+
+Expr* compiler__nullExpr(void) {
+    return (Expr*)(intptr_t)(({ void** __pay_EIdent = (void**)malloc(sizeof(void*) * 1); __pay_EIdent[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = ("__null__"); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 8LL; ((void**)__ev)[1] = (void*)__pay_EIdent; __ev; }));
+}
+
+int8_t compiler__isNullExpr(Expr* e) {
+    const char* n = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 8LL) { const char* n = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(n); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+    return (int8_t)(intptr_t)((strcmp(n, "__null__") == 0));
+}
+
+void* compiler__emptyStmts(void) {
+    void* s = haki_array_new(sizeof(void*));
+    return (void*)(intptr_t)(s);
+}
+
+void* compiler__emptyExprs(void) {
+    void* s = haki_array_new(sizeof(void*));
+    return (void*)(intptr_t)(s);
+}
+
+void* compiler__emptyArms(void) {
+    void* s = haki_array_new(sizeof(void*));
+    return (void*)(intptr_t)(s);
+}
+
+void* compiler__emptyStrings(void) {
+    void* s = haki_array_new(sizeof(void*));
+    return (void*)(intptr_t)(s);
+}
+
+const char* typeck__tyName(SemTy* t) {
+    const char* s = (const char*)(intptr_t)(({ void* __msc = (void*)(t); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { __mr = (void*)("int"); __mdone = 1; } if (!__mdone && __mtag == 1LL) { __mr = (void*)("float"); __mdone = 1; } if (!__mdone && __mtag == 2LL) { __mr = (void*)("bool"); __mdone = 1; } if (!__mdone && __mtag == 3LL) { __mr = (void*)("string"); __mdone = 1; } if (!__mdone && __mtag == 4LL) { __mr = (void*)("void"); __mdone = 1; } if (!__mdone && __mtag == 5LL) { const char* n = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(n); __mdone = 1; } if (!__mdone && __mtag == 6LL) { const char* n = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(haki_string_concat(n, "?")); __mdone = 1; } if (!__mdone && __mtag == 7LL) { const char* n = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(haki_string_concat(haki_string_concat("Array<", n), ">")); __mdone = 1; } if (!__mdone && __mtag == 8LL) { const char* p = *(const char**)((void**)__mpayload)[0]; const char* r = *(const char**)((void**)__mpayload)[1]; __mr = (void*)(haki_string_concat(haki_string_concat(haki_string_concat("fn(", p), ") -> "), r)); __mdone = 1; } if (!__mdone && __mtag == 9LL) { __mr = (void*)("<error>"); __mdone = 1; } (void)__mdone; __mr;}));
+    return (const char*)(intptr_t)(s);
+}
+
+int8_t typeck__tyEq(SemTy* a, SemTy* b) {
+    return (int8_t)(intptr_t)((strcmp(typeck__tyName(a), typeck__tyName(b)) == 0));
+}
+
+SymTable* typeck__symNew(void) {
+    return (SymTable*)(intptr_t)(({ SymTable* __c_SymTable = (SymTable*)malloc(sizeof(SymTable)); __c_SymTable->fns = haki_map_new(sizeof(void*)); __c_SymTable->structs = haki_map_new(sizeof(void*)); __c_SymTable->errors = haki_array_new(sizeof(void*)); __c_SymTable->genericBase = haki_array_new(sizeof(void*)); __c_SymTable->genericTags = haki_array_new(sizeof(void*)); __c_SymTable->variants = haki_array_new(sizeof(void*)); __c_SymTable->capLit = haki_array_new(sizeof(void*)); __c_SymTable->capList = haki_array_new(sizeof(void*)); __c_SymTable; }));
+}
+
+int64_t typeck__symGenericCount(SymTable* sym) {
+    return (int64_t)(intptr_t)(haki_array_length(sym->genericBase));
+}
+
+const char* typeck__symGenericBaseAt(SymTable* sym, int64_t i) {
+    if (((i < ((int64_t)0LL)) || (i >= haki_array_length(sym->genericBase)))) {
+        return (const char*)(intptr_t)("");
+    }
+    return (const char*)(intptr_t)((*((void**)haki_array_get(sym->genericBase, i))));
+}
+
+const char* typeck__symGenericTagsAt(SymTable* sym, int64_t i) {
+    if (((i < ((int64_t)0LL)) || (i >= haki_array_length(sym->genericTags)))) {
+        return (const char*)(intptr_t)("");
+    }
+    return (const char*)(intptr_t)((*((void**)haki_array_get(sym->genericTags, i))));
+}
+
+void typeck__symClearErrors(SymTable* sym) {
+    void* fresh = haki_array_new(sizeof(void*));
+    sym->errors = fresh;
+}
+
+void typeck__symRecordGeneric(SymTable* sym, const char* base, const char* tags) {
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_array_length(sym->genericBase))) {
+        if (((strcmp((*((void**)haki_array_get(sym->genericBase, i))), base) == 0) && (strcmp((*((void**)haki_array_get(sym->genericTags, i))), tags) == 0))) {
+            return;
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    ({ void* __el = (void*)(intptr_t)(base); haki_array_append(sym->genericBase, &__el); });
+    ({ void* __el = (void*)(intptr_t)(tags); haki_array_append(sym->genericTags, &__el); });
+}
+
+void typeck__symRecordCaptures(SymTable* sym, const char* lit, const char* list) {
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_array_length(sym->capLit))) {
+        if ((strcmp((*((void**)haki_array_get(sym->capLit, i))), lit) == 0)) {
+            *((void**)haki_array_get(sym->capList, i)) = (void*)(intptr_t)(list);
+            return;
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    ({ void* __el = (void*)(intptr_t)(lit); haki_array_append(sym->capLit, &__el); });
+    ({ void* __el = (void*)(intptr_t)(list); haki_array_append(sym->capList, &__el); });
+}
+
+const char* typeck__symCapturesFor(SymTable* sym, const char* lit) {
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_array_length(sym->capLit))) {
+        if ((strcmp((*((void**)haki_array_get(sym->capLit, i))), lit) == 0)) {
+            return (const char*)(intptr_t)((*((void**)haki_array_get(sym->capList, i))));
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    return (const char*)(intptr_t)("");
+}
+
+void typeck__symError(SymTable* sym, const char* msg) {
+    ({ void* __el = (void*)(intptr_t)(msg); haki_array_append(sym->errors, &__el); });
+}
+
+void typeck__symRegisterFn(SymTable* sym, FnInfo* info) {
+    haki_map_set(sym->fns, info->name, (void*)(intptr_t)(info));
+}
+
+void* typeck__symLookupFn(SymTable* sym, const char* name) {
+    if (haki_map_has(sym->fns, name)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(haki_map_get_or_default(sym->fns, name, ({ FnInfo* __c_FnInfo = (FnInfo*)malloc(sizeof(FnInfo)); __c_FnInfo->name = ""; __c_FnInfo->retTy = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 9LL; ((void**)__ev)[1] = NULL; __ev; }); __c_FnInfo->nParams = ((int64_t)0LL); __c_FnInfo; })));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(({ FnInfo* __c_FnInfo = (FnInfo*)malloc(sizeof(FnInfo)); __c_FnInfo->name = ""; __c_FnInfo->retTy = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 9LL; ((void**)__ev)[1] = NULL; __ev; }); __c_FnInfo->nParams = ((int64_t)0LL); __c_FnInfo; }));
+    __ret->f1 = (void*)(int64_t)(0);
+    return __ret;
+}
+
+const char* typeck__fnInfoRetTyStr(FnInfo* info) {
+    return (const char*)(intptr_t)(typeck__semTyToStr(info->retTy));
+}
+
+const char* typeck__symLookupFnRetTyStr(SymTable* sym, const char* name) {
+    if (haki_map_has(sym->fns, name)) {
+        void* info = (void*)(haki_map_get_or_default(sym->fns, name, ({ FnInfo* __c_FnInfo = (FnInfo*)malloc(sizeof(FnInfo)); __c_FnInfo->name = ""; __c_FnInfo->retTy = ({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 9LL; ((void**)__ev)[1] = NULL; __ev; }); __c_FnInfo->nParams = ((int64_t)0LL); __c_FnInfo; })));
+        return (const char*)(intptr_t)(typeck__fnInfoRetTyStr(info));
+    }
+    return (const char*)(intptr_t)("");
+}
+
+SemTy* typeck__resolveSimpleTy(const char* s) {
+    if ((strcmp(s, "int") == 0)) {
+        return (SemTy*)(intptr_t)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = NULL; __ev; }));
+    }
+    if ((strcmp(s, "float") == 0)) {
+        return (SemTy*)(intptr_t)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = NULL; __ev; }));
+    }
+    if ((strcmp(s, "bool") == 0)) {
+        return (SemTy*)(intptr_t)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = NULL; __ev; }));
+    }
+    if ((strcmp(s, "string") == 0)) {
+        return (SemTy*)(intptr_t)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 3LL; ((void**)__ev)[1] = NULL; __ev; }));
+    }
+    if ((strcmp(s, "void") == 0)) {
+        return (SemTy*)(intptr_t)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 4LL; ((void**)__ev)[1] = NULL; __ev; }));
+    }
+    int64_t n = (int64_t)(intptr_t)(haki_string_length(s));
+    if (((n > ((int64_t)1LL)) && (strcmp(haki_string_substring(s, (n - ((int64_t)1LL)), n), "?") == 0))) {
+        return (SemTy*)(intptr_t)(({ void** __pay_TyOptional = (void**)malloc(sizeof(void*) * 1); __pay_TyOptional[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (haki_string_substring(s, ((int64_t)0LL), (n - ((int64_t)1LL)))); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 6LL; ((void**)__ev)[1] = (void*)__pay_TyOptional; __ev; }));
+    }
+    if (((n > ((int64_t)6LL)) && (strcmp(haki_string_substring(s, ((int64_t)0LL), ((int64_t)6LL)), "Array<") == 0))) {
+        const char* inner = (const char*)(intptr_t)(haki_string_substring(s, ((int64_t)6LL), (n - ((int64_t)1LL))));
+        return (SemTy*)(intptr_t)(({ void** __pay_TyArray = (void**)malloc(sizeof(void*) * 1); __pay_TyArray[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (inner); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 7LL; ((void**)__ev)[1] = (void*)__pay_TyArray; __ev; }));
+    }
+    return (SemTy*)(intptr_t)(({ void** __pay_TyNamed = (void**)malloc(sizeof(void*) * 1); __pay_TyNamed[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (s); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 5LL; ((void**)__ev)[1] = (void*)__pay_TyNamed; __ev; }));
+}
+
+void typeck__collectItem(SymTable* sym, compiler__Item* item) {
+    int8_t isFn = (int8_t)(intptr_t)(({ void* __msc = (void*)(item); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { FnDef* f = (FnDef*)((void**)__mpayload)[0];     SemTy* retTy = (SemTy*)(typeck__resolveSimpleTy(f->retTy));
+    FnInfo* info = (FnInfo*)(({ FnInfo* __c_FnInfo = (FnInfo*)malloc(sizeof(FnInfo)); __c_FnInfo->name = f->name; __c_FnInfo->retTy = retTy; __c_FnInfo->nParams = haki_array_length(f->params); __c_FnInfo; }));
+    typeck__symRegisterFn(sym, info);
+__mr = (void*)(1); __mdone = 1; } if (!__mdone && __mtag == 1LL) { StructDef* s = (StructDef*)((void**)__mpayload)[0];     haki_map_set(sym->structs, s->name, (void*)(intptr_t)(haki_array_length(s->fields)));
+__mr = (void*)(0); __mdone = 1; } if (!__mdone && __mtag == 2LL) { const char* p = *(const char**)((void**)__mpayload)[0]; const char* a = *(const char**)((void**)__mpayload)[1]; __mr = (void*)(0); __mdone = 1; } if (!__mdone && __mtag == 3LL) { const char* en = *(const char**)((void**)__mpayload)[0]; void* evs = (void*)((void**)__mpayload)[1];     { void* __arr_v = evs;
+      int64_t __len_v = haki_array_length(__arr_v);
+      for (int64_t __i_v = 0; __i_v < __len_v; __i_v++) {
+            void* v = (void*)*(void**)haki_array_get(__arr_v, __i_v);
+            void* vname = (void*)(v);
+            int64_t ci = (int64_t)(intptr_t)(((int64_t)0LL));
+            while ((ci < haki_string_length(v))) {
+                if ((strcmp(haki_string_substring(v, ci, (ci + ((int64_t)1LL))), ":") == 0)) {
+                    vname = haki_string_substring(v, ((int64_t)0LL), ci);
+                    ci = haki_string_length(v);
+                }
+                ci = (ci + ((int64_t)1LL));
+            }
+            ({ void* __el = (void*)(intptr_t)(vname); haki_array_append(sym->variants, &__el); });
+      }
+    }
+__mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+    (void)(isFn);
+}
+
+int8_t typeck__isEnumVariant(SymTable* sym, const char* name) {
+    { void* __arr_v = sym->variants;
+      int64_t __len_v = haki_array_length(__arr_v);
+      for (int64_t __i_v = 0; __i_v < __len_v; __i_v++) {
+            const char* v = (const char*)*(void**)haki_array_get(__arr_v, __i_v);
+            if ((strcmp(v, name) == 0)) {
+                return (int8_t)(intptr_t)(1);
+            }
+      }
+    }
+    return (int8_t)(intptr_t)(0);
+}
+
+void typeck__collectItems(SymTable* sym, void* items) {
+    { void* __arr_item = items;
+      int64_t __len_item = haki_array_length(__arr_item);
+      for (int64_t __i_item = 0; __i_item < __len_item; __i_item++) {
+            compiler__Item* item = (compiler__Item*)*(void**)haki_array_get(__arr_item, __i_item);
+            typeck__collectItem(sym, item);
+      }
+    }
+}
+
+SemTy* typeck__inferExpr(SymTable* sym, compiler__Expr* e) {
+    return (SemTy*)(intptr_t)(typeck__inferExprInner(sym, e));
+}
+
+SemTy* typeck__inferExprInner(SymTable* sym, compiler__Expr* e) {
+    const char* tag = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t n = *(int64_t*)((void**)__mpayload)[0]; __mr = (void*)("int"); __mdone = 1; } if (!__mdone && __mtag == 1LL) { int64_t b = *(int64_t*)((void**)__mpayload)[0]; __mr = (void*)("bool"); __mdone = 1; } if (!__mdone && __mtag == 2LL) { __mr = (void*)("null"); __mdone = 1; } if (!__mdone && __mtag == 3LL) { const char* s = *(const char**)((void**)__mpayload)[0]; __mr = (void*)("string"); __mdone = 1; } if (!__mdone && __mtag == 8LL) { const char* n = *(const char**)((void**)__mpayload)[0]; __mr = (void*)("ident"); __mdone = 1; } if (!__mdone && __mtag == 9LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* inner = (Expr*)((void**)__mpayload)[1]; __mr = (void*)("unary"); __mdone = 1; } if (!__mdone && __mtag == 10LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* l = (Expr*)((void**)__mpayload)[1]; Expr* r = (Expr*)((void**)__mpayload)[2]; __mr = (void*)("binary"); __mdone = 1; } if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)("call"); __mdone = 1; } if (!__mdone && __mtag == 12LL) { Expr* recv = (Expr*)((void**)__mpayload)[0]; const char* f = *(const char**)((void**)__mpayload)[1]; __mr = (void*)("field"); __mdone = 1; } if (!__mdone && __mtag == 13LL) { Expr* r = (Expr*)((void**)__mpayload)[0]; const char* m = *(const char**)((void**)__mpayload)[1]; void* ma = (void*)((void**)__mpayload)[2]; __mr = (void*)("method"); __mdone = 1; } if (!__mdone && __mtag == 14LL) { Expr* a = (Expr*)((void**)__mpayload)[0]; Expr* i = (Expr*)((void**)__mpayload)[1]; __mr = (void*)("index"); __mdone = 1; } if (!__mdone && __mtag == 15LL) { void* elems = (void*)((void**)__mpayload)[0]; __mr = (void*)("array"); __mdone = 1; } if (!__mdone && __mtag == 16LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)("if"); __mdone = 1; } if (!__mdone && __mtag == 17LL) { Expr* s = (Expr*)((void**)__mpayload)[0]; void* arms = (void*)((void**)__mpayload)[1]; __mr = (void*)("match"); __mdone = 1; } if (!__mdone && __mtag == 18LL) { void* stmts = (void*)((void**)__mpayload)[0]; __mr = (void*)("block"); __mdone = 1; } if (!__mdone && __mtag == 19LL) { Expr* inner = (Expr*)((void**)__mpayload)[0]; __mr = (void*)("async"); __mdone = 1; } if (!__mdone && __mtag == 20LL) { FnDef* lf = (FnDef*)((void**)__mpayload)[0]; __mr = (void*)("fnlit"); __mdone = 1; } (void)__mdone; __mr;}));
+    if ((strcmp(tag, "int") == 0)) {
+        return (SemTy*)(intptr_t)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = NULL; __ev; }));
+    }
+    if ((strcmp(tag, "bool") == 0)) {
+        return (SemTy*)(intptr_t)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = NULL; __ev; }));
+    }
+    if ((strcmp(tag, "null") == 0)) {
+        return (SemTy*)(intptr_t)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 4LL; ((void**)__ev)[1] = NULL; __ev; }));
+    }
+    if ((strcmp(tag, "string") == 0)) {
+        return (SemTy*)(intptr_t)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 3LL; ((void**)__ev)[1] = NULL; __ev; }));
+    }
+    if ((strcmp(tag, "unary") == 0)) {
+        return (SemTy*)(intptr_t)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 4LL; ((void**)__ev)[1] = NULL; __ev; }));
+    }
+    if ((strcmp(tag, "binary") == 0)) {
+        return (SemTy*)(intptr_t)(typeck__inferBinary(sym, e));
+    }
+    if ((strcmp(tag, "call") == 0)) {
+        return (SemTy*)(intptr_t)(typeck__inferCall(sym, e));
+    }
+    return (SemTy*)(intptr_t)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 4LL; ((void**)__ev)[1] = NULL; __ev; }));
+}
+
+SemTy* typeck__inferBinary(SymTable* sym, compiler__Expr* e) {
+    const char* op = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 10LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* l = (Expr*)((void**)__mpayload)[1]; Expr* r = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(op); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+    if ((((((strcmp(op, "+") == 0) || (strcmp(op, "-") == 0)) || (strcmp(op, "*") == 0)) || (strcmp(op, "/") == 0)) || (strcmp(op, "%") == 0))) {
+        return (SemTy*)(intptr_t)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = NULL; __ev; }));
+    }
+    return (SemTy*)(intptr_t)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = NULL; __ev; }));
+}
+
+int8_t typeck__isTypo(const char* a, const char* b) {
+    int64_t la = (int64_t)(intptr_t)(haki_string_length(a));
+    int64_t lb = (int64_t)(intptr_t)(haki_string_length(b));
+    if (((la == ((int64_t)0LL)) || (lb == ((int64_t)0LL)))) {
+        return (int8_t)(intptr_t)(0);
+    }
+    int64_t diff = (int64_t)(intptr_t)((la - lb));
+    if ((diff < ((int64_t)0LL))) {
+        diff = (lb - la);
+    }
+    if ((diff > ((int64_t)2LL))) {
+        return (int8_t)(intptr_t)(0);
+    }
+    int64_t minLen = (int64_t)(intptr_t)((la < lb));
+    int64_t mismatches = (int64_t)(intptr_t)(((int64_t)0LL));
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < minLen)) {
+        if ((strcmp(haki_string_substring(a, i, (i + ((int64_t)1LL))), haki_string_substring(b, i, (i + ((int64_t)1LL)))) != 0)) {
+            mismatches = (mismatches + ((int64_t)1LL));
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    mismatches = (mismatches + diff);
+    return (int8_t)(intptr_t)((mismatches <= ((int64_t)2LL)));
+}
+
+void* typeck__builtinNames(void) {
+    return (void*)(intptr_t)(({ void* __ial = haki_array_new(sizeof(void*)); { void* __el = (void*)(intptr_t)("print"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("print_int"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("print_float"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("print_bool"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("int_to_string"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("string_to_int"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("bool_to_string"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("string_length"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("float_to_string"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("string_to_float"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("int_to_float"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("float_to_int"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("argv"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("readFile"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("writeFile"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("fileExists"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("runCmd"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("panic"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("Map"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("Array"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("Error"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("append"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("println"); haki_array_append(__ial, &__el); } { void* __el = (void*)(intptr_t)("printf"); haki_array_append(__ial, &__el); } __ial; }));
+}
+
+int8_t typeck__isKnownBuiltin(const char* name) {
+    { void* __arr_b = typeck__builtinNames();
+      int64_t __len_b = haki_array_length(__arr_b);
+      for (int64_t __i_b = 0; __i_b < __len_b; __i_b++) {
+            const char* b = (const char*)*(void**)haki_array_get(__arr_b, __i_b);
+            if ((strcmp(b, name) == 0)) {
+                return (int8_t)(intptr_t)(1);
+            }
+      }
+    }
+    return (int8_t)(intptr_t)(0);
+}
+
+const char* typeck__findTypoSuggestion(SymTable* sym, const char* name) {
+    if (typeck__isKnownBuiltin(name)) {
+        return (const char*)(intptr_t)("");
+    }
+    { void* __arr_b = typeck__builtinNames();
+      int64_t __len_b = haki_array_length(__arr_b);
+      for (int64_t __i_b = 0; __i_b < __len_b; __i_b++) {
+            const char* b = (const char*)*(void**)haki_array_get(__arr_b, __i_b);
+            if (((strcmp(b, name) != 0) && typeck__isTypo(name, b))) {
+                return (const char*)(intptr_t)(b);
+            }
+      }
+    }
+    return (const char*)(intptr_t)("");
+}
+
+SemTy* typeck__inferCall(SymTable* sym, compiler__Expr* e) {
+    const char* name = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(n); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+    void* args = (void*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(args); __mdone = 1; } if (!__mdone) { __mr = (void*)(haki_array_new(sizeof(void*))); __mdone = 1; } (void)__mdone; __mr;}));
+    void* __mr_info = (void*)(typeck__symLookupFn(sym, name));
+    FnInfo* info = (FnInfo*)((intptr_t)((void**)(__mr_info))[0]);
+    int8_t found = (int8_t)(intptr_t)((intptr_t)((void**)(__mr_info))[1]);
+    if (found) {
+        if ((haki_array_length(args) != info->nParams)) {
+            typeck__symError(sym, haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("call to ", name), ": expected "), haki_int_to_string(info->nParams)), " args, got "), haki_int_to_string(haki_array_length(args))));
+        }
+        return (SemTy*)(intptr_t)(info->retTy);
+    }
+    if (typeck__isKnownBuiltin(name)) {
+        return (SemTy*)(intptr_t)(({ void** __pay_TyNamed = (void**)malloc(sizeof(void*) * 1); __pay_TyNamed[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (name); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 5LL; ((void**)__ev)[1] = (void*)__pay_TyNamed; __ev; }));
+    }
+    if (typeck__isEnumVariant(sym, name)) {
+        return (SemTy*)(intptr_t)(({ void** __pay_TyNamed = (void**)malloc(sizeof(void*) * 1); __pay_TyNamed[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (name); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 5LL; ((void**)__ev)[1] = (void*)__pay_TyNamed; __ev; }));
+    }
+    if ((haki_string_length(name) > ((int64_t)0LL))) {
+        const char* c0 = (const char*)(intptr_t)(haki_string_substring(name, ((int64_t)0LL), ((int64_t)1LL)));
+        if (((strcmp(c0, haki_string_to_upper(c0)) == 0) && (strcmp(c0, haki_string_to_lower(c0)) != 0))) {
+            return (SemTy*)(intptr_t)(({ void** __pay_TyNamed = (void**)malloc(sizeof(void*) * 1); __pay_TyNamed[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (name); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 5LL; ((void**)__ev)[1] = (void*)__pay_TyNamed; __ev; }));
+        }
+    }
+    const char* suggestion = (const char*)(intptr_t)(typeck__findTypoSuggestion(sym, name));
+    if ((haki_string_length(suggestion) > ((int64_t)0LL))) {
+        typeck__symError(sym, haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("unknown function '", name), "' — did you mean '"), suggestion), "'?"));
+    }
+    return (SemTy*)(intptr_t)(({ void** __pay_TyNamed = (void**)malloc(sizeof(void*) * 1); __pay_TyNamed[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (name); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 5LL; ((void**)__ev)[1] = (void*)__pay_TyNamed; __ev; }));
+}
+
+void typeck__checkStmts(SymTable* sym, void* stmts, const char* fnName, SemTy* retTy) {
+    { void* __arr_stmt = stmts;
+      int64_t __len_stmt = haki_array_length(__arr_stmt);
+      for (int64_t __i_stmt = 0; __i_stmt < __len_stmt; __i_stmt++) {
+            compiler__Stmt* stmt = (compiler__Stmt*)*(void**)haki_array_get(__arr_stmt, __i_stmt);
+            typeck__checkStmt(sym, stmt, fnName, retTy);
+      }
+    }
+}
+
+void typeck__checkStmt(SymTable* sym, compiler__Stmt* stmt, const char* fnName, SemTy* retTy) {
+    (void)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t isMut = *(int64_t*)((void**)__mpayload)[0]; const char* name = *(const char**)((void**)__mpayload)[1]; Expr* init = (Expr*)((void**)__mpayload)[2];     (void)(typeck__inferExpr(sym, init));
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 1LL) { void* vals = (void*)((void**)__mpayload)[0];     { void* __arr_v = vals;
+      int64_t __len_v = haki_array_length(__arr_v);
+      for (int64_t __i_v = 0; __i_v < __len_v; __i_v++) {
+            void* v = (void*)*(void**)haki_array_get(__arr_v, __i_v);
+            (void)(typeck__inferExpr(sym, v));
+      }
+    }
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 2LL) { Expr* e = (Expr*)((void**)__mpayload)[0];     (void)(typeck__inferExpr(sym, e));
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 3LL) { Expr* e = (Expr*)((void**)__mpayload)[0];     (void)(typeck__inferExpr(sym, e));
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 6LL) { Expr* e = (Expr*)((void**)__mpayload)[0];     (void)(typeck__inferExpr(sym, e));
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 4LL) { __mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 5LL) { __mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 10LL) { Expr* target = (Expr*)((void**)__mpayload)[0]; Expr* val = (Expr*)((void**)__mpayload)[1];     (void)(typeck__inferExpr(sym, target));
+    (void)(typeck__inferExpr(sym, val));
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 7LL) { Expr* cond = (Expr*)((void**)__mpayload)[0]; void* then = (void*)((void**)__mpayload)[1]; void* els = (void*)((void**)__mpayload)[2];     (void)(typeck__inferExpr(sym, cond));
+    typeck__checkStmts(sym, then, fnName, retTy);
+    typeck__checkStmts(sym, els, fnName, retTy);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 8LL) { Expr* cond = (Expr*)((void**)__mpayload)[0]; void* body = (void*)((void**)__mpayload)[1];     (void)(typeck__inferExpr(sym, cond));
+    typeck__checkStmts(sym, body, fnName, retTy);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 9LL) { const char* varName = *(const char**)((void**)__mpayload)[0]; Expr* iter = (Expr*)((void**)__mpayload)[1]; void* body = (void*)((void**)__mpayload)[2];     (void)(typeck__inferExpr(sym, iter));
+    typeck__checkStmts(sym, body, fnName, retTy);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } (void)__mdone; __mr;}));
+}
+
+void typeck__checkFn(SymTable* sym, compiler__FnDef* f) {
+    SemTy* retTy = (SemTy*)(typeck__resolveSimpleTy(f->retTy));
+    typeck__checkStmts(sym, f->body, f->name, retTy);
+}
+
+void typeck__checkItems(SymTable* sym, void* items) {
+    { void* __arr_item = items;
+      int64_t __len_item = haki_array_length(__arr_item);
+      for (int64_t __i_item = 0; __i_item < __len_item; __i_item++) {
+            compiler__Item* item = (compiler__Item*)*(void**)haki_array_get(__arr_item, __i_item);
+            (void)(({ void* __msc = (void*)(item); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { FnDef* f = (FnDef*)((void**)__mpayload)[0];             typeck__checkFn(sym, f);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 1LL) { StructDef* s = (StructDef*)((void**)__mpayload)[0]; __mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 2LL) { const char* p = *(const char**)((void**)__mpayload)[0]; const char* a = *(const char**)((void**)__mpayload)[1]; __mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 3LL) { const char* en = *(const char**)((void**)__mpayload)[0]; void* evs = (void*)((void**)__mpayload)[1]; __mr = (void*)(((int64_t)0LL)); __mdone = 1; } (void)__mdone; __mr;}));
+      }
+    }
+}
+
+void* typeck__typecheck(const char* src) {
+    void* __mr_items = (void*)(compiler__parse(src));
+    void* items = (void*)((intptr_t)((void**)(__mr_items))[0]);
+    void* parseErr = (void*)((intptr_t)((void**)(__mr_items))[1]);
+    if ((parseErr != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(typeck__symNew());
+        __ret->f1 = (void*)(haki_error_new(haki_string_concat("parse error: ", haki_error_message(parseErr))));
+        return __ret;
+    }
+    SymTable* sym = (SymTable*)(typeck__symNew());
+    typeck__collectItems(sym, items);
+    typeck__checkItems(sym, items);
+    if ((haki_array_length(sym->errors) > ((int64_t)0LL))) {
+        const char* msg = (const char*)(intptr_t)("typecheck errors:\n");
+        { void* __arr_e = sym->errors;
+          int64_t __len_e = haki_array_length(__arr_e);
+          for (int64_t __i_e = 0; __i_e < __len_e; __i_e++) {
+                const char* e = (const char*)*(void**)haki_array_get(__arr_e, __i_e);
+                msg = haki_string_concat(haki_string_concat(haki_string_concat(msg, "  - "), e), "\n");
+          }
+        }
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(sym);
+        __ret->f1 = (void*)(haki_error_new(msg));
+        return __ret;
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(sym);
+    __ret->f1 = (void*)(NULL);
+    return __ret;
+}
+
+void typeck__test_collect_fns(void) {
+    void* __mr_sym = (void*)(typeck__typecheck("fn add(a: int, b: int) -> int { return a + b }\nfn main() { print(\"hi\") }"));
+    SymTable* sym = (SymTable*)((intptr_t)((void**)(__mr_sym))[0]);
+    void* err = (void*)((intptr_t)((void**)(__mr_sym))[1]);
+    if ((err != NULL)) {
+        haki_panic(haki_string_concat("typecheck error: ", haki_error_message(err)));
+    }
+    void* __mr_info = (void*)(typeck__symLookupFn(sym, "add"));
+    FnInfo* info = (FnInfo*)((intptr_t)((void**)(__mr_info))[0]);
+    int8_t found = (int8_t)(intptr_t)((intptr_t)((void**)(__mr_info))[1]);
+    if ((!found)) {
+        haki_panic("add not found");
+    }
+    if ((info->nParams != ((int64_t)2LL))) {
+        haki_panic("expected 2 params");
+    }
+    if ((strcmp(typeck__tyName(info->retTy), "int") != 0)) {
+        haki_panic("expected int return");
+    }
+}
+
+void typeck__test_wrong_arg_count(void) {
+    void* __mr_sym = (void*)(typeck__typecheck("fn add(a: int, b: int) -> int { return a + b }\nfn main() { const x = add(1) }"));
+    SymTable* sym = (SymTable*)((intptr_t)((void**)(__mr_sym))[0]);
+    void* err = (void*)((intptr_t)((void**)(__mr_sym))[1]);
+    if ((err == NULL)) {
+        haki_panic("expected typecheck error for wrong arg count");
+    }
+}
+
+void typeck__test_collect_struct(void) {
+    void* __mr_sym = (void*)(typeck__typecheck("struct Point { const x: int  const y: int }\nfn main() { }"));
+    SymTable* sym = (SymTable*)((intptr_t)((void**)(__mr_sym))[0]);
+    void* err = (void*)((intptr_t)((void**)(__mr_sym))[1]);
+    if ((err != NULL)) {
+        haki_panic(haki_string_concat("typecheck error: ", haki_error_message(err)));
+    }
+    void* hasPoint = (void*)(haki_map_has(sym->structs, "Point"));
+    if ((!hasPoint)) {
+        haki_panic("Point not collected");
+    }
+}
+
+void typeck__test_complex_fn(void) {
+    const char* src = (const char*)(intptr_t)("fn fib(n: int) -> int {\n  if n < 2 { return n }\n  return fib(n - 1) + fib(n - 2)\n}\nfn main() { print_int(fib(10)) }");
+    void* __mr_sym = (void*)(typeck__typecheck(src));
+    SymTable* sym = (SymTable*)((intptr_t)((void**)(__mr_sym))[0]);
+    void* err = (void*)((intptr_t)((void**)(__mr_sym))[1]);
+    if ((err != NULL)) {
+        haki_panic(haki_string_concat("typecheck error: ", haki_error_message(err)));
+    }
+    void* __mr_info = (void*)(typeck__symLookupFn(sym, "fib"));
+    FnInfo* info = (FnInfo*)((intptr_t)((void**)(__mr_info))[0]);
+    int8_t found = (int8_t)(intptr_t)((intptr_t)((void**)(__mr_info))[1]);
+    if ((!found)) {
+        haki_panic("fib not found");
+    }
+}
+
+void typeck__main(void) {
+    void* __mr_sym = (void*)(typeck__typecheck("fn add(a: int, b: int) -> int { return a + b }\nfn greet(name: string) -> string { return name }\nfn main() { const x = add(1, 2)  print_int(x) }"));
+    SymTable* sym = (SymTable*)((intptr_t)((void**)(__mr_sym))[0]);
+    void* err = (void*)((intptr_t)((void**)(__mr_sym))[1]);
+    if ((err != NULL)) {
+        haki_print(haki_string_concat("error: ", haki_error_message(err)));
+        return;
+    }
+    haki_print(haki_string_concat(haki_string_concat("collected ", haki_int_to_string(haki_array_length(sym->fns))), " functions"));
+    void* __mr_addInfo = (void*)(typeck__symLookupFn(sym, "add"));
+    FnInfo* addInfo = (FnInfo*)((intptr_t)((void**)(__mr_addInfo))[0]);
+    int8_t found = (int8_t)(intptr_t)((intptr_t)((void**)(__mr_addInfo))[1]);
+    if (found) {
+        haki_print(haki_string_concat(haki_string_concat(haki_string_concat("add: ", haki_int_to_string(addInfo->nParams)), " params -> "), typeck__tyName(addInfo->retTy)));
+    }
+}
+
+const char* typeck__semTyToStr(SemTy* ty) {
+    return (const char*)(intptr_t)(({ void* __msc = (void*)(ty); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { __mr = (void*)("int"); __mdone = 1; } if (!__mdone && __mtag == 1LL) { __mr = (void*)("float"); __mdone = 1; } if (!__mdone && __mtag == 2LL) { __mr = (void*)("bool"); __mdone = 1; } if (!__mdone && __mtag == 3LL) { __mr = (void*)("string"); __mdone = 1; } if (!__mdone && __mtag == 4LL) { __mr = (void*)("void"); __mdone = 1; } if (!__mdone && __mtag == 5LL) { const char* n = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(n); __mdone = 1; } if (!__mdone && __mtag == 6LL) { const char* n = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(haki_string_concat(n, "?")); __mdone = 1; } if (!__mdone && __mtag == 7LL) { const char* n = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(haki_string_concat(haki_string_concat("Array<", n), ">")); __mdone = 1; } if (!__mdone && __mtag == 8LL) { const char* p = *(const char**)((void**)__mpayload)[0]; const char* r = *(const char**)((void**)__mpayload)[1]; __mr = (void*)(haki_string_concat(haki_string_concat(haki_string_concat("fn(", p), ")->"), r)); __mdone = 1; } if (!__mdone && __mtag == 9LL) { __mr = (void*)("void*"); __mdone = 1; } (void)__mdone; __mr;}));
+}
+
+MonoProgram* mono__monoNew(void) {
+    return (MonoProgram*)(intptr_t)(({ MonoProgram* __c_MonoProgram = (MonoProgram*)malloc(sizeof(MonoProgram)); __c_MonoProgram->fns = haki_array_new(sizeof(void*)); __c_MonoProgram->structs = haki_array_new(sizeof(void*)); __c_MonoProgram->enums = haki_array_new(sizeof(void*)); __c_MonoProgram->generics = haki_array_new(sizeof(void*)); __c_MonoProgram->items = ((int64_t)0LL); __c_MonoProgram->fnCount = ((int64_t)0LL); __c_MonoProgram; }));
+}
+
+const char* mono__mangle(const char* typeName, const char* methodName) {
+    return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(typeName, "__"), methodName));
+}
+
+int8_t mono__isGenericTy(const char* ty) {
+    if ((haki_string_length(ty) != ((int64_t)1LL))) {
+        return (int8_t)(intptr_t)(0);
+    }
+    const char* ch = (const char*)(intptr_t)(haki_string_substring(ty, ((int64_t)0LL), ((int64_t)1LL)));
+    if ((((((strcmp(ch, "T") == 0) || (strcmp(ch, "U") == 0)) || (strcmp(ch, "V") == 0)) || (strcmp(ch, "K") == 0)) || (strcmp(ch, "E") == 0))) {
+        return (int8_t)(intptr_t)(1);
+    }
+    return (int8_t)(intptr_t)(0);
+}
+
+int8_t mono__hasGenericParams(compiler__FnDef* f) {
+    { void* __arr_p = f->params;
+      int64_t __len_p = haki_array_length(__arr_p);
+      for (int64_t __i_p = 0; __i_p < __len_p; __i_p++) {
+            Param* p = (Param*)*(void**)haki_array_get(__arr_p, __i_p);
+            if (mono__isGenericTy(p->ty)) {
+                return (int8_t)(intptr_t)(1);
+            }
+      }
+    }
+    if (mono__isGenericTy(f->retTy)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    return (int8_t)(intptr_t)(0);
+}
+
+const char* mono__tyTag(const char* ty) {
+    if ((strcmp(ty, "int") == 0)) {
+        return (const char*)(intptr_t)("int");
+    }
+    if ((strcmp(ty, "bool") == 0)) {
+        return (const char*)(intptr_t)("bool");
+    }
+    if ((strcmp(ty, "float") == 0)) {
+        return (const char*)(intptr_t)("float");
+    }
+    if ((strcmp(ty, "string") == 0)) {
+        return (const char*)(intptr_t)("string");
+    }
+    return (const char*)(intptr_t)("ptr");
+}
+
+const char* mono__tagTy(const char* tag) {
+    if ((strcmp(tag, "int") == 0)) {
+        return (const char*)(intptr_t)("int");
+    }
+    if ((strcmp(tag, "bool") == 0)) {
+        return (const char*)(intptr_t)("bool");
+    }
+    if ((strcmp(tag, "float") == 0)) {
+        return (const char*)(intptr_t)("float");
+    }
+    if ((strcmp(tag, "string") == 0)) {
+        return (const char*)(intptr_t)("string");
+    }
+    return (const char*)(intptr_t)("void*");
+}
+
+const char* mono__genericMangle(const char* name, void* tags) {
+    const char* out = (const char*)(intptr_t)(name);
+    { void* __arr_t = tags;
+      int64_t __len_t = haki_array_length(__arr_t);
+      for (int64_t __i_t = 0; __i_t < __len_t; __i_t++) {
+            const char* t = (const char*)*(void**)haki_array_get(__arr_t, __i_t);
+            out = haki_string_concat(haki_string_concat(out, "__"), t);
+      }
+    }
+    return (const char*)(intptr_t)(out);
+}
+
+void* mono__splitTags(const char* s) {
+    void* parts = haki_array_new(sizeof(void*));
+    const char* cur = (const char*)(intptr_t)("");
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_string_length(s))) {
+        const char* ch = (const char*)(intptr_t)(haki_string_substring(s, i, (i + ((int64_t)1LL))));
+        if ((strcmp(ch, ",") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(cur); haki_array_append(parts, &__el); });
+            cur = "";
+        }
+        else {
+            cur = haki_string_concat(cur, ch);
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    if ((haki_string_length(cur) > ((int64_t)0LL))) {
+        ({ void* __el = (void*)(intptr_t)(cur); haki_array_append(parts, &__el); });
+    }
+    return (void*)(intptr_t)(parts);
+}
+
+const char* mono__substTy(const char* ty, void* gnames, void* tags) {
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_array_length(gnames))) {
+        if ((strcmp((*((void**)haki_array_get(gnames, i))), ty) == 0)) {
+            if ((i < haki_array_length(tags))) {
+                return (const char*)(intptr_t)(mono__tagTy((*((void**)haki_array_get(tags, i)))));
+            }
+            return (const char*)(intptr_t)("void*");
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    return (const char*)(intptr_t)(ty);
+}
+
+void* mono__genericParamNames(MonoFn* g) {
+    void* names = haki_array_new(sizeof(void*));
+    { void* __arr_p = g->params;
+      int64_t __len_p = haki_array_length(__arr_p);
+      for (int64_t __i_p = 0; __i_p < __len_p; __i_p++) {
+            compiler__Param* p = (compiler__Param*)*(void**)haki_array_get(__arr_p, __i_p);
+            if (mono__isGenericTy(p->ty)) {
+                int8_t seen = (int8_t)(intptr_t)(0);
+                { void* __arr_n = names;
+                  int64_t __len_n = haki_array_length(__arr_n);
+                  for (int64_t __i_n = 0; __i_n < __len_n; __i_n++) {
+                        const char* n = (const char*)*(void**)haki_array_get(__arr_n, __i_n);
+                        if ((strcmp(n, p->ty) == 0)) {
+                            seen = 1;
+                        }
+                  }
+                }
+                if ((!seen)) {
+                    ({ void* __el = (void*)(intptr_t)(p->ty); haki_array_append(names, &__el); });
+                }
+            }
+      }
+    }
+    return (void*)(intptr_t)(names);
+}
+
+MonoFn* mono__specializeFn(MonoFn* g, void* tags) {
+    void* gnames = (void*)(mono__genericParamNames(g));
+    void* newParams = haki_array_new(sizeof(void*));
+    { void* __arr_p = g->params;
+      int64_t __len_p = haki_array_length(__arr_p);
+      for (int64_t __i_p = 0; __i_p < __len_p; __i_p++) {
+            compiler__Param* p = (compiler__Param*)*(void**)haki_array_get(__arr_p, __i_p);
+            ({ void* __el = (void*)(intptr_t)(compiler__makeParam(p->name, mono__substTy(p->ty, gnames, tags))); haki_array_append(newParams, &__el); });
+      }
+    }
+    return (MonoFn*)(intptr_t)(({ MonoFn* __c_MonoFn = (MonoFn*)malloc(sizeof(MonoFn)); __c_MonoFn->name = mono__genericMangle(g->name, tags); __c_MonoFn->params = newParams; __c_MonoFn->retTy = mono__substTy(g->retTy, gnames, tags); __c_MonoFn->body = g->body; __c_MonoFn; }));
+}
+
+const char* mono__monoFnName(MonoFn* f) {
+    return (const char*)(intptr_t)(f->name);
+}
+
+void* mono__monoFnParams(MonoFn* f) {
+    return (void*)(intptr_t)(f->params);
+}
+
+const char* mono__monoFnRetTy(MonoFn* f) {
+    return (const char*)(intptr_t)(f->retTy);
+}
+
+void* mono__monoFnBody(MonoFn* f) {
+    return (void*)(intptr_t)(f->body);
+}
+
+MonoFn* mono__emptyMonoFn(void) {
+    void* ps = haki_array_new(sizeof(void*));
+    void* bd = haki_array_new(sizeof(void*));
+    return (MonoFn*)(intptr_t)(({ MonoFn* __c_MonoFn = (MonoFn*)malloc(sizeof(MonoFn)); __c_MonoFn->name = ""; __c_MonoFn->params = ps; __c_MonoFn->retTy = "void"; __c_MonoFn->body = bd; __c_MonoFn; }));
+}
+
+void* mono__findGeneric(MonoProgram* prog, const char* name) {
+    { void* __arr_g = prog->generics;
+      int64_t __len_g = haki_array_length(__arr_g);
+      for (int64_t __i_g = 0; __i_g < __len_g; __i_g++) {
+            MonoFn* g = (MonoFn*)*(void**)haki_array_get(__arr_g, __i_g);
+            if ((strcmp(g->name, name) == 0)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(g);
+                __ret->f1 = (void*)(int64_t)(1);
+                return __ret;
+            }
+      }
+    }
+    { void* __arr_g = prog->generics;
+      int64_t __len_g = haki_array_length(__arr_g);
+      for (int64_t __i_g = 0; __i_g < __len_g; __i_g++) {
+            MonoFn* g = (MonoFn*)*(void**)haki_array_get(__arr_g, __i_g);
+            if ((strcmp(mono__unqualify(g->name), name) == 0)) {
+                __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+                __ret->f0 = (void*)(g);
+                __ret->f1 = (void*)(int64_t)(1);
+                return __ret;
+            }
+      }
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(mono__emptyMonoFn());
+    __ret->f1 = (void*)(int64_t)(0);
+    return __ret;
+}
+
+const char* mono__unqualify(const char* name) {
+    int64_t last = (int64_t)(intptr_t)(((int64_t)0LL));
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    int64_t n = (int64_t)(intptr_t)(haki_string_length(name));
+    while ((i < (n - ((int64_t)1LL)))) {
+        if ((strcmp(haki_string_substring(name, i, (i + ((int64_t)2LL))), "__") == 0)) {
+            last = (i + ((int64_t)2LL));
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    if ((last > ((int64_t)0LL))) {
+        return (const char*)(intptr_t)(haki_string_substring(name, last, n));
+    }
+    return (const char*)(intptr_t)(name);
+}
+
+int64_t mono__liftFnLit(compiler__FnDef* lf, void* out) {
+    ({ void* __el = (void*)(intptr_t)(({ MonoFn* __c_MonoFn = (MonoFn*)malloc(sizeof(MonoFn)); __c_MonoFn->name = compiler__fnDefName(lf); __c_MonoFn->params = compiler__fnDefParams(lf); __c_MonoFn->retTy = compiler__fnDefRetTy(lf); __c_MonoFn->body = compiler__fnDefBody(lf); __c_MonoFn; })); haki_array_append(out, &__el); });
+    mono__collectLitsInStmts(compiler__fnDefBody(lf), out);
+    return (int64_t)(intptr_t)(((int64_t)0LL));
+}
+
+int64_t mono__collectLitsInExpr2(compiler__Expr* a, compiler__Expr* b, void* out) {
+    mono__collectLitsInExpr(a, out);
+    mono__collectLitsInExpr(b, out);
+    return (int64_t)(intptr_t)(((int64_t)0LL));
+}
+
+int64_t mono__collectLitsInExprsRet(void* es, void* out) {
+    mono__collectLitsInExprs(es, out);
+    return (int64_t)(intptr_t)(((int64_t)0LL));
+}
+
+int64_t mono__collectLitsInIf(compiler__Expr* c, void* th, void* el, void* out) {
+    mono__collectLitsInExpr(c, out);
+    mono__collectLitsInStmts(th, out);
+    mono__collectLitsInStmts(el, out);
+    return (int64_t)(intptr_t)(((int64_t)0LL));
+}
+
+int64_t mono__collectLitsInWhile(compiler__Expr* c, void* body, void* out) {
+    mono__collectLitsInExpr(c, out);
+    mono__collectLitsInStmts(body, out);
+    return (int64_t)(intptr_t)(((int64_t)0LL));
+}
+
+int64_t mono__collectLitsInFor(compiler__Expr* iter, void* body, void* out) {
+    mono__collectLitsInExpr(iter, out);
+    mono__collectLitsInStmts(body, out);
+    return (int64_t)(intptr_t)(((int64_t)0LL));
+}
+
+int64_t mono__collectLitsInMatchExpr(compiler__Expr* s, void* arms, void* out) {
+    mono__collectLitsInExpr(s, out);
+    mono__collectLitsInArms(arms, out);
+    return (int64_t)(intptr_t)(((int64_t)0LL));
+}
+
+int8_t mono__isFnLitExpr(compiler__Expr* e) {
+    return (int8_t)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 20LL) { FnDef* lit = (FnDef*)((void**)__mpayload)[0]; __mr = (void*)(1); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+}
+
+compiler__FnDef* mono__fnLitVal(compiler__Expr* e) {
+    return (compiler__FnDef*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 20LL) { FnDef* lit = (FnDef*)((void**)__mpayload)[0]; __mr = (void*)(lit); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyFnDef()); __mdone = 1; } (void)__mdone; __mr;}));
+}
+
+int64_t mono__collectLitsInMethodCall(compiler__Expr* r, const char* m, void* margs, void* out) {
+    mono__collectLitsInExpr(r, out);
+    int8_t handledHttp = (int8_t)(intptr_t)(0);
+    if ((((strcmp(m, "get") == 0) || (strcmp(m, "post") == 0)) && (haki_array_length(margs) == ((int64_t)2LL)))) {
+        int8_t isLit = (int8_t)(intptr_t)(mono__isFnLitExpr(((compiler__Expr*)(*((void**)haki_array_get(margs, ((int64_t)1LL)))))));
+        if (isLit) {
+            compiler__FnDef* lf = (compiler__FnDef*)(mono__fnLitVal(((compiler__Expr*)(*((void**)haki_array_get(margs, ((int64_t)1LL)))))));
+            void* origParams = (void*)(compiler__fnDefParams(lf));
+            if ((haki_array_length(origParams) == ((int64_t)2LL))) {
+                void* typedParams = haki_array_new(sizeof(void*));
+                { void* __el = (void*)(intptr_t)(compiler__makeParam(compiler__paramName(((compiler__Param*)(*((void**)haki_array_get(origParams, ((int64_t)0LL)))))), "HttpReq")); haki_array_append(typedParams, &__el); }
+                { void* __el = (void*)(intptr_t)(compiler__makeParam(compiler__paramName(((compiler__Param*)(*((void**)haki_array_get(origParams, ((int64_t)1LL)))))), "HttpRes")); haki_array_append(typedParams, &__el); }
+                ({ void* __el = (void*)(intptr_t)(({ MonoFn* __c_MonoFn = (MonoFn*)malloc(sizeof(MonoFn)); __c_MonoFn->name = compiler__fnDefName(lf); __c_MonoFn->params = typedParams; __c_MonoFn->retTy = compiler__fnDefRetTy(lf); __c_MonoFn->body = compiler__fnDefBody(lf); __c_MonoFn; })); haki_array_append(out, &__el); });
+                mono__collectLitsInStmts(compiler__fnDefBody(lf), out);
+                mono__collectLitsInExpr(((compiler__Expr*)(*((void**)haki_array_get(margs, ((int64_t)0LL))))), out);
+                handledHttp = 1;
+            }
+        }
+    }
+    if ((!handledHttp)) {
+        mono__collectLitsInExprs(margs, out);
+    }
+    return (int64_t)(intptr_t)(((int64_t)0LL));
+}
+
+int64_t mono__collectLitsInExpr(compiler__Expr* e, void* out) {
+    return (int64_t)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 20LL) { FnDef* lf = (FnDef*)((void**)__mpayload)[0]; __mr = (void*)(mono__liftFnLit(lf, out)); __mdone = 1; } if (!__mdone && __mtag == 9LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* inner = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(mono__collectLitsInExpr(inner, out)); __mdone = 1; } if (!__mdone && __mtag == 10LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* l = (Expr*)((void**)__mpayload)[1]; Expr* r = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(mono__collectLitsInExpr2(l, r, out)); __mdone = 1; } if (!__mdone && __mtag == 6LL) { Expr* inner = (Expr*)((void**)__mpayload)[0]; __mr = (void*)(mono__collectLitsInExpr(inner, out)); __mdone = 1; } if (!__mdone && __mtag == 19LL) { Expr* inner = (Expr*)((void**)__mpayload)[0]; __mr = (void*)(mono__collectLitsInExpr(inner, out)); __mdone = 1; } if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(mono__collectLitsInExprsRet(args, out)); __mdone = 1; } if (!__mdone && __mtag == 7LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(mono__collectLitsInExprsRet(args, out)); __mdone = 1; } if (!__mdone && __mtag == 5LL) { void* parts = (void*)((void**)__mpayload)[0]; __mr = (void*)(mono__collectLitsInExprsRet(parts, out)); __mdone = 1; } if (!__mdone && __mtag == 15LL) { void* elems = (void*)((void**)__mpayload)[0]; __mr = (void*)(mono__collectLitsInExprsRet(elems, out)); __mdone = 1; } if (!__mdone && __mtag == 12LL) { Expr* recv = (Expr*)((void**)__mpayload)[0]; const char* f = *(const char**)((void**)__mpayload)[1]; __mr = (void*)(mono__collectLitsInExpr(recv, out)); __mdone = 1; } if (!__mdone && __mtag == 13LL) { Expr* r = (Expr*)((void**)__mpayload)[0]; const char* m = *(const char**)((void**)__mpayload)[1]; void* margs = (void*)((void**)__mpayload)[2]; __mr = (void*)(mono__collectLitsInMethodCall(r, m, margs, out)); __mdone = 1; } if (!__mdone && __mtag == 14LL) { Expr* a = (Expr*)((void**)__mpayload)[0]; Expr* i = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(mono__collectLitsInExpr2(a, i, out)); __mdone = 1; } if (!__mdone && __mtag == 16LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)(mono__collectLitsInIf(c, th, el, out)); __mdone = 1; } if (!__mdone && __mtag == 17LL) { Expr* s = (Expr*)((void**)__mpayload)[0]; void* arms = (void*)((void**)__mpayload)[1]; __mr = (void*)(mono__collectLitsInMatchExpr(s, arms, out)); __mdone = 1; } if (!__mdone && __mtag == 18LL) { void* stmts = (void*)((void**)__mpayload)[0]; __mr = (void*)(mono__collectLitsInStmts(stmts, out)); __mdone = 1; } if (!__mdone) { __mr = (void*)(((int64_t)0LL)); __mdone = 1; } (void)__mdone; __mr;}));
+}
+
+void mono__collectLitsInExprs(void* es, void* out) {
+    { void* __arr_e = es;
+      int64_t __len_e = haki_array_length(__arr_e);
+      for (int64_t __i_e = 0; __i_e < __len_e; __i_e++) {
+            compiler__Expr* e = (compiler__Expr*)*(void**)haki_array_get(__arr_e, __i_e);
+            mono__collectLitsInExpr(e, out);
+      }
+    }
+}
+
+void mono__collectLitsInArms(void* arms, void* out) {
+    { void* __arr_a = arms;
+      int64_t __len_a = haki_array_length(__arr_a);
+      for (int64_t __i_a = 0; __i_a < __len_a; __i_a++) {
+            compiler__MatchArm* a = (compiler__MatchArm*)*(void**)haki_array_get(__arr_a, __i_a);
+            mono__collectLitsInStmts(compiler__armBody(a), out);
+      }
+    }
+}
+
+int64_t mono__collectOneStmtLits(compiler__Stmt* s, void* out) {
+    return (int64_t)(intptr_t)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t isMut = *(int64_t*)((void**)__mpayload)[0]; const char* name = *(const char**)((void**)__mpayload)[1]; Expr* init = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(mono__collectLitsInExpr(init, out)); __mdone = 1; } if (!__mdone && __mtag == 1LL) { void* vals = (void*)((void**)__mpayload)[0]; __mr = (void*)(mono__collectLitsInExprsRet(vals, out)); __mdone = 1; } if (!__mdone && __mtag == 2LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)(mono__collectLitsInExpr(e, out)); __mdone = 1; } if (!__mdone && __mtag == 3LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)(mono__collectLitsInExpr(e, out)); __mdone = 1; } if (!__mdone && __mtag == 6LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)(mono__collectLitsInExpr(e, out)); __mdone = 1; } if (!__mdone && __mtag == 10LL) { Expr* t = (Expr*)((void**)__mpayload)[0]; Expr* v = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(mono__collectLitsInExpr2(t, v, out)); __mdone = 1; } if (!__mdone && __mtag == 11LL) { Expr* t = (Expr*)((void**)__mpayload)[0]; const char* op = *(const char**)((void**)__mpayload)[1]; Expr* v = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(mono__collectLitsInExpr2(t, v, out)); __mdone = 1; } if (!__mdone && __mtag == 7LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)(mono__collectLitsInIf(c, th, el, out)); __mdone = 1; } if (!__mdone && __mtag == 8LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* body = (void*)((void**)__mpayload)[1]; __mr = (void*)(mono__collectLitsInWhile(c, body, out)); __mdone = 1; } if (!__mdone && __mtag == 9LL) { const char* v = *(const char**)((void**)__mpayload)[0]; Expr* iter = (Expr*)((void**)__mpayload)[1]; void* body = (void*)((void**)__mpayload)[2]; __mr = (void*)(mono__collectLitsInFor(iter, body, out)); __mdone = 1; } if (!__mdone && __mtag == 12LL) { void* attrs = (void*)((void**)__mpayload)[0]; Stmt* inner = (Stmt*)((void**)__mpayload)[1]; __mr = (void*)(mono__collectOneStmtLits(inner, out)); __mdone = 1; } if (!__mdone && __mtag == 13LL) { void* stmts = (void*)((void**)__mpayload)[0]; __mr = (void*)(mono__collectLitsInStmts(stmts, out)); __mdone = 1; } if (!__mdone) { __mr = (void*)(((int64_t)0LL)); __mdone = 1; } (void)__mdone; __mr;}));
+}
+
+int64_t mono__collectLitsInStmts(void* ss, void* out) {
+    { void* __arr_s = ss;
+      int64_t __len_s = haki_array_length(__arr_s);
+      for (int64_t __i_s = 0; __i_s < __len_s; __i_s++) {
+            compiler__Stmt* s = (compiler__Stmt*)*(void**)haki_array_get(__arr_s, __i_s);
+            mono__collectOneStmtLits(s, out);
+      }
+    }
+    return (int64_t)(intptr_t)(((int64_t)0LL));
+}
+
+MonoFn* mono__lowerFn(compiler__FnDef* f) {
+    return (MonoFn*)(intptr_t)(({ MonoFn* __c_MonoFn = (MonoFn*)malloc(sizeof(MonoFn)); __c_MonoFn->name = f->name; __c_MonoFn->params = f->params; __c_MonoFn->retTy = f->retTy; __c_MonoFn->body = f->body; __c_MonoFn; }));
+}
+
+void mono__lowerStructMethods(MonoProgram* prog, compiler__StructDef* s, void* body) {
+    ({ void* __el = (void*)(intptr_t)(s); haki_array_append(prog->structs, &__el); });
+}
+
+compiler__FnDef* mono__extractFn(compiler__Item* item) {
+    FnDef* result = (FnDef*)(({ void* __msc = (void*)(item); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { FnDef* f = (FnDef*)((void**)__mpayload)[0]; __mr = (void*)(f); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyFnDef()); __mdone = 1; } (void)__mdone; __mr;}));
+    return (compiler__FnDef*)(intptr_t)(result);
+}
+
+compiler__StructDef* mono__extractStruct(compiler__Item* item) {
+    StructDef* result = (StructDef*)(({ void* __msc = (void*)(item); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 1LL) { StructDef* s = (StructDef*)((void**)__mpayload)[0]; __mr = (void*)(s); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStructDef()); __mdone = 1; } (void)__mdone; __mr;}));
+    return (compiler__StructDef*)(intptr_t)(result);
+}
+
+const char* mono__extractEnumName(compiler__Item* item) {
+    const char* result = (const char*)(intptr_t)(({ void* __msc = (void*)(item); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 3LL) { const char* en = *(const char**)((void**)__mpayload)[0]; void* ev = (void*)((void**)__mpayload)[1]; __mr = (void*)(en); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+    return (const char*)(intptr_t)(result);
+}
+
+void* mono__extractEnumVariants(compiler__Item* item) {
+    void* result = (void*)(({ void* __msc = (void*)(item); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 3LL) { const char* en = *(const char**)((void**)__mpayload)[0]; void* ev = (void*)((void**)__mpayload)[1]; __mr = (void*)(ev); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStrings()); __mdone = 1; } (void)__mdone; __mr;}));
+    return (void*)(intptr_t)(result);
+}
+
+void mono__lowerItem(MonoProgram* prog, compiler__Item* item) {
+    prog->items = (prog->items + ((int64_t)1LL));
+    const char* tag = (const char*)(intptr_t)(({ void* __msc = (void*)(item); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { FnDef* f = (FnDef*)((void**)__mpayload)[0]; __mr = (void*)("fn"); __mdone = 1; } if (!__mdone && __mtag == 1LL) { StructDef* s = (StructDef*)((void**)__mpayload)[0]; __mr = (void*)("struct"); __mdone = 1; } if (!__mdone && __mtag == 2LL) { const char* p = *(const char**)((void**)__mpayload)[0]; const char* a = *(const char**)((void**)__mpayload)[1]; __mr = (void*)("import"); __mdone = 1; } if (!__mdone && __mtag == 3LL) { const char* en = *(const char**)((void**)__mpayload)[0]; void* ev = (void*)((void**)__mpayload)[1]; __mr = (void*)("enum"); __mdone = 1; } (void)__mdone; __mr;}));
+    if ((strcmp(tag, "fn") == 0)) {
+        compiler__FnDef* f = (compiler__FnDef*)(mono__extractFn(item));
+        void* lifted = haki_array_new(sizeof(void*));
+        void* fBody = (void*)(f->body);
+        mono__collectLitsInStmts(fBody, lifted);
+        { void* __arr_lf = lifted;
+          int64_t __len_lf = haki_array_length(__arr_lf);
+          for (int64_t __i_lf = 0; __i_lf < __len_lf; __i_lf++) {
+                MonoFn* lf = (MonoFn*)*(void**)haki_array_get(__arr_lf, __i_lf);
+                ({ void* __el = (void*)(intptr_t)(lf); haki_array_append(prog->fns, &__el); });
+                prog->fnCount = (prog->fnCount + ((int64_t)1LL));
+          }
+        }
+        if (mono__hasGenericParams(f)) {
+            ({ void* __el = (void*)(intptr_t)(mono__lowerFn(f)); haki_array_append(prog->generics, &__el); });
+            return;
+        }
+        ({ void* __el = (void*)(intptr_t)(mono__lowerFn(f)); haki_array_append(prog->fns, &__el); });
+        prog->fnCount = (prog->fnCount + ((int64_t)1LL));
+    }
+    if ((strcmp(tag, "struct") == 0)) {
+        compiler__StructDef* s = (compiler__StructDef*)(mono__extractStruct(item));
+        ({ void* __el = (void*)(intptr_t)(s); haki_array_append(prog->structs, &__el); });
+    }
+    if ((strcmp(tag, "enum") == 0)) {
+        const char* en = (const char*)(intptr_t)(mono__extractEnumName(item));
+        void* ev = (void*)(mono__extractEnumVariants(item));
+        ({ void* __el = (void*)(intptr_t)(({ EnumDef* __c_EnumDef = (EnumDef*)malloc(sizeof(EnumDef)); __c_EnumDef->name = en; __c_EnumDef->variants = ev; __c_EnumDef; })); haki_array_append(prog->enums, &__el); });
+    }
+}
+
+MonoProgram* mono__monomorphize(void* items) {
+    MonoProgram* prog = (MonoProgram*)(mono__monoNew());
+    { void* __arr_item = items;
+      int64_t __len_item = haki_array_length(__arr_item);
+      for (int64_t __i_item = 0; __i_item < __len_item; __i_item++) {
+            compiler__Item* item = (compiler__Item*)*(void**)haki_array_get(__arr_item, __i_item);
+            mono__lowerItem(prog, item);
+      }
+    }
+    return (MonoProgram*)(intptr_t)(prog);
+}
+
+void* mono__monoFromSource(const char* src) {
+    void* __mr_items = (void*)(compiler__parse(src));
+    void* items = (void*)((intptr_t)((void**)(__mr_items))[0]);
+    void* parseErr = (void*)((intptr_t)((void**)(__mr_items))[1]);
+    if ((parseErr != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(mono__monoNew());
+        __ret->f1 = (void*)(haki_error_new(haki_string_concat("parse error: ", haki_error_message(parseErr))));
+        return __ret;
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(mono__monomorphize(items));
+    __ret->f1 = (void*)(NULL);
+    return __ret;
+}
+
+void mono__showMonoProgram(MonoProgram* prog) {
+    haki_print("MonoProgram:");
+    haki_print(haki_string_concat(haki_string_concat("  ", haki_int_to_string(prog->fnCount)), " concrete function(s)"));
+    haki_print(haki_string_concat(haki_string_concat("  ", haki_int_to_string(haki_array_length(prog->structs))), " struct(s)"));
+    haki_print(haki_string_concat(haki_string_concat("  ", haki_int_to_string(haki_array_length(prog->enums))), " enum(s)"));
+    { void* __arr_f = prog->fns;
+      int64_t __len_f = haki_array_length(__arr_f);
+      for (int64_t __i_f = 0; __i_f < __len_f; __i_f++) {
+            MonoFn* f = (MonoFn*)*(void**)haki_array_get(__arr_f, __i_f);
+            haki_print(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("  fn ", f->name), "("), haki_int_to_string(haki_array_length(f->params))), " params) -> "), f->retTy));
+      }
+    }
+}
+
+void mono__test_concrete_fn(void) {
+    void* __mr_prog = (void*)(mono__monoFromSource("fn add(a: int, b: int) -> int { return a + b }\nfn main() { }"));
+    MonoProgram* prog = (MonoProgram*)((intptr_t)((void**)(__mr_prog))[0]);
+    void* err = (void*)((intptr_t)((void**)(__mr_prog))[1]);
+    if ((err != NULL)) {
+        haki_panic(haki_string_concat("mono error: ", haki_error_message(err)));
+    }
+    if ((prog->fnCount != ((int64_t)2LL))) {
+        haki_panic(haki_string_concat("expected 2 fns, got: ", haki_int_to_string(prog->fnCount)));
+    }
+}
+
+void mono__test_struct_passthrough(void) {
+    void* __mr_prog = (void*)(mono__monoFromSource("struct Point { const x: int  const y: int }\nfn main() { }"));
+    MonoProgram* prog = (MonoProgram*)((intptr_t)((void**)(__mr_prog))[0]);
+    void* err = (void*)((intptr_t)((void**)(__mr_prog))[1]);
+    if ((err != NULL)) {
+        haki_panic(haki_string_concat("mono error: ", haki_error_message(err)));
+    }
+    if ((haki_array_length(prog->structs) != ((int64_t)1LL))) {
+        haki_panic("expected 1 struct");
+    }
+    if ((prog->fnCount != ((int64_t)1LL))) {
+        haki_panic("expected 1 fn");
+    }
+}
+
+void mono__test_mangle(void) {
+    const char* name = (const char*)(intptr_t)(mono__mangle("Point", "distance"));
+    if ((strcmp(name, "Point__distance") != 0)) {
+        haki_panic(haki_string_concat("mangle wrong: ", name));
+    }
+}
+
+void mono__test_generic_skip(void) {
+    void* __mr_prog = (void*)(mono__monoFromSource("fn identity(x: T) -> T { return x }\nfn add(a: int, b: int) -> int { return a + b }"));
+    MonoProgram* prog = (MonoProgram*)((intptr_t)((void**)(__mr_prog))[0]);
+    void* err = (void*)((intptr_t)((void**)(__mr_prog))[1]);
+    if ((err != NULL)) {
+        haki_panic(haki_string_concat("mono error: ", haki_error_message(err)));
+    }
+    if ((prog->fnCount != ((int64_t)1LL))) {
+        haki_panic(haki_string_concat("expected 1 concrete fn, got: ", haki_int_to_string(prog->fnCount)));
+    }
+}
+
+void mono__main(void) {
+    void* __mr_prog = (void*)(mono__monoFromSource("fn add(a: int, b: int) -> int { return a + b }\nfn greet(name: string) -> string { return name }\nstruct Point { const x: int  const y: int }\nfn main() { const x = add(1, 2)  print_int(x) }"));
+    MonoProgram* prog = (MonoProgram*)((intptr_t)((void**)(__mr_prog))[0]);
+    void* err = (void*)((intptr_t)((void**)(__mr_prog))[1]);
+    if ((err != NULL)) {
+        haki_print(haki_string_concat("error: ", haki_error_message(err)));
+        return;
+    }
+    mono__showMonoProgram(prog);
+}
+
+MonoFn* mono__makeMonoFn(const char* name, void* params, const char* retTy, void* body) {
+    return (MonoFn*)(intptr_t)(({ MonoFn* __c_MonoFn = (MonoFn*)malloc(sizeof(MonoFn)); __c_MonoFn->name = name; __c_MonoFn->params = params; __c_MonoFn->retTy = retTy; __c_MonoFn->body = body; __c_MonoFn; }));
+}
+
+void mono__mergeProgramWithAlias(MonoProgram* dst, MonoProgram* src, const char* alias) {
+    { void* __arr_f = src->fns;
+      int64_t __len_f = haki_array_length(__arr_f);
+      for (int64_t __i_f = 0; __i_f < __len_f; __i_f++) {
+            MonoFn* f = (MonoFn*)*(void**)haki_array_get(__arr_f, __i_f);
+            MonoFn* prefixed = (MonoFn*)(({ MonoFn* __c_MonoFn = (MonoFn*)malloc(sizeof(MonoFn)); __c_MonoFn->name = haki_string_concat(haki_string_concat(alias, "__"), f->name); __c_MonoFn->params = f->params; __c_MonoFn->retTy = f->retTy; __c_MonoFn->body = f->body; __c_MonoFn; }));
+            ({ void* __el = (void*)(intptr_t)(prefixed); haki_array_append(dst->fns, &__el); });
+      }
+    }
+    { void* __arr_s = src->structs;
+      int64_t __len_s = haki_array_length(__arr_s);
+      for (int64_t __i_s = 0; __i_s < __len_s; __i_s++) {
+            compiler__StructDef* s = (compiler__StructDef*)*(void**)haki_array_get(__arr_s, __i_s);
+            ({ void* __el = (void*)(intptr_t)(s); haki_array_append(dst->structs, &__el); });
+      }
+    }
+    { void* __arr_e = src->enums;
+      int64_t __len_e = haki_array_length(__arr_e);
+      for (int64_t __i_e = 0; __i_e < __len_e; __i_e++) {
+            EnumDef* e = (EnumDef*)*(void**)haki_array_get(__arr_e, __i_e);
+            ({ void* __el = (void*)(intptr_t)(({ EnumDef* __c_EnumDef = (EnumDef*)malloc(sizeof(EnumDef)); __c_EnumDef->name = haki_string_concat(haki_string_concat(alias, "__"), e->name); __c_EnumDef->variants = e->variants; __c_EnumDef; })); haki_array_append(dst->enums, &__el); });
+      }
+    }
+    { void* __arr_g = src->generics;
+      int64_t __len_g = haki_array_length(__arr_g);
+      for (int64_t __i_g = 0; __i_g < __len_g; __i_g++) {
+            MonoFn* g = (MonoFn*)*(void**)haki_array_get(__arr_g, __i_g);
+            ({ void* __el = (void*)(intptr_t)(({ MonoFn* __c_MonoFn = (MonoFn*)malloc(sizeof(MonoFn)); __c_MonoFn->name = haki_string_concat(haki_string_concat(alias, "__"), g->name); __c_MonoFn->params = g->params; __c_MonoFn->retTy = g->retTy; __c_MonoFn->body = g->body; __c_MonoFn; })); haki_array_append(dst->generics, &__el); });
+      }
+    }
+}
+
+int8_t mono__isIntLit(compiler__Expr* e) {
+    return (int8_t)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t n = *(int64_t*)((void**)__mpayload)[0]; __mr = (void*)(1); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+}
+
+int64_t mono__intLitVal(compiler__Expr* e) {
+    return (int64_t)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t n = *(int64_t*)((void**)__mpayload)[0]; __mr = (void*)(n); __mdone = 1; } if (!__mdone) { __mr = (void*)(((int64_t)0LL)); __mdone = 1; } (void)__mdone; __mr;}));
+}
+
+int8_t mono__isBoolLit(compiler__Expr* e) {
+    return (int8_t)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 1LL) { int64_t b = *(int64_t*)((void**)__mpayload)[0]; __mr = (void*)(1); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+}
+
+int8_t mono__boolLitVal(compiler__Expr* e) {
+    return (int8_t)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 1LL) { int64_t b = *(int64_t*)((void**)__mpayload)[0]; __mr = (void*)(b); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+}
+
+int8_t mono__isStrLit(compiler__Expr* e) {
+    return (int8_t)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 3LL) { const char* s = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(1); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+}
+
+const char* mono__strLitVal(compiler__Expr* e) {
+    return (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 3LL) { const char* s = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(s); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+}
+
+void* mono__foldIntBinary(const char* op, int64_t a, int64_t b) {
+    if ((strcmp(op, "+") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EInt = (void**)malloc(sizeof(void*) * 1); __pay_EInt[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)((a + b)); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_EInt; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(op, "-") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EInt = (void**)malloc(sizeof(void*) * 1); __pay_EInt[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)((a - b)); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_EInt; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(op, "*") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EInt = (void**)malloc(sizeof(void*) * 1); __pay_EInt[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)((a * b)); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_EInt; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if (((strcmp(op, "/") == 0) && (b != ((int64_t)0LL)))) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EInt = (void**)malloc(sizeof(void*) * 1); __pay_EInt[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)((a / b)); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_EInt; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if (((strcmp(op, "%") == 0) && (b != ((int64_t)0LL)))) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EInt = (void**)malloc(sizeof(void*) * 1); __pay_EInt[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)((a % b)); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_EInt; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(op, "<") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EBool = (void**)malloc(sizeof(void*) * 1); __pay_EBool[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)((a < b)); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_EBool; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(op, ">") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EBool = (void**)malloc(sizeof(void*) * 1); __pay_EBool[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)((a > b)); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_EBool; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(op, "<=") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EBool = (void**)malloc(sizeof(void*) * 1); __pay_EBool[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)((a <= b)); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_EBool; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(op, ">=") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EBool = (void**)malloc(sizeof(void*) * 1); __pay_EBool[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)((a >= b)); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_EBool; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(op, "==") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EBool = (void**)malloc(sizeof(void*) * 1); __pay_EBool[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)((a == b)); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_EBool; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    if ((strcmp(op, "!=") == 0)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)(({ void** __pay_EBool = (void**)malloc(sizeof(void*) * 1); __pay_EBool[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)((a != b)); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_EBool; __ev; }));
+        __ret->f1 = (void*)(int64_t)(1);
+        return __ret;
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = NULL; __ev; }));
+    __ret->f1 = (void*)(int64_t)(0);
+    return __ret;
+}
+
+compiler__Expr* mono__foldExpr(compiler__Expr* e) {
+    const char* tag = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 9LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* inner = (Expr*)((void**)__mpayload)[1]; __mr = (void*)("unary"); __mdone = 1; } if (!__mdone && __mtag == 10LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* l = (Expr*)((void**)__mpayload)[1]; Expr* r = (Expr*)((void**)__mpayload)[2]; __mr = (void*)("binary"); __mdone = 1; } if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)("call"); __mdone = 1; } if (!__mdone && __mtag == 13LL) { Expr* r = (Expr*)((void**)__mpayload)[0]; const char* m = *(const char**)((void**)__mpayload)[1]; void* margs = (void*)((void**)__mpayload)[2]; __mr = (void*)("method"); __mdone = 1; } if (!__mdone && __mtag == 14LL) { Expr* a = (Expr*)((void**)__mpayload)[0]; Expr* i = (Expr*)((void**)__mpayload)[1]; __mr = (void*)("index"); __mdone = 1; } if (!__mdone && __mtag == 12LL) { Expr* r = (Expr*)((void**)__mpayload)[0]; const char* f = *(const char**)((void**)__mpayload)[1]; __mr = (void*)("field"); __mdone = 1; } if (!__mdone && __mtag == 15LL) { void* elems = (void*)((void**)__mpayload)[0]; __mr = (void*)("array"); __mdone = 1; } if (!__mdone && __mtag == 6LL) { Expr* inner = (Expr*)((void**)__mpayload)[0]; __mr = (void*)("try"); __mdone = 1; } if (!__mdone && __mtag == 19LL) { Expr* inner = (Expr*)((void**)__mpayload)[0]; __mr = (void*)("async"); __mdone = 1; } if (!__mdone) { __mr = (void*)("leaf"); __mdone = 1; } (void)__mdone; __mr;}));
+    if ((strcmp(tag, "unary") == 0)) {
+        const char* op = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 9LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* inner = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(op); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        Expr* inner0 = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 9LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* inner = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(inner); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        compiler__Expr* inner = (compiler__Expr*)(mono__foldExpr(inner0));
+        if (((strcmp(op, "-") == 0) && mono__isIntLit(inner))) {
+            return (compiler__Expr*)(intptr_t)(({ void** __pay_EInt = (void**)malloc(sizeof(void*) * 1); __pay_EInt[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)((((int64_t)0LL) - mono__intLitVal(inner))); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_EInt; __ev; }));
+        }
+        if (((strcmp(op, "!") == 0) && mono__isBoolLit(inner))) {
+            return (compiler__Expr*)(intptr_t)(({ void** __pay_EBool = (void**)malloc(sizeof(void*) * 1); __pay_EBool[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)((!mono__boolLitVal(inner))); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_EBool; __ev; }));
+        }
+        return (compiler__Expr*)(intptr_t)(({ void** __pay_EUnary = (void**)malloc(sizeof(void*) * 2); __pay_EUnary[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (op); (void*)__ps; }); __pay_EUnary[1] = (void*)(inner); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 9LL; ((void**)__ev)[1] = (void*)__pay_EUnary; __ev; }));
+    }
+    if ((strcmp(tag, "binary") == 0)) {
+        const char* op = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 10LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* l = (Expr*)((void**)__mpayload)[1]; Expr* r = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(op); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        Expr* l0 = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 10LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* l = (Expr*)((void**)__mpayload)[1]; Expr* r = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(l); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        Expr* r0 = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 10LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* l = (Expr*)((void**)__mpayload)[1]; Expr* r = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(r); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        compiler__Expr* l = (compiler__Expr*)(mono__foldExpr(l0));
+        compiler__Expr* r = (compiler__Expr*)(mono__foldExpr(r0));
+        if ((mono__isIntLit(l) && mono__isIntLit(r))) {
+            void* __mr_folded = (void*)(mono__foldIntBinary(op, mono__intLitVal(l), mono__intLitVal(r)));
+            compiler__Expr* folded = (compiler__Expr*)((intptr_t)((void**)(__mr_folded))[0]);
+            int8_t ok = (int8_t)(intptr_t)((intptr_t)((void**)(__mr_folded))[1]);
+            if (ok) {
+                return (compiler__Expr*)(intptr_t)(folded);
+            }
+        }
+        if (((mono__isStrLit(l) && mono__isStrLit(r)) && (strcmp(op, "+") == 0))) {
+            return (compiler__Expr*)(intptr_t)(({ void** __pay_EString = (void**)malloc(sizeof(void*) * 1); __pay_EString[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (haki_string_concat(mono__strLitVal(l), mono__strLitVal(r))); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 3LL; ((void**)__ev)[1] = (void*)__pay_EString; __ev; }));
+        }
+        if ((mono__isBoolLit(l) && mono__isBoolLit(r))) {
+            if ((strcmp(op, "&&") == 0)) {
+                return (compiler__Expr*)(intptr_t)(({ void** __pay_EBool = (void**)malloc(sizeof(void*) * 1); __pay_EBool[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)((mono__boolLitVal(l) && mono__boolLitVal(r))); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_EBool; __ev; }));
+            }
+            if ((strcmp(op, "||") == 0)) {
+                return (compiler__Expr*)(intptr_t)(({ void** __pay_EBool = (void**)malloc(sizeof(void*) * 1); __pay_EBool[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)((mono__boolLitVal(l) || mono__boolLitVal(r))); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_EBool; __ev; }));
+            }
+            if ((strcmp(op, "==") == 0)) {
+                return (compiler__Expr*)(intptr_t)(({ void** __pay_EBool = (void**)malloc(sizeof(void*) * 1); __pay_EBool[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)((mono__boolLitVal(l) == mono__boolLitVal(r))); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_EBool; __ev; }));
+            }
+            if ((strcmp(op, "!=") == 0)) {
+                return (compiler__Expr*)(intptr_t)(({ void** __pay_EBool = (void**)malloc(sizeof(void*) * 1); __pay_EBool[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)((mono__boolLitVal(l) != mono__boolLitVal(r))); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_EBool; __ev; }));
+            }
+        }
+        if ((((strcmp(op, "&&") == 0) && mono__isBoolLit(l)) && (!mono__boolLitVal(l)))) {
+            return (compiler__Expr*)(intptr_t)(({ void** __pay_EBool = (void**)malloc(sizeof(void*) * 1); __pay_EBool[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(0); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_EBool; __ev; }));
+        }
+        if ((((strcmp(op, "||") == 0) && mono__isBoolLit(l)) && mono__boolLitVal(l))) {
+            return (compiler__Expr*)(intptr_t)(({ void** __pay_EBool = (void**)malloc(sizeof(void*) * 1); __pay_EBool[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(1); (void*)__pi; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_EBool; __ev; }));
+        }
+        return (compiler__Expr*)(intptr_t)(({ void** __pay_EBinary = (void**)malloc(sizeof(void*) * 3); __pay_EBinary[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (op); (void*)__ps; }); __pay_EBinary[1] = (void*)(l); __pay_EBinary[2] = (void*)(r); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 10LL; ((void**)__ev)[1] = (void*)__pay_EBinary; __ev; }));
+    }
+    if ((strcmp(tag, "call") == 0)) {
+        const char* n = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(n); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        void* args = (void*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(args); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyExprs()); __mdone = 1; } (void)__mdone; __mr;}));
+        return (compiler__Expr*)(intptr_t)(({ void** __pay_ECall = (void**)malloc(sizeof(void*) * 2); __pay_ECall[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (n); (void*)__ps; }); __pay_ECall[1] = (void*)(mono__foldExprs(args)); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 11LL; ((void**)__ev)[1] = (void*)__pay_ECall; __ev; }));
+    }
+    if ((strcmp(tag, "method") == 0)) {
+        Expr* rr = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 13LL) { Expr* r = (Expr*)((void**)__mpayload)[0]; const char* m = *(const char**)((void**)__mpayload)[1]; void* margs = (void*)((void**)__mpayload)[2]; __mr = (void*)(r); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* mm = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 13LL) { Expr* r = (Expr*)((void**)__mpayload)[0]; const char* m = *(const char**)((void**)__mpayload)[1]; void* margs = (void*)((void**)__mpayload)[2]; __mr = (void*)(m); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        void* aa = (void*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 13LL) { Expr* r = (Expr*)((void**)__mpayload)[0]; const char* m = *(const char**)((void**)__mpayload)[1]; void* margs = (void*)((void**)__mpayload)[2]; __mr = (void*)(margs); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyExprs()); __mdone = 1; } (void)__mdone; __mr;}));
+        return (compiler__Expr*)(intptr_t)(({ void** __pay_EMethodCall = (void**)malloc(sizeof(void*) * 3); __pay_EMethodCall[0] = (void*)(mono__foldExpr(rr)); __pay_EMethodCall[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (mm); (void*)__ps; }); __pay_EMethodCall[2] = (void*)(mono__foldExprs(aa)); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 13LL; ((void**)__ev)[1] = (void*)__pay_EMethodCall; __ev; }));
+    }
+    if ((strcmp(tag, "index") == 0)) {
+        Expr* aa = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 14LL) { Expr* a = (Expr*)((void**)__mpayload)[0]; Expr* i = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(a); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        Expr* ii = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 14LL) { Expr* a = (Expr*)((void**)__mpayload)[0]; Expr* i = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(i); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        return (compiler__Expr*)(intptr_t)(({ void** __pay_EIndex = (void**)malloc(sizeof(void*) * 2); __pay_EIndex[0] = (void*)(mono__foldExpr(aa)); __pay_EIndex[1] = (void*)(mono__foldExpr(ii)); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 14LL; ((void**)__ev)[1] = (void*)__pay_EIndex; __ev; }));
+    }
+    if ((strcmp(tag, "field") == 0)) {
+        Expr* rr = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 12LL) { Expr* r = (Expr*)((void**)__mpayload)[0]; const char* f = *(const char**)((void**)__mpayload)[1]; __mr = (void*)(r); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* ff = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 12LL) { Expr* r = (Expr*)((void**)__mpayload)[0]; const char* f = *(const char**)((void**)__mpayload)[1]; __mr = (void*)(f); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        return (compiler__Expr*)(intptr_t)(({ void** __pay_EField = (void**)malloc(sizeof(void*) * 2); __pay_EField[0] = (void*)(mono__foldExpr(rr)); __pay_EField[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (ff); (void*)__ps; }); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 12LL; ((void**)__ev)[1] = (void*)__pay_EField; __ev; }));
+    }
+    if ((strcmp(tag, "array") == 0)) {
+        void* elems = (void*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 15LL) { void* elems = (void*)((void**)__mpayload)[0]; __mr = (void*)(elems); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyExprs()); __mdone = 1; } (void)__mdone; __mr;}));
+        return (compiler__Expr*)(intptr_t)(({ void** __pay_EArray = (void**)malloc(sizeof(void*) * 1); __pay_EArray[0] = (void*)(mono__foldExprs(elems)); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 15LL; ((void**)__ev)[1] = (void*)__pay_EArray; __ev; }));
+    }
+    if ((strcmp(tag, "try") == 0)) {
+        Expr* inner = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 6LL) { Expr* inner = (Expr*)((void**)__mpayload)[0]; __mr = (void*)(inner); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        return (compiler__Expr*)(intptr_t)(({ void** __pay_ETry = (void**)malloc(sizeof(void*) * 1); __pay_ETry[0] = (void*)(mono__foldExpr(inner)); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 6LL; ((void**)__ev)[1] = (void*)__pay_ETry; __ev; }));
+    }
+    if ((strcmp(tag, "async") == 0)) {
+        Expr* inner = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 19LL) { Expr* inner = (Expr*)((void**)__mpayload)[0]; __mr = (void*)(inner); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        return (compiler__Expr*)(intptr_t)(({ void** __pay_EAsync = (void**)malloc(sizeof(void*) * 1); __pay_EAsync[0] = (void*)(mono__foldExpr(inner)); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 19LL; ((void**)__ev)[1] = (void*)__pay_EAsync; __ev; }));
+    }
+    return (compiler__Expr*)(intptr_t)(e);
+}
+
+void* mono__foldExprs(void* es) {
+    void* out = haki_array_new(sizeof(void*));
+    { void* __arr_e = es;
+      int64_t __len_e = haki_array_length(__arr_e);
+      for (int64_t __i_e = 0; __i_e < __len_e; __i_e++) {
+            compiler__Expr* e = (compiler__Expr*)*(void**)haki_array_get(__arr_e, __i_e);
+            ({ void* __el = (void*)(intptr_t)(mono__foldExpr(e)); haki_array_append(out, &__el); });
+      }
+    }
+    return (void*)(intptr_t)(out);
+}
+
+void mono__foldStmt(compiler__Stmt* s, void* out) {
+    const char* tag = (const char*)(intptr_t)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t isMut = *(int64_t*)((void**)__mpayload)[0]; const char* name = *(const char**)((void**)__mpayload)[1]; Expr* init = (Expr*)((void**)__mpayload)[2]; __mr = (void*)("let"); __mdone = 1; } if (!__mdone && __mtag == 1LL) { void* vals = (void*)((void**)__mpayload)[0]; __mr = (void*)("return"); __mdone = 1; } if (!__mdone && __mtag == 2LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)("yield"); __mdone = 1; } if (!__mdone && __mtag == 3LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)("defer"); __mdone = 1; } if (!__mdone && __mtag == 6LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)("expr"); __mdone = 1; } if (!__mdone && __mtag == 10LL) { Expr* t = (Expr*)((void**)__mpayload)[0]; Expr* v = (Expr*)((void**)__mpayload)[1]; __mr = (void*)("assign"); __mdone = 1; } if (!__mdone && __mtag == 11LL) { Expr* t = (Expr*)((void**)__mpayload)[0]; const char* op = *(const char**)((void**)__mpayload)[1]; Expr* v = (Expr*)((void**)__mpayload)[2]; __mr = (void*)("cassign"); __mdone = 1; } if (!__mdone && __mtag == 7LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)("if"); __mdone = 1; } if (!__mdone && __mtag == 8LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* body = (void*)((void**)__mpayload)[1]; __mr = (void*)("while"); __mdone = 1; } if (!__mdone && __mtag == 9LL) { const char* v = *(const char**)((void**)__mpayload)[0]; Expr* iter = (Expr*)((void**)__mpayload)[1]; void* body = (void*)((void**)__mpayload)[2]; __mr = (void*)("for"); __mdone = 1; } if (!__mdone && __mtag == 13LL) { void* stmts = (void*)((void**)__mpayload)[0]; __mr = (void*)("block"); __mdone = 1; } if (!__mdone) { __mr = (void*)("other"); __mdone = 1; } (void)__mdone; __mr;}));
+    if ((strcmp(tag, "let") == 0)) {
+        int64_t isMut = (int64_t)(intptr_t)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t m = *(int64_t*)((void**)__mpayload)[0]; const char* n = *(const char**)((void**)__mpayload)[1]; Expr* i = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(m); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* name = (const char*)(intptr_t)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t m = *(int64_t*)((void**)__mpayload)[0]; const char* n = *(const char**)((void**)__mpayload)[1]; Expr* i = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(n); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        Expr* init = (Expr*)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t m = *(int64_t*)((void**)__mpayload)[0]; const char* n = *(const char**)((void**)__mpayload)[1]; Expr* i = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(i); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        ({ void* __el = (void*)(intptr_t)(({ void** __pay_SLet = (void**)malloc(sizeof(void*) * 3); __pay_SLet[0] = ({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(isMut); (void*)__pi; }); __pay_SLet[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (name); (void*)__ps; }); __pay_SLet[2] = (void*)(mono__foldExpr(init)); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 0LL; ((void**)__ev)[1] = (void*)__pay_SLet; __ev; })); haki_array_append(out, &__el); });
+        return;
+    }
+    if ((strcmp(tag, "return") == 0)) {
+        void* vals = (void*)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 1LL) { void* vs = (void*)((void**)__mpayload)[0]; __mr = (void*)(vs); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyExprs()); __mdone = 1; } (void)__mdone; __mr;}));
+        ({ void* __el = (void*)(intptr_t)(({ void** __pay_SReturn = (void**)malloc(sizeof(void*) * 1); __pay_SReturn[0] = (void*)(mono__foldExprs(vals)); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 1LL; ((void**)__ev)[1] = (void*)__pay_SReturn; __ev; })); haki_array_append(out, &__el); });
+        return;
+    }
+    if ((strcmp(tag, "yield") == 0)) {
+        Expr* e = (Expr*)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 2LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)(e); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        ({ void* __el = (void*)(intptr_t)(({ void** __pay_SYield = (void**)malloc(sizeof(void*) * 1); __pay_SYield[0] = (void*)(mono__foldExpr(e)); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 2LL; ((void**)__ev)[1] = (void*)__pay_SYield; __ev; })); haki_array_append(out, &__el); });
+        return;
+    }
+    if ((strcmp(tag, "defer") == 0)) {
+        Expr* e = (Expr*)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 3LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)(e); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        ({ void* __el = (void*)(intptr_t)(({ void** __pay_SDefer = (void**)malloc(sizeof(void*) * 1); __pay_SDefer[0] = (void*)(mono__foldExpr(e)); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 3LL; ((void**)__ev)[1] = (void*)__pay_SDefer; __ev; })); haki_array_append(out, &__el); });
+        return;
+    }
+    if ((strcmp(tag, "expr") == 0)) {
+        Expr* e = (Expr*)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 6LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)(e); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        ({ void* __el = (void*)(intptr_t)(({ void** __pay_SExpr = (void**)malloc(sizeof(void*) * 1); __pay_SExpr[0] = (void*)(mono__foldExpr(e)); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 6LL; ((void**)__ev)[1] = (void*)__pay_SExpr; __ev; })); haki_array_append(out, &__el); });
+        return;
+    }
+    if ((strcmp(tag, "assign") == 0)) {
+        Expr* t = (Expr*)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 10LL) { Expr* t = (Expr*)((void**)__mpayload)[0]; Expr* v = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(t); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        Expr* v = (Expr*)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 10LL) { Expr* t = (Expr*)((void**)__mpayload)[0]; Expr* v = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(v); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        ({ void* __el = (void*)(intptr_t)(({ void** __pay_SAssign = (void**)malloc(sizeof(void*) * 2); __pay_SAssign[0] = (void*)(t); __pay_SAssign[1] = (void*)(mono__foldExpr(v)); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 10LL; ((void**)__ev)[1] = (void*)__pay_SAssign; __ev; })); haki_array_append(out, &__el); });
+        return;
+    }
+    if ((strcmp(tag, "cassign") == 0)) {
+        Expr* t = (Expr*)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { Expr* t = (Expr*)((void**)__mpayload)[0]; const char* op = *(const char**)((void**)__mpayload)[1]; Expr* v = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(t); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* op = (const char*)(intptr_t)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { Expr* t = (Expr*)((void**)__mpayload)[0]; const char* op = *(const char**)((void**)__mpayload)[1]; Expr* v = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(op); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        Expr* v = (Expr*)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { Expr* t = (Expr*)((void**)__mpayload)[0]; const char* op = *(const char**)((void**)__mpayload)[1]; Expr* v = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(v); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        ({ void* __el = (void*)(intptr_t)(({ void** __pay_SCompoundAssign = (void**)malloc(sizeof(void*) * 3); __pay_SCompoundAssign[0] = (void*)(t); __pay_SCompoundAssign[1] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (op); (void*)__ps; }); __pay_SCompoundAssign[2] = (void*)(mono__foldExpr(v)); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 11LL; ((void**)__ev)[1] = (void*)__pay_SCompoundAssign; __ev; })); haki_array_append(out, &__el); });
+        return;
+    }
+    if ((strcmp(tag, "if") == 0)) {
+        Expr* c = (Expr*)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 7LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)(c); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        void* th = (void*)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 7LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)(th); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+        void* el = (void*)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 7LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)(el); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+        compiler__Expr* fc = (compiler__Expr*)(mono__foldExpr(c));
+        if (mono__isBoolLit(fc)) {
+            if (mono__boolLitVal(fc)) {
+                { void* __arr_st = mono__foldStmts(th);
+                  int64_t __len_st = haki_array_length(__arr_st);
+                  for (int64_t __i_st = 0; __i_st < __len_st; __i_st++) {
+                        compiler__Stmt* st = (compiler__Stmt*)*(void**)haki_array_get(__arr_st, __i_st);
+                        ({ void* __el = (void*)(intptr_t)(st); haki_array_append(out, &__el); });
+                  }
+                }
+            }
+            else {
+                { void* __arr_st = mono__foldStmts(el);
+                  int64_t __len_st = haki_array_length(__arr_st);
+                  for (int64_t __i_st = 0; __i_st < __len_st; __i_st++) {
+                        compiler__Stmt* st = (compiler__Stmt*)*(void**)haki_array_get(__arr_st, __i_st);
+                        ({ void* __el = (void*)(intptr_t)(st); haki_array_append(out, &__el); });
+                  }
+                }
+            }
+            return;
+        }
+        ({ void* __el = (void*)(intptr_t)(({ void** __pay_SIf = (void**)malloc(sizeof(void*) * 3); __pay_SIf[0] = (void*)(fc); __pay_SIf[1] = (void*)(mono__foldStmts(th)); __pay_SIf[2] = (void*)(mono__foldStmts(el)); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 7LL; ((void**)__ev)[1] = (void*)__pay_SIf; __ev; })); haki_array_append(out, &__el); });
+        return;
+    }
+    if ((strcmp(tag, "while") == 0)) {
+        Expr* c = (Expr*)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 8LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* body = (void*)((void**)__mpayload)[1]; __mr = (void*)(c); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        void* body = (void*)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 8LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* body = (void*)((void**)__mpayload)[1]; __mr = (void*)(body); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+        compiler__Expr* fc = (compiler__Expr*)(mono__foldExpr(c));
+        if ((mono__isBoolLit(fc) && (!mono__boolLitVal(fc)))) {
+            return;
+        }
+        ({ void* __el = (void*)(intptr_t)(({ void** __pay_SWhile = (void**)malloc(sizeof(void*) * 2); __pay_SWhile[0] = (void*)(fc); __pay_SWhile[1] = (void*)(mono__foldStmts(body)); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 8LL; ((void**)__ev)[1] = (void*)__pay_SWhile; __ev; })); haki_array_append(out, &__el); });
+        return;
+    }
+    if ((strcmp(tag, "for") == 0)) {
+        const char* v = (const char*)(intptr_t)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 9LL) { const char* v = *(const char**)((void**)__mpayload)[0]; Expr* it = (Expr*)((void**)__mpayload)[1]; void* body = (void*)((void**)__mpayload)[2]; __mr = (void*)(v); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        Expr* it = (Expr*)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 9LL) { const char* v = *(const char**)((void**)__mpayload)[0]; Expr* it = (Expr*)((void**)__mpayload)[1]; void* body = (void*)((void**)__mpayload)[2]; __mr = (void*)(it); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        void* body = (void*)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 9LL) { const char* v = *(const char**)((void**)__mpayload)[0]; Expr* it = (Expr*)((void**)__mpayload)[1]; void* body = (void*)((void**)__mpayload)[2]; __mr = (void*)(body); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+        ({ void* __el = (void*)(intptr_t)(({ void** __pay_SFor = (void**)malloc(sizeof(void*) * 3); __pay_SFor[0] = ({ const char** __ps = malloc(sizeof(const char*)); *__ps = (v); (void*)__ps; }); __pay_SFor[1] = (void*)(mono__foldExpr(it)); __pay_SFor[2] = (void*)(mono__foldStmts(body)); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 9LL; ((void**)__ev)[1] = (void*)__pay_SFor; __ev; })); haki_array_append(out, &__el); });
+        return;
+    }
+    if ((strcmp(tag, "block") == 0)) {
+        void* stmts = (void*)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 13LL) { void* stmts = (void*)((void**)__mpayload)[0]; __mr = (void*)(stmts); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+        ({ void* __el = (void*)(intptr_t)(({ void** __pay_SBlock = (void**)malloc(sizeof(void*) * 1); __pay_SBlock[0] = (void*)(mono__foldStmts(stmts)); void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = 13LL; ((void**)__ev)[1] = (void*)__pay_SBlock; __ev; })); haki_array_append(out, &__el); });
+        return;
+    }
+    ({ void* __el = (void*)(intptr_t)(s); haki_array_append(out, &__el); });
+}
+
+void* mono__foldStmts(void* ss) {
+    void* out = haki_array_new(sizeof(void*));
+    int8_t stopped = (int8_t)(intptr_t)(0);
+    { void* __arr_s = ss;
+      int64_t __len_s = haki_array_length(__arr_s);
+      for (int64_t __i_s = 0; __i_s < __len_s; __i_s++) {
+            compiler__Stmt* s = (compiler__Stmt*)*(void**)haki_array_get(__arr_s, __i_s);
+            if ((!stopped)) {
+                mono__foldStmt(s, out);
+                int8_t isRet = (int8_t)(intptr_t)(({ void* __msc = (void*)(s); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 1LL) { void* vs = (void*)((void**)__mpayload)[0]; __mr = (void*)(1); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+                if (isRet) {
+                    stopped = 1;
+                }
+            }
+      }
+    }
+    return (void*)(intptr_t)(out);
+}
+
+void mono__optimizeProgram(MonoProgram* prog) {
+    void* newFns = haki_array_new(sizeof(void*));
+    { void* __arr_f = prog->fns;
+      int64_t __len_f = haki_array_length(__arr_f);
+      for (int64_t __i_f = 0; __i_f < __len_f; __i_f++) {
+            MonoFn* f = (MonoFn*)*(void**)haki_array_get(__arr_f, __i_f);
+            ({ void* __el = (void*)(intptr_t)(({ MonoFn* __c_MonoFn = (MonoFn*)malloc(sizeof(MonoFn)); __c_MonoFn->name = f->name; __c_MonoFn->params = f->params; __c_MonoFn->retTy = f->retTy; __c_MonoFn->body = mono__foldStmts(f->body); __c_MonoFn; })); haki_array_append(newFns, &__el); });
+      }
+    }
+    prog->fns = newFns;
+    void* newGenerics = haki_array_new(sizeof(void*));
+    { void* __arr_g = prog->generics;
+      int64_t __len_g = haki_array_length(__arr_g);
+      for (int64_t __i_g = 0; __i_g < __len_g; __i_g++) {
+            MonoFn* g = (MonoFn*)*(void**)haki_array_get(__arr_g, __i_g);
+            ({ void* __el = (void*)(intptr_t)(({ MonoFn* __c_MonoFn = (MonoFn*)malloc(sizeof(MonoFn)); __c_MonoFn->name = g->name; __c_MonoFn->params = g->params; __c_MonoFn->retTy = g->retTy; __c_MonoFn->body = mono__foldStmts(g->body); __c_MonoFn; })); haki_array_append(newGenerics, &__el); });
+      }
+    }
+    prog->generics = newGenerics;
+}
+
+const char* cemit__cName(const char* name) {
+    if ((strcmp(name, "int") == 0)) {
+        return (const char*)(intptr_t)("haki_int");
+    }
+    if ((strcmp(name, "float") == 0)) {
+        return (const char*)(intptr_t)("haki_float");
+    }
+    if ((strcmp(name, "double") == 0)) {
+        return (const char*)(intptr_t)("haki_double");
+    }
+    if ((strcmp(name, "char") == 0)) {
+        return (const char*)(intptr_t)("haki_char");
+    }
+    if ((strcmp(name, "return") == 0)) {
+        return (const char*)(intptr_t)("haki_return");
+    }
+    if ((strcmp(name, "void") == 0)) {
+        return (const char*)(intptr_t)("haki_void");
+    }
+    if ((strcmp(name, "struct") == 0)) {
+        return (const char*)(intptr_t)("haki_struct");
+    }
+    if ((strcmp(name, "typedef") == 0)) {
+        return (const char*)(intptr_t)("haki_typedef");
+    }
+    if ((strcmp(name, "static") == 0)) {
+        return (const char*)(intptr_t)("haki_static");
+    }
+    if ((strcmp(name, "extern") == 0)) {
+        return (const char*)(intptr_t)("haki_extern");
+    }
+    if ((strcmp(name, "switch") == 0)) {
+        return (const char*)(intptr_t)("haki_switch");
+    }
+    if ((strcmp(name, "case") == 0)) {
+        return (const char*)(intptr_t)("haki_case");
+    }
+    if ((strcmp(name, "default") == 0)) {
+        return (const char*)(intptr_t)("haki_default");
+    }
+    if ((strcmp(name, "enum") == 0)) {
+        return (const char*)(intptr_t)("haki_enum");
+    }
+    return (const char*)(intptr_t)(name);
+}
+
+const char* cemit__cTy(const char* ty) {
+    if ((strcmp(ty, "int") == 0)) {
+        return (const char*)(intptr_t)("int64_t");
+    }
+    if ((strcmp(ty, "float") == 0)) {
+        return (const char*)(intptr_t)("double");
+    }
+    if ((strcmp(ty, "f64") == 0)) {
+        return (const char*)(intptr_t)("double");
+    }
+    if ((strcmp(ty, "f32") == 0)) {
+        return (const char*)(intptr_t)("float");
+    }
+    if ((strcmp(ty, "bool") == 0)) {
+        return (const char*)(intptr_t)("int8_t");
+    }
+    if ((strcmp(ty, "string") == 0)) {
+        return (const char*)(intptr_t)("const char*");
+    }
+    if ((strcmp(ty, "c_string") == 0)) {
+        return (const char*)(intptr_t)("const char*");
+    }
+    if ((strcmp(ty, "void") == 0)) {
+        return (const char*)(intptr_t)("void");
+    }
+    if ((strcmp(ty, "") == 0)) {
+        return (const char*)(intptr_t)("void");
+    }
+    if ((strcmp(ty, "void*") == 0)) {
+        return (const char*)(intptr_t)("void*");
+    }
+    if ((strcmp(ty, "HttpServer") == 0)) {
+        return (const char*)(intptr_t)("HakiHttpServer*");
+    }
+    if ((strcmp(ty, "HttpClient") == 0)) {
+        return (const char*)(intptr_t)("void*");
+    }
+    if ((strcmp(ty, "HttpResponse") == 0)) {
+        return (const char*)(intptr_t)("HakiHttpResponse*");
+    }
+    if ((strcmp(ty, "HttpReq") == 0)) {
+        return (const char*)(intptr_t)("HakiHttpReq*");
+    }
+    if ((strcmp(ty, "HttpRes") == 0)) {
+        return (const char*)(intptr_t)("HakiHttpRes*");
+    }
+    if ((strcmp(ty, "Error") == 0)) {
+        return (const char*)(intptr_t)("void*");
+    }
+    if ((strcmp(ty, "Error?") == 0)) {
+        return (const char*)(intptr_t)("void*");
+    }
+    int64_t n = (int64_t)(intptr_t)(haki_string_length(ty));
+    if (((n > ((int64_t)1LL)) && (strcmp(haki_string_substring(ty, (n - ((int64_t)1LL)), n), "?") == 0))) {
+        return (const char*)(intptr_t)("void*");
+    }
+    if ((haki_string_length(ty) == ((int64_t)1LL))) {
+        const char* ch = (const char*)(intptr_t)(haki_string_substring(ty, ((int64_t)0LL), ((int64_t)1LL)));
+        if ((((((strcmp(ch, "T") == 0) || (strcmp(ch, "U") == 0)) || (strcmp(ch, "V") == 0)) || (strcmp(ch, "K") == 0)) || (strcmp(ch, "E") == 0))) {
+            return (const char*)(intptr_t)("void*");
+        }
+    }
+    if (((haki_string_length(ty) > ((int64_t)2LL)) && (strcmp(haki_string_substring(ty, ((int64_t)0LL), ((int64_t)2LL)), "fn") == 0))) {
+        return (const char*)(intptr_t)("void*");
+    }
+    if (((haki_string_length(ty) > ((int64_t)5LL)) && (strcmp(haki_string_substring(ty, ((int64_t)0LL), ((int64_t)5LL)), "Array") == 0))) {
+        return (const char*)(intptr_t)("void*");
+    }
+    if (((haki_string_length(ty) > ((int64_t)3LL)) && (strcmp(haki_string_substring(ty, ((int64_t)0LL), ((int64_t)3LL)), "Map") == 0))) {
+        return (const char*)(intptr_t)("void*");
+    }
+    if (((haki_string_length(ty) > ((int64_t)4LL)) && (strcmp(haki_string_substring(ty, ((int64_t)0LL), ((int64_t)4LL)), "Task") == 0))) {
+        return (const char*)(intptr_t)("void*");
+    }
+    int64_t di = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((di < haki_string_length(ty))) {
+        if ((strcmp(haki_string_substring(ty, di, (di + ((int64_t)1LL))), ".") == 0)) {
+            const char* prefix = (const char*)(intptr_t)(haki_string_substring(ty, ((int64_t)0LL), di));
+            const char* suffix = (const char*)(intptr_t)(haki_string_substring(ty, (di + ((int64_t)1LL)), haki_string_length(ty)));
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(prefix, "__"), suffix), "*"));
+        }
+        di = (di + ((int64_t)1LL));
+    }
+    return (const char*)(intptr_t)(haki_string_concat(cemit__cName(ty), "*"));
+}
+
+const char* cemit__cRetTy(const char* ty) {
+    if (((strcmp(ty, "void") == 0) || (strcmp(ty, "") == 0))) {
+        return (const char*)(intptr_t)("void");
+    }
+    int64_t n = (int64_t)(intptr_t)(haki_string_length(ty));
+    if (((n > ((int64_t)0LL)) && (strcmp(haki_string_substring(ty, ((int64_t)0LL), ((int64_t)1LL)), "(") == 0))) {
+        return (const char*)(intptr_t)("void*");
+    }
+    return (const char*)(intptr_t)(cemit__cTy(ty));
+}
+
+int8_t cemit__isScalarTy(const char* ty) {
+    return (int8_t)(intptr_t)((((strcmp(ty, "int") == 0) || (strcmp(ty, "float") == 0)) || (strcmp(ty, "bool") == 0)));
+}
+
+const char* cemit__indent(int64_t depth) {
+    const char* s = (const char*)(intptr_t)("");
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < depth)) {
+        s = haki_string_concat(s, "    ");
+        i = (i + ((int64_t)1LL));
+    }
+    return (const char*)(intptr_t)(s);
+}
+
+const char* cemit__escapeStr(const char* s) {
+    const char* out = (const char*)(intptr_t)("");
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    int64_t n = (int64_t)(intptr_t)(haki_string_length(s));
+    while ((i < n)) {
+        const char* ch = (const char*)(intptr_t)(haki_string_substring(s, i, (i + ((int64_t)1LL))));
+        if ((strcmp(ch, "\"") == 0)) {
+            out = haki_string_concat(out, "\\\"");
+        }
+        else {
+            if ((strcmp(ch, "\\") == 0)) {
+                out = haki_string_concat(out, "\\\\");
+            }
+            else {
+                if ((strcmp(ch, "\n") == 0)) {
+                    out = haki_string_concat(out, "\\n");
+                }
+                else {
+                    if ((strcmp(ch, "\t") == 0)) {
+                        out = haki_string_concat(out, "\\t");
+                    }
+                    else {
+                        out = haki_string_concat(out, ch);
+                    }
+                }
+            }
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    return (const char*)(intptr_t)(out);
+}
+
+const char* cemit__getFieldAt(const char* fields, int64_t idx) {
+    int64_t start = (int64_t)(intptr_t)(((int64_t)0LL));
+    int64_t fi = (int64_t)(intptr_t)(((int64_t)0LL));
+    int64_t n = (int64_t)(intptr_t)(haki_string_length(fields));
+    while ((start < n)) {
+        int64_t end = (int64_t)(intptr_t)(start);
+        while (((end < n) && (strcmp(haki_string_substring(fields, end, (end + ((int64_t)1LL))), ",") != 0))) {
+            end = (end + ((int64_t)1LL));
+        }
+        if ((fi == idx)) {
+            return (const char*)(intptr_t)(haki_string_substring(fields, start, end));
+        }
+        fi = (fi + ((int64_t)1LL));
+        start = (end + ((int64_t)1LL));
+    }
+    return (const char*)(intptr_t)(haki_string_concat("f", haki_int_to_string(idx)));
+}
+
+const char* cemit__getTypeAt(const char* types, int64_t idx) {
+    int64_t start = (int64_t)(intptr_t)(((int64_t)0LL));
+    int64_t ti = (int64_t)(intptr_t)(((int64_t)0LL));
+    int64_t n = (int64_t)(intptr_t)(haki_string_length(types));
+    while ((start <= n)) {
+        int64_t end = (int64_t)(intptr_t)(start);
+        while (((end < n) && (strcmp(haki_string_substring(types, end, (end + ((int64_t)1LL))), ";") != 0))) {
+            end = (end + ((int64_t)1LL));
+        }
+        if ((ti == idx)) {
+            return (const char*)(intptr_t)(haki_string_substring(types, start, end));
+        }
+        ti = (ti + ((int64_t)1LL));
+        start = (end + ((int64_t)1LL));
+        if ((end >= n)) {
+            return (const char*)(intptr_t)("");
+        }
+    }
+    return (const char*)(intptr_t)("");
+}
+
+const char* cemit__emitExpr(compiler__Expr* e, int64_t depth, tinfer__Scope* sc, typeck__SymTable* sym) {
+    const char* tag = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t n = *(int64_t*)((void**)__mpayload)[0]; __mr = (void*)("int"); __mdone = 1; } if (!__mdone && __mtag == 1LL) { int64_t b = *(int64_t*)((void**)__mpayload)[0]; __mr = (void*)("bool"); __mdone = 1; } if (!__mdone && __mtag == 2LL) { __mr = (void*)("null"); __mdone = 1; } if (!__mdone && __mtag == 3LL) { const char* s = *(const char**)((void**)__mpayload)[0]; __mr = (void*)("string"); __mdone = 1; } if (!__mdone && __mtag == 4LL) { const char* s = *(const char**)((void**)__mpayload)[0]; __mr = (void*)("float"); __mdone = 1; } if (!__mdone && __mtag == 5LL) { void* segs = (void*)((void**)__mpayload)[0]; __mr = (void*)("fstr"); __mdone = 1; } if (!__mdone && __mtag == 6LL) { Expr* inner = (Expr*)((void**)__mpayload)[0]; __mr = (void*)("try"); __mdone = 1; } if (!__mdone && __mtag == 7LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)("namedcall"); __mdone = 1; } if (!__mdone && __mtag == 8LL) { const char* n = *(const char**)((void**)__mpayload)[0]; __mr = (void*)("ident"); __mdone = 1; } if (!__mdone && __mtag == 9LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* inner = (Expr*)((void**)__mpayload)[1]; __mr = (void*)("unary"); __mdone = 1; } if (!__mdone && __mtag == 10LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* l = (Expr*)((void**)__mpayload)[1]; Expr* r = (Expr*)((void**)__mpayload)[2]; __mr = (void*)("binary"); __mdone = 1; } if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)("call"); __mdone = 1; } if (!__mdone && __mtag == 12LL) { Expr* recv = (Expr*)((void**)__mpayload)[0]; const char* f = *(const char**)((void**)__mpayload)[1]; __mr = (void*)("field"); __mdone = 1; } if (!__mdone && __mtag == 13LL) { Expr* r = (Expr*)((void**)__mpayload)[0]; const char* m = *(const char**)((void**)__mpayload)[1]; void* ma = (void*)((void**)__mpayload)[2]; __mr = (void*)("method"); __mdone = 1; } if (!__mdone && __mtag == 14LL) { Expr* a = (Expr*)((void**)__mpayload)[0]; Expr* idx = (Expr*)((void**)__mpayload)[1]; __mr = (void*)("index"); __mdone = 1; } if (!__mdone && __mtag == 15LL) { void* elems = (void*)((void**)__mpayload)[0]; __mr = (void*)("array"); __mdone = 1; } if (!__mdone && __mtag == 16LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)("if"); __mdone = 1; } if (!__mdone && __mtag == 17LL) { Expr* s = (Expr*)((void**)__mpayload)[0]; void* arms = (void*)((void**)__mpayload)[1]; __mr = (void*)("match"); __mdone = 1; } if (!__mdone && __mtag == 18LL) { void* stmts = (void*)((void**)__mpayload)[0]; __mr = (void*)("block"); __mdone = 1; } if (!__mdone && __mtag == 19LL) { Expr* inner = (Expr*)((void**)__mpayload)[0]; __mr = (void*)("async"); __mdone = 1; } if (!__mdone && __mtag == 20LL) { FnDef* lf = (FnDef*)((void**)__mpayload)[0]; __mr = (void*)("fnlit"); __mdone = 1; } (void)__mdone; __mr;}));
+    if ((strcmp(tag, "fnlit") == 0)) {
+        FnDef* lf = (FnDef*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 20LL) { FnDef* lf = (FnDef*)((void**)__mpayload)[0]; __mr = (void*)(lf); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyFnDef()); __mdone = 1; } (void)__mdone; __mr;}));
+        void* litName = (void*)(compiler__fnDefName(lf));
+        void* capList = (void*)(tinfer__scopeLookup(sc, haki_string_concat("__caps__", litName)));
+        void* litQual = (void*)(tinfer__scopeLookup(sc, haki_string_concat("__fnqual__", litName)));
+        if ((haki_string_length(litQual) > ((int64_t)0LL))) {
+            litName = litQual;
+        }
+        int64_t nCaps = (int64_t)(intptr_t)(cemit__capCount(capList));
+        if ((nCaps == ((int64_t)0LL))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("({ void** __cl = (void**)malloc(sizeof(void*)*2); __cl[0] = (void*)", cemit__cName(litName)), "; __cl[1] = NULL; (void*)__cl; })"));
+        }
+        const char* envStr = (const char*)(intptr_t)(haki_string_concat(haki_string_concat("({ void** __ce = (void**)malloc(sizeof(void*)*", haki_int_to_string(nCaps)), "); "));
+        int64_t ci2 = (int64_t)(intptr_t)(((int64_t)0LL));
+        while ((ci2 < nCaps)) {
+            envStr = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(envStr, "__ce["), haki_int_to_string(ci2)), "] = (void*)"), cemit__cName(cemit__capNameAt(capList, ci2))), "; ");
+            ci2 = (ci2 + ((int64_t)1LL));
+        }
+        envStr = haki_string_concat(haki_string_concat(haki_string_concat(envStr, "void** __cl = (void**)malloc(sizeof(void*)*2); __cl[0] = (void*)"), cemit__cName(litName)), "; __cl[1] = (void*)__ce; (void*)__cl; })");
+        return (const char*)(intptr_t)(envStr);
+    }
+    if ((strcmp(tag, "int") == 0)) {
+        int64_t n = (int64_t)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t n = *(int64_t*)((void**)__mpayload)[0]; __mr = (void*)(n); __mdone = 1; } if (!__mdone) { __mr = (void*)(((int64_t)0LL)); __mdone = 1; } (void)__mdone; __mr;}));
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("((int64_t)", haki_int_to_string(n)), "LL)"));
+    }
+    if ((strcmp(tag, "bool") == 0)) {
+        int64_t b = (int64_t)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 1LL) { int64_t b = *(int64_t*)((void**)__mpayload)[0]; __mr = (void*)(b); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+        if (b) {
+            return (const char*)(intptr_t)("1");
+        }
+        return (const char*)(intptr_t)("0");
+    }
+    if ((strcmp(tag, "null") == 0)) {
+        return (const char*)(intptr_t)("NULL");
+    }
+    if ((strcmp(tag, "float") == 0)) {
+        const char* fs = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 4LL) { const char* s = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(s); __mdone = 1; } if (!__mdone) { __mr = (void*)("0.0"); __mdone = 1; } (void)__mdone; __mr;}));
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("((double)", fs), ")"));
+    }
+    if ((strcmp(tag, "string") == 0)) {
+        if ((strcmp(tag, "fstr") == 0)) {
+            void* segs = (void*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 5LL) { void* segs = (void*)((void**)__mpayload)[0]; __mr = (void*)(segs); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyExprs()); __mdone = 1; } (void)__mdone; __mr;}));
+            if ((haki_array_length(segs) == ((int64_t)0LL))) {
+                return (const char*)(intptr_t)("\"\"");
+            }
+            const char* r = (const char*)(intptr_t)(cemit__emitExpr((*((void**)haki_array_get(segs, ((int64_t)0LL)))), depth, sc, sym));
+            int64_t i = (int64_t)(intptr_t)(((int64_t)1LL));
+            while ((i < haki_array_length(segs))) {
+                r = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_string_concat(", r), ", "), cemit__emitExpr((*((void**)haki_array_get(segs, i))), depth, sc, sym)), ")");
+                i = (i + ((int64_t)1LL));
+            }
+            return (const char*)(intptr_t)(r);
+        }
+        if ((strcmp(tag, "try") == 0)) {
+            Expr* inner = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 6LL) { Expr* inner = (Expr*)((void**)__mpayload)[0]; __mr = (void*)(inner); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+            return (const char*)(intptr_t)(cemit__emitExpr(inner, depth, sc, sym));
+        }
+        const char* s = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 3LL) { const char* s = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(s); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("\"", cemit__escapeStr(s)), "\""));
+    }
+    if ((strcmp(tag, "ident") == 0)) {
+        const char* n = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 8LL) { const char* n = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(n); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        void* discStr = (void*)(tinfer__scopeLookup(sc, haki_string_concat("__v__", n)));
+        if ((haki_string_length(discStr) > ((int64_t)0LL))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = ", discStr), "LL; ((void**)__ev)[1] = NULL; __ev; })"));
+        }
+        if ((strcmp(n, "this") == 0)) {
+            return (const char*)(intptr_t)("self");
+        }
+        void* sfMark = (void*)(tinfer__scopeLookup(sc, haki_string_concat("__selffld__", n)));
+        if ((haki_string_length(sfMark) > ((int64_t)0LL))) {
+            return (const char*)(intptr_t)(haki_string_concat("self->", cemit__cName(n)));
+        }
+        if ((haki_string_length(tinfer__scopeLookup(sc, haki_string_concat("__boxed__", n))) > ((int64_t)0LL))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("(*", cemit__cName(n)), ")"));
+        }
+        return (const char*)(intptr_t)(cemit__cName(n));
+    }
+    if ((strcmp(tag, "namedcall") == 0)) {
+        const char* ncn = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 7LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(n); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        void* ncargs = (void*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 7LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(args); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyExprs()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* cncn = (const char*)(intptr_t)(cemit__cName(ncn));
+        void* fieldsStr = (void*)(tinfer__scopeLookup(sc, haki_string_concat("__sf__", ncn)));
+        if ((haki_string_length(fieldsStr) == ((int64_t)0LL))) {
+            const char* ns = (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("({ ", cncn), "* __c_"), cncn), " = ("), cncn), "*)malloc(sizeof("), cncn), ")); "));
+            int64_t ai = (int64_t)(intptr_t)(((int64_t)0LL));
+            while ((ai < haki_array_length(ncargs))) {
+                ns = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ns, "__c_"), cncn), "->f"), haki_int_to_string(ai)), " = "), cemit__emitExpr((*((void**)haki_array_get(ncargs, ai))), depth, sc, sym)), "; ");
+                ai = (ai + ((int64_t)1LL));
+            }
+            ns = haki_string_concat(haki_string_concat(haki_string_concat(ns, "__c_"), cncn), "; })");
+            return (const char*)(intptr_t)(ns);
+        }
+        const char* ns = (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("({ ", cncn), "* __c_"), cncn), " = ("), cncn), "*)malloc(sizeof("), cncn), ")); "));
+        int64_t ai = (int64_t)(intptr_t)(((int64_t)0LL));
+        while ((ai < haki_array_length(ncargs))) {
+            const char* fname = (const char*)(intptr_t)(cemit__getFieldAt(fieldsStr, ai));
+            ns = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ns, "__c_"), cncn), "->"), fname), " = "), cemit__emitExpr((*((void**)haki_array_get(ncargs, ai))), depth, sc, sym)), "; ");
+            ai = (ai + ((int64_t)1LL));
+        }
+        ns = haki_string_concat(haki_string_concat(haki_string_concat(ns, "__c_"), cncn), "; })");
+        return (const char*)(intptr_t)(ns);
+    }
+    if ((strcmp(tag, "unary") == 0)) {
+        const char* op = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 9LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* inner = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(op); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        Expr* inner = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 9LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* inner = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(inner); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat("(", op), cemit__emitExpr(inner, depth, sc, sym)), ")"));
+    }
+    if ((strcmp(tag, "binary") == 0)) {
+        const char* op = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 10LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* l = (Expr*)((void**)__mpayload)[1]; Expr* r = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(op); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        Expr* lExpr = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 10LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* l = (Expr*)((void**)__mpayload)[1]; Expr* r = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(l); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        Expr* rExpr = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 10LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* l = (Expr*)((void**)__mpayload)[1]; Expr* r = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(r); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* le = (const char*)(intptr_t)(cemit__emitExpr(lExpr, depth, sc, sym));
+        const char* re = (const char*)(intptr_t)(cemit__emitExpr(rExpr, depth, sc, sym));
+        if ((strcmp(op, "??") == 0)) {
+            int8_t rIsStr = (int8_t)(intptr_t)(({ void* __msc = (void*)(rExpr); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 3LL) { const char* s = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(1); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+            void* rhsTy = (void*)(tinfer__inferWithScope(rExpr, sc, sym));
+            if ((rIsStr || (strcmp(rhsTy, "string") == 0))) {
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("({ void* __nc = (void*)(", le), "); __nc != NULL ? (const char*)__nc : "), re), "; })"));
+            }
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("({ void* __nc = (void*)(", le), "); __nc != NULL ? (int64_t)(intptr_t)__nc : "), re), "; })"));
+        }
+        int8_t lIsEInt = (int8_t)(intptr_t)(({ void* __msc = (void*)(lExpr); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t n = *(int64_t*)((void**)__mpayload)[0]; __mr = (void*)(1); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+        int8_t rIsEInt = (int8_t)(intptr_t)(({ void* __msc = (void*)(rExpr); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t n = *(int64_t*)((void**)__mpayload)[0]; __mr = (void*)(1); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+        if (((lIsEInt || rIsEInt) && (((((strcmp(op, "+") == 0) || (strcmp(op, "-") == 0)) || (strcmp(op, "*") == 0)) || (strcmp(op, "/") == 0)) || (strcmp(op, "%") == 0)))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(", le), " "), op), " "), re), ")"));
+        }
+        if (((lIsEInt || rIsEInt) && ((((((strcmp(op, "<") == 0) || (strcmp(op, ">") == 0)) || (strcmp(op, "<=") == 0)) || (strcmp(op, ">=") == 0)) || (strcmp(op, "==") == 0)) || (strcmp(op, "!=") == 0)))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(", le), " "), op), " "), re), ")"));
+        }
+        void* lty = (void*)(tinfer__inferWithScope(lExpr, sc, sym));
+        void* rty = (void*)(tinfer__inferWithScope(rExpr, sc, sym));
+        int8_t lIsStr = (int8_t)(intptr_t)(({ void* __msc = (void*)(lExpr); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 3LL) { const char* s = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(1); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+        int8_t rIsStr = (int8_t)(intptr_t)(({ void* __msc = (void*)(rExpr); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 3LL) { const char* s = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(1); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+        void* effectiveLty = (void*)(lty);
+        if ((((lIsStr || rIsStr) || (strcmp(rty, "string") == 0)) && (strcmp(lty, "void*") == 0))) {
+            effectiveLty = "string";
+        }
+        void* cop = (void*)(tinfer__binaryOpC(op, effectiveLty));
+        if ((strcmp(cop, "string_concat") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_string_concat(", le), ", "), re), ")"));
+        }
+        if ((strcmp(cop, "string_eq") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(strcmp(", le), ", "), re), ") == 0)"));
+        }
+        if ((strcmp(cop, "string_neq") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(strcmp(", le), ", "), re), ") != 0)"));
+        }
+        if ((strcmp(cop, "string_lt") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(strcmp(", le), ", "), re), ") < 0)"));
+        }
+        if ((strcmp(cop, "string_gt") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(strcmp(", le), ", "), re), ") > 0)"));
+        }
+        if ((strcmp(cop, "string_le") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(strcmp(", le), ", "), re), ") <= 0)"));
+        }
+        if ((strcmp(cop, "string_ge") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(strcmp(", le), ", "), re), ") >= 0)"));
+        }
+        if ((strcmp(cop, "ptr_eq") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(", le), " == "), re), ")"));
+        }
+        if ((strcmp(cop, "ptr_neq") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(", le), " != "), re), ")"));
+        }
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(", le), " "), cop), " "), re), ")"));
+    }
+    if ((strcmp(tag, "call") == 0)) {
+        const char* n = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(n); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        void* args = (void*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(args); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyExprs()); __mdone = 1; } (void)__mdone; __mr;}));
+        return (const char*)(intptr_t)(cemit__emitCall(n, args, depth, sc, sym));
+    }
+    if ((strcmp(tag, "field") == 0)) {
+        Expr* recv = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 12LL) { Expr* recv = (Expr*)((void**)__mpayload)[0]; const char* f = *(const char**)((void**)__mpayload)[1]; __mr = (void*)(recv); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* f = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 12LL) { Expr* recv = (Expr*)((void**)__mpayload)[0]; const char* f = *(const char**)((void**)__mpayload)[1]; __mr = (void*)(f); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        if ((strcmp(f, "message") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_error_message(", cemit__emitExpr(recv, depth, sc, sym)), ")"));
+        }
+        if ((strcmp(f, "cause") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_error_cause(", cemit__emitExpr(recv, depth, sc, sym)), ")"));
+        }
+        if ((strcmp(f, "length") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_array_length(", cemit__emitExpr(recv, depth, sc, sym)), ")"));
+        }
+        void* varDisc = (void*)(tinfer__scopeLookup(sc, haki_string_concat("__v__", f)));
+        if ((haki_string_length(varDisc) > ((int64_t)0LL))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = ", varDisc), "LL; ((void**)__ev)[1] = NULL; __ev; })"));
+        }
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(cemit__emitExpr(recv, depth, sc, sym), "->"), cemit__cName(f)));
+    }
+    if ((strcmp(tag, "method") == 0)) {
+        Expr* recv = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 13LL) { Expr* r = (Expr*)((void**)__mpayload)[0]; const char* m = *(const char**)((void**)__mpayload)[1]; void* ma = (void*)((void**)__mpayload)[2]; __mr = (void*)(r); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* m = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 13LL) { Expr* r = (Expr*)((void**)__mpayload)[0]; const char* m = *(const char**)((void**)__mpayload)[1]; void* ma = (void*)((void**)__mpayload)[2]; __mr = (void*)(m); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        void* args = (void*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 13LL) { Expr* r = (Expr*)((void**)__mpayload)[0]; const char* m = *(const char**)((void**)__mpayload)[1]; void* ma = (void*)((void**)__mpayload)[2]; __mr = (void*)(ma); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyExprs()); __mdone = 1; } (void)__mdone; __mr;}));
+        int8_t recvIsIdent = (int8_t)(intptr_t)(({ void* __msc = (void*)(recv); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 8LL) { const char* rn = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(1); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+        if (recvIsIdent) {
+            const char* rn = (const char*)(intptr_t)(({ void* __msc = (void*)(recv); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 8LL) { const char* rn = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(rn); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+            int8_t isKnownModule = (int8_t)(intptr_t)(((((((((((((((((((strcmp(rn, "compiler") == 0) || (strcmp(rn, "typeck") == 0)) || (strcmp(rn, "mono") == 0)) || (strcmp(rn, "cemit") == 0)) || (strcmp(rn, "tinfer") == 0)) || (strcmp(rn, "lex") == 0)) || (strcmp(rn, "math") == 0)) || (strcmp(rn, "strings") == 0)) || (strcmp(rn, "fs") == 0)) || (strcmp(rn, "env") == 0)) || (strcmp(rn, "process") == 0)) || (strcmp(rn, "json") == 0)) || (strcmp(rn, "template") == 0)) || (strcmp(rn, "csv") == 0)) || (strcmp(rn, "crypto") == 0)) || (strcmp(rn, "regex") == 0)) || (strcmp(rn, "http") == 0)) || (strcmp(rn, "time") == 0)));
+            if (isKnownModule) {
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(rn, "__"), cemit__cName(m)), "("), cemit__emitExprList(args, depth, sc, sym)), ")"));
+            }
+        }
+        const char* re = (const char*)(intptr_t)(cemit__emitExpr(recv, depth, sc, sym));
+        void* conRecvTy = (void*)(tinfer__inferWithScope(recv, sc, sym));
+        int8_t isChanRecv = (int8_t)(intptr_t)(((haki_string_length(conRecvTy) > ((int64_t)5LL)) && (strcmp(haki_string_substring(conRecvTy, ((int64_t)0LL), ((int64_t)5LL)), "Chan<") == 0)));
+        int8_t isTgRecv = (int8_t)(intptr_t)(((haki_string_length(conRecvTy) > ((int64_t)10LL)) && (strcmp(haki_string_substring(conRecvTy, ((int64_t)0LL), ((int64_t)10LL)), "TaskGroup<") == 0)));
+        if (((isChanRecv && (strcmp(m, "send") == 0)) && (haki_array_length(args) == ((int64_t)1LL)))) {
+            const char* sendV = (const char*)(intptr_t)(cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)0LL)))), depth, sc, sym));
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("({ void* __ch = (void*)(intptr_t)(", sendV), "); haki_array_append("), re), ", &__ch); })"));
+        }
+        if (((isChanRecv && (strcmp(m, "receive") == 0)) && (haki_array_length(args) == ((int64_t)0LL)))) {
+            const char* chElem = (const char*)(intptr_t)(haki_string_substring(conRecvTy, ((int64_t)5LL), (haki_string_length(conRecvTy) - ((int64_t)1LL))));
+            const char* chCast = (const char*)(intptr_t)("(void*)");
+            if (((strcmp(chElem, "int") == 0) || (strcmp(chElem, "bool") == 0))) {
+                chCast = "(int64_t)(intptr_t)";
+            }
+            else {
+                if ((strcmp(chElem, "string") == 0)) {
+                    chCast = "(const char*)";
+                }
+            }
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("({ void* __cv = *(void**)haki_array_get(", re), ", 0); haki_array_remove_at("), re), ", 0); "), chCast), "__cv; })"));
+        }
+        if (((isTgRecv && (strcmp(m, "add") == 0)) && (haki_array_length(args) == ((int64_t)1LL)))) {
+            const char* addV = (const char*)(intptr_t)(cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)0LL)))), depth, sc, sym));
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("({ void* __tg = (void*)(intptr_t)(", addV), "); haki_array_append("), re), ", &__tg); })"));
+        }
+        if (((isTgRecv && (strcmp(m, "waitAll") == 0)) && (haki_array_length(args) == ((int64_t)0LL)))) {
+            return (const char*)(intptr_t)(re);
+        }
+        if (((strcmp(m, "append") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+            const char* av = (const char*)(intptr_t)(cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)0LL)))), depth, sc, sym));
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("({ void* __el = (void*)(intptr_t)(", av), "); haki_array_append("), re), ", &__el); })"));
+        }
+        if (((strcmp(m, "remove") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(void)haki_array_remove_at(", re), ", "), cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)0LL)))), depth, sc, sym)), ")"));
+        }
+        if ((strcmp(m, "length") == 0)) {
+            void* recvTy = (void*)(tinfer__inferWithScope(recv, sc, sym));
+            if ((strcmp(recvTy, "string") == 0)) {
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_string_length(", re), ")"));
+            }
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_array_length(", re), ")"));
+        }
+        if ((strcmp(m, "isEmpty") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("(haki_string_length(", re), ") == 0LL)"));
+        }
+        void* httpRecvTy = (void*)(tinfer__inferWithScope(recv, sc, sym));
+        if ((strcmp(httpRecvTy, "HttpServer") == 0)) {
+            if (((strcmp(m, "get") == 0) && (haki_array_length(args) == ((int64_t)2LL)))) {
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_http_server_get((HakiHttpServer*)(", re), "), "), cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)0LL)))), depth, sc, sym)), ", (void*)("), cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)1LL)))), depth, sc, sym)), "))"));
+            }
+            if (((strcmp(m, "post") == 0) && (haki_array_length(args) == ((int64_t)2LL)))) {
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_http_server_post((HakiHttpServer*)(", re), "), "), cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)0LL)))), depth, sc, sym)), ", (void*)("), cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)1LL)))), depth, sc, sym)), "))"));
+            }
+            if (((strcmp(m, "listen_background") == 0) && (haki_array_length(args) == ((int64_t)0LL)))) {
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_http_server_listen_background((HakiHttpServer*)(", re), "))"));
+            }
+            if (((strcmp(m, "stop") == 0) && (haki_array_length(args) == ((int64_t)0LL)))) {
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("(haki_http_server_stop((HakiHttpServer*)(", re), ")), (void*)0)"));
+            }
+        }
+        if ((strcmp(httpRecvTy, "HttpClient") == 0)) {
+            if (((strcmp(m, "get") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_http_client_get(", re), ", "), cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)0LL)))), depth, sc, sym)), ")"));
+            }
+            if (((strcmp(m, "post") == 0) && (haki_array_length(args) == ((int64_t)2LL)))) {
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_http_client_post(", re), ", "), cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)0LL)))), depth, sc, sym)), ", "), cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)1LL)))), depth, sc, sym)), ")"));
+            }
+        }
+        if ((strcmp(httpRecvTy, "HttpResponse") == 0)) {
+            if (((strcmp(m, "body") == 0) && (haki_array_length(args) == ((int64_t)0LL)))) {
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_http_response_body((HakiHttpResponse*)(", re), "))"));
+            }
+            if (((strcmp(m, "status") == 0) && (haki_array_length(args) == ((int64_t)0LL)))) {
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("(int64_t)haki_http_response_status((HakiHttpResponse*)(", re), "))"));
+            }
+        }
+        if ((strcmp(httpRecvTy, "HttpRes") == 0)) {
+            if (((strcmp(m, "text") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_http_res_text((HakiHttpRes*)(", re), "), "), cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)0LL)))), depth, sc, sym)), ")"));
+            }
+            if (((strcmp(m, "json") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_http_res_json((HakiHttpRes*)(", re), "), "), cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)0LL)))), depth, sc, sym)), ")"));
+            }
+        }
+        if ((strcmp(m, "has") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_map_has(", re), ", "), cemit__emitExprList(args, depth, sc, sym)), ")"));
+        }
+        if ((strcmp(m, "get") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_map_get(", re), ", "), cemit__emitExprList(args, depth, sc, sym)), ")"));
+        }
+        if (((strcmp(m, "set") == 0) && (haki_array_length(args) == ((int64_t)2LL)))) {
+            const char* keyC = (const char*)(intptr_t)(cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)0LL)))), depth, sc, sym));
+            const char* valC = (const char*)(intptr_t)(cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)1LL)))), depth, sc, sym));
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_map_set(", re), ", "), keyC), ", (void*)(intptr_t)("), valC), "))"));
+        }
+        if (((strcmp(m, "delete") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_map_delete(", re), ", "), cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)0LL)))), depth, sc, sym)), ")"));
+        }
+        if (((strcmp(m, "getOrDefault") == 0) && (haki_array_length(args) == ((int64_t)2LL)))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_map_get_or_default(", re), ", "), cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)0LL)))), depth, sc, sym)), ", "), cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)1LL)))), depth, sc, sym)), ")"));
+        }
+        if ((strcmp(m, "substring") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_string_substring(", re), ", "), cemit__emitExprList(args, depth, sc, sym)), ")"));
+        }
+        if ((strcmp(m, "contains") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_string_contains(", re), ", "), cemit__emitExprList(args, depth, sc, sym)), ")"));
+        }
+        if ((strcmp(m, "startsWith") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_string_starts_with(", re), ", "), cemit__emitExprList(args, depth, sc, sym)), ")"));
+        }
+        if ((strcmp(m, "endsWith") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_string_ends_with(", re), ", "), cemit__emitExprList(args, depth, sc, sym)), ")"));
+        }
+        if ((strcmp(m, "replace") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_string_replace(", re), ", "), cemit__emitExprList(args, depth, sc, sym)), ")"));
+        }
+        if ((strcmp(m, "indexOf") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_string_index_of(", re), ", "), cemit__emitExprList(args, depth, sc, sym)), ")"));
+        }
+        if ((strcmp(m, "charAt") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_string_char_at(", re), ", "), cemit__emitExprList(args, depth, sc, sym)), ")"));
+        }
+        if ((strcmp(m, "charCodeAt") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_string_char_code_at(", re), ", "), cemit__emitExprList(args, depth, sc, sym)), ")"));
+        }
+        if ((strcmp(m, "trimStart") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_string_trim_start(", re), ")"));
+        }
+        if ((strcmp(m, "trimEnd") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_string_trim_end(", re), ")"));
+        }
+        if ((strcmp(m, "padStart") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_string_pad_start(", re), ", "), cemit__emitExprList(args, depth, sc, sym)), ")"));
+        }
+        if ((strcmp(m, "padEnd") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_string_pad_end(", re), ", "), cemit__emitExprList(args, depth, sc, sym)), ")"));
+        }
+        if ((strcmp(m, "slice") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_string_slice(", re), ", "), cemit__emitExprList(args, depth, sc, sym)), ")"));
+        }
+        if ((strcmp(m, "split") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_string_split(", re), ", "), cemit__emitExprList(args, depth, sc, sym)), ")"));
+        }
+        if ((strcmp(m, "toUpper") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_string_to_upper(", re), ")"));
+        }
+        if ((strcmp(m, "toLower") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_string_to_lower(", re), ")"));
+        }
+        if ((strcmp(m, "trim") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_string_trim(", re), ")"));
+        }
+        if (((haki_string_length(m) > ((int64_t)12LL)) && (strcmp(haki_string_substring(m, ((int64_t)0LL), ((int64_t)12LL)), "__optchain__") == 0))) {
+            const char* realField = (const char*)(intptr_t)(haki_string_substring(m, ((int64_t)12LL), haki_string_length(m)));
+            void* ocRecvTy = (void*)(tinfer__inferWithScope(recv, sc, sym));
+            int64_t ocLen = (int64_t)(intptr_t)(haki_string_length(ocRecvTy));
+            if (((ocLen > ((int64_t)1LL)) && (strcmp(haki_string_substring(ocRecvTy, (ocLen - ((int64_t)1LL)), ocLen), "?") == 0))) {
+                ocRecvTy = haki_string_substring(ocRecvTy, ((int64_t)0LL), (ocLen - ((int64_t)1LL)));
+            }
+            const char* ocCTy = (const char*)(intptr_t)(cemit__cTy(ocRecvTy));
+            if (((strcmp(ocCTy, "void") == 0) || (haki_string_length(ocCTy) == ((int64_t)0LL)))) {
+                ocCTy = "void*";
+            }
+            if ((haki_array_length(args) == ((int64_t)0LL))) {
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("({ ", ocCTy), " __oc = ("), ocCTy), ")("), re), "); __oc != NULL ? (void*)(intptr_t)(__oc->"), cemit__cName(realField)), ") : NULL; })"));
+            }
+            void* ocClass = (void*)(ocRecvTy);
+            int64_t ocCn = (int64_t)(intptr_t)(haki_string_length(ocClass));
+            if (((ocCn > ((int64_t)1LL)) && (strcmp(haki_string_substring(ocClass, (ocCn - ((int64_t)1LL)), ocCn), "*") == 0))) {
+                ocClass = haki_string_substring(ocClass, ((int64_t)0LL), (ocCn - ((int64_t)1LL)));
+            }
+            const char* argStr2 = (const char*)(intptr_t)("");
+            if ((haki_array_length(args) > ((int64_t)0LL))) {
+                argStr2 = haki_string_concat(", ", cemit__emitExprList(args, depth, sc, sym));
+            }
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("({ ", ocCTy), " __oc = ("), ocCTy), ")("), re), "); __oc != NULL ? (void*)(intptr_t)("), ocClass), "__"), cemit__cName(realField)), "(__oc"), argStr2), ")) : NULL; })"));
+        }
+        void* cmRecvTy = (void*)(tinfer__inferWithScope(recv, sc, sym));
+        void* cmClassName = (void*)(cmRecvTy);
+        int64_t cmTyLen = (int64_t)(intptr_t)(haki_string_length(cmRecvTy));
+        if (((cmTyLen > ((int64_t)1LL)) && (strcmp(haki_string_substring(cmRecvTy, (cmTyLen - ((int64_t)1LL)), cmTyLen), "*") == 0))) {
+            cmClassName = haki_string_substring(cmRecvTy, ((int64_t)0LL), (cmTyLen - ((int64_t)1LL)));
+        }
+        if (((((((haki_string_length(cmClassName) > ((int64_t)0LL)) && (strcmp(cmClassName, "void") != 0)) && (strcmp(cmClassName, "void*") != 0)) && (strcmp(cmClassName, "string") != 0)) && (strcmp(cmClassName, "int") != 0)) && (strcmp(cmClassName, "bool") != 0))) {
+            const char* cmFnKey = (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat("__fn__", cmClassName), "__"), m));
+            void* cmFnRet = (void*)(tinfer__scopeLookup(sc, cmFnKey));
+            if ((haki_string_length(cmFnRet) > ((int64_t)0LL))) {
+                const char* cmExtraArgs = (const char*)(intptr_t)("");
+                if ((haki_array_length(args) > ((int64_t)0LL))) {
+                    cmExtraArgs = haki_string_concat(", ", cemit__emitExprList(args, depth, sc, sym));
+                }
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(cmClassName, "__"), cemit__cName(m)), "("), re), cmExtraArgs), ")"));
+            }
+        }
+        if (((strcmp(m, "push") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+            const char* pushVal = (const char*)(intptr_t)(cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)0LL)))), depth, sc, sym));
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("({ void* __push_el = (void*)(intptr_t)(", pushVal), "); haki_array_append((HakiArray*)("), re), "), &__push_el); (void*)0; })"));
+        }
+        if ((strcmp(m, "asString") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_json_as_string(", re), ")"));
+        }
+        if (((strcmp(m, "encode") == 0) && (haki_array_length(args) == ((int64_t)0LL)))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("json__encode(", re), ")"));
+        }
+        if (((strcmp(m, "decode") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("json__decode(", cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)0LL)))), depth, sc, sym)), ")"));
+        }
+        if (((strcmp(m, "render") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("template__render(", re), ", (HakiMap*)("), cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)0LL)))), depth, sc, sym)), "))"));
+        }
+        if (((strcmp(m, "test") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(int64_t)(intptr_t)haki_regex_matches(", cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)0LL)))), depth, sc, sym)), ", (const char*)("), re), "))"));
+        }
+        if (((strcmp(m, "match") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_regex_match_first(", cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)0LL)))), depth, sc, sym)), ", (const char*)("), re), "))"));
+        }
+        if (((strcmp(m, "matchAll") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_regex_match_all(", cemit__emitExpr((*((void**)haki_array_get(args, ((int64_t)0LL)))), depth, sc, sym)), ", (const char*)("), re), "))"));
+        }
+        if ((strcmp(m, "group") == 0)) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("((const char*)(", re), "))"));
+        }
+        const char* argStr = (const char*)(intptr_t)("");
+        if ((haki_array_length(args) > ((int64_t)0LL))) {
+            argStr = haki_string_concat(", ", cemit__emitExprList(args, depth, sc, sym));
+        }
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(re, "->"), cemit__cName(m)), "("), re), argStr), ")"));
+    }
+    if ((strcmp(tag, "index") == 0)) {
+        Expr* arr = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 14LL) { Expr* a = (Expr*)((void**)__mpayload)[0]; Expr* idx = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(a); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        Expr* idx = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 14LL) { Expr* a = (Expr*)((void**)__mpayload)[0]; Expr* idx = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(idx); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* arrC = (const char*)(intptr_t)(cemit__emitExpr(arr, depth, sc, sym));
+        const char* idxC = (const char*)(intptr_t)(cemit__emitExpr(idx, depth, sc, sym));
+        void* arrTy = (void*)(tinfer__inferWithScope(arr, sc, sym));
+        if (((haki_string_length(arrTy) > ((int64_t)6LL)) && (strcmp(haki_string_substring(arrTy, ((int64_t)0LL), ((int64_t)6LL)), "Array<") == 0))) {
+            const char* inner = (const char*)(intptr_t)(haki_string_substring(arrTy, ((int64_t)6LL), (haki_string_length(arrTy) - ((int64_t)1LL))));
+            int8_t innerIsStr = (int8_t)(intptr_t)((strcmp(inner, "string") == 0));
+            int8_t innerIsInt = (int8_t)(intptr_t)((strcmp(inner, "int") == 0));
+            int8_t innerIsBool = (int8_t)(intptr_t)((strcmp(inner, "bool") == 0));
+            if (innerIsInt) {
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(int64_t)(intptr_t)(*((void**)haki_array_get(", arrC), ", "), idxC), ")))"));
+            }
+            if (innerIsBool) {
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(int8_t)(intptr_t)(*((void**)haki_array_get(", arrC), ", "), idxC), ")))"));
+            }
+            if ((((!innerIsStr) && (strcmp(inner, "void") != 0)) && (strcmp(inner, "") != 0))) {
+                const char* cElemTy = (const char*)(intptr_t)(cemit__cTy(inner));
+                if (((cemit__isSimpleCType(cElemTy) && (strcmp(cElemTy, "void*") != 0)) && (strcmp(cElemTy, "void") != 0))) {
+                    return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("((", cElemTy), ")(*((void**)haki_array_get("), arrC), ", "), idxC), "))))"));
+                }
+            }
+        }
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(*((void**)haki_array_get(", arrC), ", "), idxC), ")))"));
+    }
+    if ((strcmp(tag, "array") == 0)) {
+        void* elems = (void*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 15LL) { void* elems = (void*)((void**)__mpayload)[0]; __mr = (void*)(elems); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyExprs()); __mdone = 1; } (void)__mdone; __mr;}));
+        if ((haki_array_length(elems) == ((int64_t)0LL))) {
+            return (const char*)(intptr_t)("haki_array_new(sizeof(void*))");
+        }
+        const char* s = (const char*)(intptr_t)("({ void* __ial = haki_array_new(sizeof(void*)); ");
+        int64_t ei = (int64_t)(intptr_t)(((int64_t)0LL));
+        while ((ei < haki_array_length(elems))) {
+            const char* ev = (const char*)(intptr_t)(cemit__emitExpr((*((void**)haki_array_get(elems, ei))), depth, sc, sym));
+            s = haki_string_concat(haki_string_concat(haki_string_concat(s, "{ void* __el = (void*)(intptr_t)("), ev), "); haki_array_append(__ial, &__el); } ");
+            ei = (ei + ((int64_t)1LL));
+        }
+        s = haki_string_concat(s, "__ial; })");
+        return (const char*)(intptr_t)(s);
+    }
+    if ((strcmp(tag, "if") == 0)) {
+        Expr* cond = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 16LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)(c); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        void* then = (void*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 16LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)(th); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+        void* els = (void*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 16LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)(el); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* ce = (const char*)(intptr_t)(cemit__emitExpr(cond, depth, sc, sym));
+        const char* tv = (const char*)(intptr_t)(cemit__yieldVal(then, depth, sc, sym));
+        const char* ev = (const char*)(intptr_t)(cemit__yieldVal(els, depth, sc, sym));
+        if (((haki_string_length(tv) > ((int64_t)0LL)) && (haki_string_length(ev) > ((int64_t)0LL)))) {
+            const char* tp = (const char*)(intptr_t)(cemit__armPrelude(then, depth, sc, sym));
+            const char* ep = (const char*)(intptr_t)(cemit__armPrelude(els, depth, sc, sym));
+            const char* tExpr = (const char*)(intptr_t)(haki_string_concat(haki_string_concat("(", tv), ")"));
+            const char* eExpr = (const char*)(intptr_t)(haki_string_concat(haki_string_concat("(", ev), ")"));
+            if ((haki_string_length(tp) > ((int64_t)0LL))) {
+                tExpr = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("({ ", tp), " ("), tv), "); })");
+            }
+            if ((haki_string_length(ep) > ((int64_t)0LL))) {
+                eExpr = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("({ ", ep), " ("), ev), "); })");
+            }
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("((", ce), ") ? "), tExpr), " : "), eExpr), ")"));
+        }
+        return (const char*)(intptr_t)(ce);
+    }
+    if ((strcmp(tag, "match") == 0)) {
+        Expr* scrut = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 17LL) { Expr* s = (Expr*)((void**)__mpayload)[0]; void* arms = (void*)((void**)__mpayload)[1]; __mr = (void*)(s); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        void* arms = (void*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 17LL) { Expr* s = (Expr*)((void**)__mpayload)[0]; void* arms = (void*)((void**)__mpayload)[1]; __mr = (void*)(arms); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyArms()); __mdone = 1; } (void)__mdone; __mr;}));
+        return (const char*)(intptr_t)(cemit__emitMatchExpr(scrut, arms, depth, sc, sym));
+    }
+    if ((strcmp(tag, "block") == 0)) {
+        void* stmts = (void*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 18LL) { void* stmts = (void*)((void**)__mpayload)[0]; __mr = (void*)(stmts); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* yv = (const char*)(intptr_t)(cemit__yieldVal(stmts, depth, sc, sym));
+        const char* bp = (const char*)(intptr_t)(cemit__armPrelude(stmts, depth, sc, sym));
+        if ((haki_string_length(yv) > ((int64_t)0LL))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("({ ", bp), " "), yv), "; })"));
+        }
+        if ((haki_string_length(bp) > ((int64_t)0LL))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("({ ", bp), " 0; })"));
+        }
+        return (const char*)(intptr_t)("0");
+    }
+    if ((strcmp(tag, "async") == 0)) {
+        Expr* inner = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 19LL) { Expr* inner = (Expr*)((void**)__mpayload)[0]; __mr = (void*)(inner); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_task_spawn_simple((void(*)(void*))", cemit__emitExpr(inner, depth, sc, sym)), ", NULL)"));
+    }
+    return (const char*)(intptr_t)("/* unknown expr */");
+}
+
+const char* cemit__emitExprList(void* args, int64_t depth, tinfer__Scope* sc, typeck__SymTable* sym) {
+    const char* s = (const char*)(intptr_t)("");
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_array_length(args))) {
+        if ((i > ((int64_t)0LL))) {
+            s = haki_string_concat(s, ", ");
+        }
+        s = haki_string_concat(s, cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, i)))), depth, sc, sym));
+        i = (i + ((int64_t)1LL));
+    }
+    return (const char*)(intptr_t)(s);
+}
+
+const char* cemit__armPrelude(void* stmts, int64_t depth, tinfer__Scope* sc, typeck__SymTable* sym) {
+    const char* out = (const char*)(intptr_t)("");
+    { void* __arr_stmt = stmts;
+      int64_t __len_stmt = haki_array_length(__arr_stmt);
+      for (int64_t __i_stmt = 0; __i_stmt < __len_stmt; __i_stmt++) {
+            compiler__Stmt* stmt = (compiler__Stmt*)*(void**)haki_array_get(__arr_stmt, __i_stmt);
+            const char* tag = (const char*)(intptr_t)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 2LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)("yield"); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+            if ((strcmp(tag, "yield") != 0)) {
+                out = haki_string_concat(out, cemit__emitStmt(stmt, depth, sc, sym, 0));
+            }
+      }
+    }
+    return (const char*)(intptr_t)(out);
+}
+
+const char* cemit__yieldVal(void* stmts, int64_t depth, tinfer__Scope* sc, typeck__SymTable* sym) {
+    { void* __arr_stmt = stmts;
+      int64_t __len_stmt = haki_array_length(__arr_stmt);
+      for (int64_t __i_stmt = 0; __i_stmt < __len_stmt; __i_stmt++) {
+            compiler__Stmt* stmt = (compiler__Stmt*)*(void**)haki_array_get(__arr_stmt, __i_stmt);
+            const char* tag = (const char*)(intptr_t)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 2LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)("yield"); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+            if ((strcmp(tag, "yield") == 0)) {
+                Expr* e = (Expr*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 2LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)(e); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+                return (const char*)(intptr_t)(cemit__emitExpr(e, depth, sc, sym));
+            }
+      }
+    }
+    return (const char*)(intptr_t)("");
+}
+
+const char* cemit__emitMatchExpr(compiler__Expr* scrut, void* arms, int64_t depth, tinfer__Scope* sc, typeck__SymTable* sym) {
+    const char* se = (const char*)(intptr_t)(cemit__emitExpr(scrut, depth, sc, sym));
+    void* scrutTy = (void*)(tinfer__inferWithScope(scrut, sc, sym));
+    int8_t isPlainMatch = (int8_t)(intptr_t)(0);
+    int64_t pmChk = (int64_t)(intptr_t)(((int64_t)0LL));
+    while (((pmChk < haki_array_length(arms)) && (!isPlainMatch))) {
+        compiler__MatchArm* pmArm = (compiler__MatchArm*)(((compiler__MatchArm*)(*((void**)haki_array_get(arms, pmChk)))));
+        if ((strcmp(pmArm->pattern, "_") != 0)) {
+            void* pmDisc = (void*)(tinfer__scopeLookup(sc, haki_string_concat("__v__", pmArm->pattern)));
+            if ((haki_string_length(pmDisc) == ((int64_t)0LL))) {
+                isPlainMatch = 1;
+            }
+        }
+        pmChk = (pmChk + ((int64_t)1LL));
+    }
+    if (isPlainMatch) {
+        const char* pparts = (const char*)(intptr_t)(haki_string_concat(haki_string_concat("void* __msc = (void*)(intptr_t)(", se), "); void* __mr = NULL; int8_t __mdone = 0; "));
+        int64_t pi = (int64_t)(intptr_t)(((int64_t)0LL));
+        while ((pi < haki_array_length(arms))) {
+            compiler__MatchArm* parm = (compiler__MatchArm*)(((compiler__MatchArm*)(*((void**)haki_array_get(arms, pi)))));
+            int64_t patLen = (int64_t)(intptr_t)(haki_string_length(parm->pattern));
+            int8_t isStrLit = (int8_t)(intptr_t)(((patLen > ((int64_t)4LL)) && (strcmp(haki_string_substring(parm->pattern, ((int64_t)0LL), ((int64_t)4LL)), "Str(") == 0)));
+            int8_t isIntLit = (int8_t)(intptr_t)(((patLen > ((int64_t)4LL)) && (strcmp(haki_string_substring(parm->pattern, ((int64_t)0LL), ((int64_t)4LL)), "Int(") == 0)));
+            int8_t isLiteral = (int8_t)(intptr_t)((isStrLit || isIntLit));
+            const char* pgTag = (const char*)(intptr_t)(({ void* __msc = (void*)(parm->guard); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 2LL) { __mr = (void*)("null"); __mdone = 1; } if (!__mdone) { __mr = (void*)("expr"); __mdone = 1; } (void)__mdone; __mr;}));
+            const char* pyv = (const char*)(intptr_t)(cemit__yieldVal(parm->body, depth, sc, sym));
+            const char* ppre = (const char*)(intptr_t)(cemit__armPrelude(parm->body, depth, sc, sym));
+            if (isStrLit) {
+                const char* litVal = (const char*)(intptr_t)(haki_string_substring(parm->pattern, ((int64_t)4LL), (patLen - ((int64_t)1LL))));
+                const char* cond = (const char*)(intptr_t)(haki_string_concat(haki_string_concat("!__mdone && (strcmp((const char*)__msc, \"", litVal), "\") == 0)"));
+                if ((strcmp(pgTag, "null") != 0)) {
+                    const char* pgc = (const char*)(intptr_t)(cemit__emitExpr(parm->guard, depth, sc, sym));
+                    cond = haki_string_concat(haki_string_concat(haki_string_concat(cond, " && ("), pgc), ")");
+                }
+                pparts = haki_string_concat(haki_string_concat(haki_string_concat(pparts, "if ("), cond), ") { ");
+                pparts = haki_string_concat(pparts, ppre);
+                if ((haki_string_length(pyv) > ((int64_t)0LL))) {
+                    pparts = haki_string_concat(haki_string_concat(haki_string_concat(pparts, "__mr = (void*)("), pyv), "); ");
+                }
+                pparts = haki_string_concat(pparts, "__mdone = 1; } ");
+            }
+            else {
+                if (isIntLit) {
+                    const char* litVal = (const char*)(intptr_t)(haki_string_substring(parm->pattern, ((int64_t)4LL), (patLen - ((int64_t)1LL))));
+                    const char* cond = (const char*)(intptr_t)(haki_string_concat(haki_string_concat("!__mdone && (int64_t)(intptr_t)__msc == ", litVal), "LL"));
+                    if ((strcmp(pgTag, "null") != 0)) {
+                        const char* pgc = (const char*)(intptr_t)(cemit__emitExpr(parm->guard, depth, sc, sym));
+                        cond = haki_string_concat(haki_string_concat(haki_string_concat(cond, " && ("), pgc), ")");
+                    }
+                    pparts = haki_string_concat(haki_string_concat(haki_string_concat(pparts, "if ("), cond), ") { ");
+                    pparts = haki_string_concat(pparts, ppre);
+                    if ((haki_string_length(pyv) > ((int64_t)0LL))) {
+                        pparts = haki_string_concat(haki_string_concat(haki_string_concat(pparts, "__mr = (void*)("), pyv), "); ");
+                    }
+                    pparts = haki_string_concat(pparts, "__mdone = 1; } ");
+                }
+                else {
+                    const char* bindN = (const char*)(intptr_t)("__sv");
+                    if ((haki_array_length(parm->bindings) > ((int64_t)0LL))) {
+                        bindN = cemit__cName((*((void**)haki_array_get(parm->bindings, ((int64_t)0LL)))));
+                    }
+                    else {
+                        if ((strcmp(parm->pattern, "_") != 0)) {
+                            bindN = cemit__cName(parm->pattern);
+                        }
+                    }
+                    const char* bindDecl = (const char*)(intptr_t)(haki_string_concat(haki_string_concat("int64_t ", bindN), " = (int64_t)(intptr_t)__msc; "));
+                    if ((strcmp(scrutTy, "string") == 0)) {
+                        bindDecl = haki_string_concat(haki_string_concat("const char* ", bindN), " = (const char*)__msc; ");
+                    }
+                    if ((haki_array_length(parm->bindings) > ((int64_t)0LL))) {
+                        if ((strcmp(scrutTy, "string") == 0)) {
+                            tinfer__scopeSet(sc, (*((void**)haki_array_get(parm->bindings, ((int64_t)0LL)))), "string");
+                        }
+                        else {
+                            tinfer__scopeSet(sc, (*((void**)haki_array_get(parm->bindings, ((int64_t)0LL)))), "int");
+                        }
+                    }
+                    else {
+                        if ((strcmp(parm->pattern, "_") != 0)) {
+                            if ((strcmp(scrutTy, "string") == 0)) {
+                                tinfer__scopeSet(sc, parm->pattern, "string");
+                            }
+                            else {
+                                tinfer__scopeSet(sc, parm->pattern, "int");
+                            }
+                        }
+                    }
+                    if ((strcmp(pgTag, "null") != 0)) {
+                        const char* pgc = (const char*)(intptr_t)(cemit__emitExpr(parm->guard, depth, sc, sym));
+                        pparts = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(pparts, "{ "), bindDecl), "if (!__mdone && ("), pgc), ")) { ");
+                        pparts = haki_string_concat(pparts, ppre);
+                        if ((haki_string_length(pyv) > ((int64_t)0LL))) {
+                            pparts = haki_string_concat(haki_string_concat(haki_string_concat(pparts, "__mr = (void*)("), pyv), "); ");
+                        }
+                        pparts = haki_string_concat(pparts, "__mdone = 1; } } ");
+                    }
+                    else {
+                        pparts = haki_string_concat(haki_string_concat(haki_string_concat(pparts, "{ "), bindDecl), "if (!__mdone) { ");
+                        pparts = haki_string_concat(pparts, ppre);
+                        if ((haki_string_length(pyv) > ((int64_t)0LL))) {
+                            pparts = haki_string_concat(haki_string_concat(haki_string_concat(pparts, "__mr = (void*)("), pyv), "); ");
+                        }
+                        pparts = haki_string_concat(pparts, "__mdone = 1; } } ");
+                    }
+                }
+            }
+            pi = (pi + ((int64_t)1LL));
+        }
+        pparts = haki_string_concat(pparts, "__mr;");
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("({ ", pparts), "})"));
+    }
+    const char* parts = (const char*)(intptr_t)(haki_string_concat(haki_string_concat("void* __msc = (void*)(", se), "); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; "));
+    parts = haki_string_concat(parts, "void* __mr = NULL; ");
+    parts = haki_string_concat(parts, "int __mdone = 0; ");
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_array_length(arms))) {
+        compiler__MatchArm* arm = (compiler__MatchArm*)(((compiler__MatchArm*)(*((void**)haki_array_get(arms, i)))));
+        if ((strcmp(arm->pattern, "_") == 0)) {
+            parts = haki_string_concat(parts, "if (!__mdone) { ");
+        }
+        else {
+            void* discStr = (void*)(tinfer__scopeLookup(sc, haki_string_concat("__v__", arm->pattern)));
+            const char* disc = (const char*)(intptr_t)(haki_int_to_string(i));
+            if ((haki_string_length(discStr) > ((int64_t)0LL))) {
+                disc = discStr;
+            }
+            parts = haki_string_concat(haki_string_concat(haki_string_concat(parts, "if (!__mdone && __mtag == "), disc), "LL) { ");
+        }
+        int64_t bi = (int64_t)(intptr_t)(((int64_t)0LL));
+        while ((bi < haki_array_length(arm->bindings))) {
+            const char* biStr = (const char*)(intptr_t)(haki_int_to_string(bi));
+            void* vtAll = (void*)(tinfer__scopeLookup(sc, haki_string_concat("__vt__", arm->pattern)));
+            const char* slotTy = (const char*)(intptr_t)(cemit__getTypeAt(vtAll, bi));
+            if (((strcmp(slotTy, "int") == 0) || (strcmp(slotTy, "bool") == 0))) {
+                parts = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(parts, "int64_t "), cemit__cName((*((void**)haki_array_get(arm->bindings, bi))))), " = *(int64_t*)((void**)__mpayload)["), biStr), "]; ");
+                tinfer__scopeSet(sc, (*((void**)haki_array_get(arm->bindings, bi))), "int");
+            }
+            else {
+                if ((strcmp(slotTy, "string") == 0)) {
+                    parts = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(parts, "const char* "), cemit__cName((*((void**)haki_array_get(arm->bindings, bi))))), " = *(const char**)((void**)__mpayload)["), biStr), "]; ");
+                    tinfer__scopeSet(sc, (*((void**)haki_array_get(arm->bindings, bi))), "string");
+                }
+                else {
+                    const char* bindCType = (const char*)(intptr_t)("void*");
+                    if ((haki_string_length(slotTy) > ((int64_t)0LL))) {
+                        int8_t isGenericTy = (int8_t)(intptr_t)(((((haki_string_length(slotTy) >= ((int64_t)5LL)) && (strcmp(haki_string_substring(slotTy, ((int64_t)0LL), ((int64_t)5LL)), "Array") == 0)) || ((haki_string_length(slotTy) >= ((int64_t)3LL)) && (strcmp(haki_string_substring(slotTy, ((int64_t)0LL), ((int64_t)3LL)), "Map") == 0))) || ((haki_string_length(slotTy) >= ((int64_t)4LL)) && (strcmp(haki_string_substring(slotTy, ((int64_t)0LL), ((int64_t)4LL)), "Task") == 0))));
+                        if ((!isGenericTy)) {
+                            const char* baseTy = (const char*)(intptr_t)(slotTy);
+                            int64_t di = (int64_t)(intptr_t)(((int64_t)0LL));
+                            while ((di < haki_string_length(slotTy))) {
+                                if ((strcmp(haki_string_substring(slotTy, di, (di + ((int64_t)1LL))), ".") == 0)) {
+                                    baseTy = haki_string_substring(slotTy, (di + ((int64_t)1LL)), haki_string_length(slotTy));
+                                }
+                                di = (di + ((int64_t)1LL));
+                            }
+                            int64_t blen = (int64_t)(intptr_t)(haki_string_length(baseTy));
+                            if (((blen > ((int64_t)0LL)) && (strcmp(haki_string_substring(baseTy, (blen - ((int64_t)1LL)), blen), "*") == 0))) {
+                                baseTy = haki_string_substring(baseTy, ((int64_t)0LL), (blen - ((int64_t)1LL)));
+                            }
+                            const char* vtCName = (const char*)(intptr_t)(cemit__cName(baseTy));
+                            const char* vtCTy = (const char*)(intptr_t)(haki_string_concat(vtCName, "*"));
+                            if (cemit__isSimpleCType(vtCTy)) {
+                                bindCType = vtCTy;
+                            }
+                        }
+                    }
+                    else {
+                        if ((haki_array_length(arm->bindings) == ((int64_t)1LL))) {
+                            void* sfVal = (void*)(tinfer__scopeLookup(sc, haki_string_concat("__sf__", arm->pattern)));
+                            if ((haki_string_length(sfVal) > ((int64_t)0LL))) {
+                                const char* patCName = (const char*)(intptr_t)(cemit__cName(arm->pattern));
+                                const char* patCTy = (const char*)(intptr_t)(haki_string_concat(patCName, "*"));
+                                if (cemit__isSimpleCType(patCTy)) {
+                                    bindCType = patCTy;
+                                }
+                            }
+                        }
+                    }
+                    parts = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(parts, bindCType), " "), cemit__cName((*((void**)haki_array_get(arm->bindings, bi))))), " = ("), bindCType), ")((void**)__mpayload)["), biStr), "]; ");
+                    if ((strcmp(bindCType, "void*") != 0)) {
+                        tinfer__scopeSet(sc, (*((void**)haki_array_get(arm->bindings, bi))), slotTy);
+                    }
+                }
+            }
+            bi = (bi + ((int64_t)1LL));
+        }
+        const char* guardTag = (const char*)(intptr_t)(({ void* __msc = (void*)(arm->guard); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 2LL) { __mr = (void*)("null"); __mdone = 1; } if (!__mdone) { __mr = (void*)("expr"); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* yv = (const char*)(intptr_t)(cemit__yieldVal(arm->body, depth, sc, sym));
+        const char* pre = (const char*)(intptr_t)(cemit__armPrelude(arm->body, depth, sc, sym));
+        if ((strcmp(guardTag, "null") != 0)) {
+            const char* gc = (const char*)(intptr_t)(cemit__emitExpr(arm->guard, depth, sc, sym));
+            parts = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(parts, "if ("), gc), ") { "), pre);
+            if ((haki_string_length(yv) > ((int64_t)0LL))) {
+                parts = haki_string_concat(haki_string_concat(haki_string_concat(parts, "__mr = (void*)("), yv), "); ");
+            }
+            parts = haki_string_concat(parts, "__mdone = 1; } } ");
+        }
+        else {
+            parts = haki_string_concat(parts, pre);
+            if ((haki_string_length(yv) > ((int64_t)0LL))) {
+                parts = haki_string_concat(haki_string_concat(haki_string_concat(parts, "__mr = (void*)("), yv), "); ");
+            }
+            parts = haki_string_concat(parts, "__mdone = 1; } ");
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    parts = haki_string_concat(parts, "(void)__mdone; __mr;");
+    return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("({ ", parts), "})"));
+}
+
+int8_t cemit__nameInList(void* names, const char* n) {
+    { void* __arr_x = names;
+      int64_t __len_x = haki_array_length(__arr_x);
+      for (int64_t __i_x = 0; __i_x < __len_x; __i_x++) {
+            const char* x = (const char*)*(void**)haki_array_get(__arr_x, __i_x);
+            if ((strcmp(x, n) == 0)) {
+                return (int8_t)(intptr_t)(1);
+            }
+      }
+    }
+    return (int8_t)(intptr_t)(0);
+}
+
+void cemit__fvExpr(compiler__Expr* e, void* bound, void* found, tinfer__Scope* sc) {
+    (void)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 8LL) { const char* n = *(const char**)((void**)__mpayload)[0];     if ((((!cemit__nameInList(bound, n)) && (!cemit__nameInList(found, n))) && (strcmp(n, "this") != 0))) {
+        if ((haki_string_length(tinfer__scopeLookup(sc, n)) > ((int64_t)0LL))) {
+            ({ void* __el = (void*)(intptr_t)(n); haki_array_append(found, &__el); });
+        }
+    }
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 9LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* inner = (Expr*)((void**)__mpayload)[1];     cemit__fvExpr(inner, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 10LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* l = (Expr*)((void**)__mpayload)[1]; Expr* r = (Expr*)((void**)__mpayload)[2];     cemit__fvExpr(l, bound, found, sc);
+    cemit__fvExpr(r, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 6LL) { Expr* inner = (Expr*)((void**)__mpayload)[0];     cemit__fvExpr(inner, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 19LL) { Expr* inner = (Expr*)((void**)__mpayload)[0];     cemit__fvExpr(inner, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1];     cemit__fvExprs(args, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 7LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1];     cemit__fvExprs(args, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 5LL) { void* parts = (void*)((void**)__mpayload)[0];     cemit__fvExprs(parts, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 15LL) { void* elems = (void*)((void**)__mpayload)[0];     cemit__fvExprs(elems, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 12LL) { Expr* recv = (Expr*)((void**)__mpayload)[0]; const char* fl = *(const char**)((void**)__mpayload)[1];     cemit__fvExpr(recv, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 13LL) { Expr* r = (Expr*)((void**)__mpayload)[0]; const char* m = *(const char**)((void**)__mpayload)[1]; void* margs = (void*)((void**)__mpayload)[2];     cemit__fvExpr(r, bound, found, sc);
+    cemit__fvExprs(margs, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 14LL) { Expr* a = (Expr*)((void**)__mpayload)[0]; Expr* i = (Expr*)((void**)__mpayload)[1];     cemit__fvExpr(a, bound, found, sc);
+    cemit__fvExpr(i, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 16LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2];     cemit__fvExpr(c, bound, found, sc);
+    cemit__fvStmts(th, bound, found, sc);
+    cemit__fvStmts(el, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 17LL) { Expr* scr = (Expr*)((void**)__mpayload)[0]; void* arms = (void*)((void**)__mpayload)[1];     cemit__fvExpr(scr, bound, found, sc);
+    cemit__fvArms(arms, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 18LL) { void* stmts = (void*)((void**)__mpayload)[0];     cemit__fvStmts(stmts, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 20LL) { FnDef* inner = (FnDef*)((void**)__mpayload)[0];     cemit__fvStmts(compiler__fnDefBody(inner), bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone) { __mr = (void*)(((int64_t)0LL)); __mdone = 1; } (void)__mdone; __mr;}));
+}
+
+void cemit__fvExprs(void* es, void* bound, void* found, tinfer__Scope* sc) {
+    { void* __arr_e = es;
+      int64_t __len_e = haki_array_length(__arr_e);
+      for (int64_t __i_e = 0; __i_e < __len_e; __i_e++) {
+            compiler__Expr* e = (compiler__Expr*)*(void**)haki_array_get(__arr_e, __i_e);
+            cemit__fvExpr(e, bound, found, sc);
+      }
+    }
+}
+
+void cemit__fvArms(void* arms, void* bound, void* found, tinfer__Scope* sc) {
+    { void* __arr_a = arms;
+      int64_t __len_a = haki_array_length(__arr_a);
+      for (int64_t __i_a = 0; __i_a < __len_a; __i_a++) {
+            compiler__MatchArm* a = (compiler__MatchArm*)*(void**)haki_array_get(__arr_a, __i_a);
+            { void* __arr_b = compiler__armBindings(a);
+              int64_t __len_b = haki_array_length(__arr_b);
+              for (int64_t __i_b = 0; __i_b < __len_b; __i_b++) {
+                    void* b = (void*)*(void**)haki_array_get(__arr_b, __i_b);
+                    ({ void* __el = (void*)(intptr_t)(b); haki_array_append(bound, &__el); });
+              }
+            }
+            cemit__fvStmts(compiler__armBody(a), bound, found, sc);
+      }
+    }
+}
+
+void cemit__fvStmt(compiler__Stmt* st, void* bound, void* found, tinfer__Scope* sc) {
+    (void)(({ void* __msc = (void*)(st); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t isMut = *(int64_t*)((void**)__mpayload)[0]; const char* name = *(const char**)((void**)__mpayload)[1]; Expr* init = (Expr*)((void**)__mpayload)[2];     cemit__fvExpr(init, bound, found, sc);
+    ({ void* __el = (void*)(intptr_t)(name); haki_array_append(bound, &__el); });
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 1LL) { void* vals = (void*)((void**)__mpayload)[0];     cemit__fvExprs(vals, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 2LL) { Expr* e = (Expr*)((void**)__mpayload)[0];     cemit__fvExpr(e, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 3LL) { Expr* e = (Expr*)((void**)__mpayload)[0];     cemit__fvExpr(e, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 6LL) { Expr* e = (Expr*)((void**)__mpayload)[0];     cemit__fvExpr(e, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 10LL) { Expr* t = (Expr*)((void**)__mpayload)[0]; Expr* v = (Expr*)((void**)__mpayload)[1];     cemit__fvExpr(t, bound, found, sc);
+    cemit__fvExpr(v, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 11LL) { Expr* t = (Expr*)((void**)__mpayload)[0]; const char* op = *(const char**)((void**)__mpayload)[1]; Expr* v = (Expr*)((void**)__mpayload)[2];     cemit__fvExpr(t, bound, found, sc);
+    cemit__fvExpr(v, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 7LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2];     cemit__fvExpr(c, bound, found, sc);
+    cemit__fvStmts(th, bound, found, sc);
+    cemit__fvStmts(el, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 8LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* body = (void*)((void**)__mpayload)[1];     cemit__fvExpr(c, bound, found, sc);
+    cemit__fvStmts(body, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 9LL) { const char* v = *(const char**)((void**)__mpayload)[0]; Expr* iter = (Expr*)((void**)__mpayload)[1]; void* body = (void*)((void**)__mpayload)[2];     cemit__fvExpr(iter, bound, found, sc);
+    ({ void* __el = (void*)(intptr_t)(v); haki_array_append(bound, &__el); });
+    cemit__fvStmts(body, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 12LL) { void* attrs = (void*)((void**)__mpayload)[0]; Stmt* inner = (Stmt*)((void**)__mpayload)[1];     cemit__fvStmt(inner, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone && __mtag == 13LL) { void* stmts = (void*)((void**)__mpayload)[0];     cemit__fvStmts(stmts, bound, found, sc);
+__mr = (void*)(((int64_t)0LL)); __mdone = 1; } if (!__mdone) { __mr = (void*)(((int64_t)0LL)); __mdone = 1; } (void)__mdone; __mr;}));
+}
+
+void cemit__fvStmts(void* ss, void* bound, void* found, tinfer__Scope* sc) {
+    { void* __arr_st = ss;
+      int64_t __len_st = haki_array_length(__arr_st);
+      for (int64_t __i_st = 0; __i_st < __len_st; __i_st++) {
+            compiler__Stmt* st = (compiler__Stmt*)*(void**)haki_array_get(__arr_st, __i_st);
+            cemit__fvStmt(st, bound, found, sc);
+      }
+    }
+}
+
+const char* cemit__litCaptureList(compiler__FnDef* lf, tinfer__Scope* sc) {
+    void* bound = haki_array_new(sizeof(void*));
+    { void* __arr_p = compiler__fnDefParams(lf);
+      int64_t __len_p = haki_array_length(__arr_p);
+      for (int64_t __i_p = 0; __i_p < __len_p; __i_p++) {
+            compiler__Param* p = (compiler__Param*)*(void**)haki_array_get(__arr_p, __i_p);
+            ({ void* __el = (void*)(intptr_t)(compiler__paramName(p)); haki_array_append(bound, &__el); });
+      }
+    }
+    void* found = haki_array_new(sizeof(void*));
+    cemit__fvStmts(compiler__fnDefBody(lf), bound, found, sc);
+    const char* out = (const char*)(intptr_t)("");
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_array_length(found))) {
+        const char* n = (const char*)(intptr_t)((*((void**)haki_array_get(found, i))));
+        void* hty = (void*)(tinfer__scopeGet(sc, n));
+        const char* ct = (const char*)(intptr_t)(cemit__cTy(hty));
+        if ((!cemit__isSimpleCType(ct))) {
+            ct = "void*";
+        }
+        if ((haki_string_length(out) > ((int64_t)0LL))) {
+            out = haki_string_concat(out, ";");
+        }
+        out = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(out, n), "#"), ct), "#"), hty);
+        i = (i + ((int64_t)1LL));
+    }
+    return (const char*)(intptr_t)(out);
+}
+
+const char* cemit__capFieldAt(const char* list, int64_t idx, int64_t field) {
+    void* parts = (void*)(tinfer__splitOn(list, ";"));
+    if ((idx >= haki_array_length(parts))) {
+        return (const char*)(intptr_t)("");
+    }
+    void* fields = (void*)(tinfer__splitOn((*((void**)haki_array_get(parts, idx))), "#"));
+    if ((field >= haki_array_length(fields))) {
+        return (const char*)(intptr_t)("");
+    }
+    return (const char*)(intptr_t)((*((void**)haki_array_get(fields, field))));
+}
+
+const char* cemit__capNameAt(const char* list, int64_t idx) {
+    return (const char*)(intptr_t)(cemit__capFieldAt(list, idx, ((int64_t)0LL)));
+}
+
+const char* cemit__capTyAt(const char* list, int64_t idx) {
+    const char* t = (const char*)(intptr_t)(cemit__capFieldAt(list, idx, ((int64_t)1LL)));
+    if ((haki_string_length(t) == ((int64_t)0LL))) {
+        return (const char*)(intptr_t)("void*");
+    }
+    return (const char*)(intptr_t)(t);
+}
+
+const char* cemit__capHakiTyAt(const char* list, int64_t idx) {
+    const char* t = (const char*)(intptr_t)(cemit__capFieldAt(list, idx, ((int64_t)2LL)));
+    if ((haki_string_length(t) == ((int64_t)0LL))) {
+        return (const char*)(intptr_t)("void*");
+    }
+    return (const char*)(intptr_t)(t);
+}
+
+int64_t cemit__capCount(const char* list) {
+    if ((haki_string_length(list) == ((int64_t)0LL))) {
+        return (int64_t)(intptr_t)(((int64_t)0LL));
+    }
+    return (int64_t)(intptr_t)(haki_array_length(tinfer__splitOn(list, ";")));
+}
+
+const char* cemit__cTyToHakiTy(const char* ct) {
+    if ((strcmp(ct, "int64_t") == 0)) {
+        return (const char*)(intptr_t)("int");
+    }
+    if ((strcmp(ct, "double") == 0)) {
+        return (const char*)(intptr_t)("float");
+    }
+    if ((strcmp(ct, "int8_t") == 0)) {
+        return (const char*)(intptr_t)("bool");
+    }
+    if ((strcmp(ct, "const char*") == 0)) {
+        return (const char*)(intptr_t)("string");
+    }
+    return (const char*)(intptr_t)("void*");
+}
+
+int8_t cemit__isLiftedName(const char* n) {
+    return (int8_t)(intptr_t)(((haki_string_length(n) > ((int64_t)9LL)) && (strcmp(haki_string_substring(n, ((int64_t)0LL), ((int64_t)9LL)), "__fn_lit_") == 0)));
+}
+
+const char* cemit__fnPtrCTy(const char* fnTy) {
+    int64_t n = (int64_t)(intptr_t)(haki_string_length(fnTy));
+    const char* paramPart = (const char*)(intptr_t)("");
+    const char* retPart = (const char*)(intptr_t)("void");
+    int64_t i = (int64_t)(intptr_t)(((int64_t)3LL));
+    int64_t depthP = (int64_t)(intptr_t)(((int64_t)0LL));
+    int64_t closeAt = (int64_t)(intptr_t)(((int64_t)-1LL));
+    while ((i < n)) {
+        const char* ch = (const char*)(intptr_t)(haki_string_substring(fnTy, i, (i + ((int64_t)1LL))));
+        if (((strcmp(ch, "(") == 0) || (strcmp(ch, "<") == 0))) {
+            depthP = (depthP + ((int64_t)1LL));
+        }
+        else {
+            if ((strcmp(ch, ">") == 0)) {
+                depthP = (depthP - ((int64_t)1LL));
+            }
+            else {
+                if ((strcmp(ch, ")") == 0)) {
+                    if (((depthP == ((int64_t)0LL)) && (closeAt < ((int64_t)0LL)))) {
+                        closeAt = i;
+                    }
+                    else {
+                        depthP = (depthP - ((int64_t)1LL));
+                    }
+                }
+            }
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    if ((closeAt > ((int64_t)0LL))) {
+        paramPart = haki_string_substring(fnTy, ((int64_t)3LL), closeAt);
+        if (((closeAt + ((int64_t)5LL)) <= n)) {
+            retPart = haki_string_substring(fnTy, (closeAt + ((int64_t)5LL)), n);
+        }
+    }
+    const char* cparams = (const char*)(intptr_t)("void*");
+    void* parts = (void*)(tinfer__splitCommas(paramPart));
+    int64_t pi = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((pi < haki_array_length(parts))) {
+        const char* pt = (const char*)(intptr_t)(cemit__trimSpaces((*((void**)haki_array_get(parts, pi)))));
+        if ((haki_string_length(pt) > ((int64_t)0LL))) {
+            cparams = haki_string_concat(haki_string_concat(cparams, ", "), cemit__cTy(pt));
+        }
+        pi = (pi + ((int64_t)1LL));
+    }
+    return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(cemit__cRetTy(cemit__trimSpaces(retPart)), " (*)("), cparams), ")"));
+}
+
+const char* cemit__trimSpaces(const char* s) {
+    int64_t lo = (int64_t)(intptr_t)(((int64_t)0LL));
+    int64_t hi = (int64_t)(intptr_t)(haki_string_length(s));
+    while (((lo < hi) && (strcmp(haki_string_substring(s, lo, (lo + ((int64_t)1LL))), " ") == 0))) {
+        lo = (lo + ((int64_t)1LL));
+    }
+    while (((hi > lo) && (strcmp(haki_string_substring(s, (hi - ((int64_t)1LL)), hi), " ") == 0))) {
+        hi = (hi - ((int64_t)1LL));
+    }
+    return (const char*)(intptr_t)(haki_string_substring(s, lo, hi));
+}
+
+void* cemit__genericTagsForCall(void* declTys, void* args, int64_t depth, tinfer__Scope* sc, typeck__SymTable* sym) {
+    void* seen = haki_array_new(sizeof(void*));
+    void* tags = haki_array_new(sizeof(void*));
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_array_length(declTys))) {
+        const char* dt = (const char*)(intptr_t)((*((void**)haki_array_get(declTys, i))));
+        if (mono__isGenericTy(dt)) {
+            int8_t already = (int8_t)(intptr_t)(0);
+            { void* __arr_s = seen;
+              int64_t __len_s = haki_array_length(__arr_s);
+              for (int64_t __i_s = 0; __i_s < __len_s; __i_s++) {
+                    const char* s = (const char*)*(void**)haki_array_get(__arr_s, __i_s);
+                    if ((strcmp(s, dt) == 0)) {
+                        already = 1;
+                    }
+              }
+            }
+            if ((!already)) {
+                ({ void* __el = (void*)(intptr_t)(dt); haki_array_append(seen, &__el); });
+                const char* argTy = (const char*)(intptr_t)("void*");
+                if ((i < haki_array_length(args))) {
+                    argTy = tinfer__inferWithScope(((compiler__Expr*)(*((void**)haki_array_get(args, i)))), sc, sym);
+                }
+                ({ void* __el = (void*)(intptr_t)(mono__tyTag(argTy)); haki_array_append(tags, &__el); });
+            }
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    return (void*)(intptr_t)(tags);
+}
+
+const char* cemit__emitCall(const char* name, void* args, int64_t depth, tinfer__Scope* sc, typeck__SymTable* sym) {
+    if (((haki_string_length(name) > ((int64_t)9LL)) && (strcmp(haki_string_substring(name, ((int64_t)0LL), ((int64_t)9LL)), "__mr_get_") == 0))) {
+        const char* idxStr = (const char*)(intptr_t)(haki_string_substring(name, ((int64_t)9LL), haki_string_length(name)));
+        const char* av = (const char*)(intptr_t)(cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym));
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(intptr_t)((void**)(", av), "))["), idxStr), "]"));
+    }
+    void* discStr = (void*)(tinfer__scopeLookup(sc, haki_string_concat("__v__", name)));
+    if ((haki_string_length(discStr) > ((int64_t)0LL))) {
+        if ((haki_array_length(args) == ((int64_t)0LL))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("({ void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = ", discStr), "LL; ((void**)__ev)[1] = NULL; __ev; })"));
+        }
+        const char* safeName = (const char*)(intptr_t)(cemit__cName(name));
+        const char* payStr = (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("({ void** __pay_", safeName), " = (void**)malloc(sizeof(void*) * "), haki_int_to_string(haki_array_length(args))), "); "));
+        int64_t ai = (int64_t)(intptr_t)(((int64_t)0LL));
+        while ((ai < haki_array_length(args))) {
+            const char* argC = (const char*)(intptr_t)(cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ai)))), depth, sc, sym));
+            void* argTy = (void*)(tinfer__inferWithScope(((compiler__Expr*)(*((void**)haki_array_get(args, ai)))), sc, sym));
+            const char* boxedArg = (const char*)(intptr_t)(haki_string_concat(haki_string_concat("(void*)(", argC), ")"));
+            if (((strcmp(argTy, "int") == 0) || (strcmp(argTy, "bool") == 0))) {
+                boxedArg = haki_string_concat(haki_string_concat("({ int64_t* __pi = malloc(sizeof(int64_t)); *__pi = (int64_t)(", argC), "); (void*)__pi; })");
+            }
+            else {
+                if ((strcmp(argTy, "string") == 0)) {
+                    boxedArg = haki_string_concat(haki_string_concat("({ const char** __ps = malloc(sizeof(const char*)); *__ps = (", argC), "); (void*)__ps; })");
+                }
+            }
+            payStr = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(payStr, "__pay_"), safeName), "["), haki_int_to_string(ai)), "] = "), boxedArg), "; ");
+            ai = (ai + ((int64_t)1LL));
+        }
+        payStr = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(payStr, "void* __ev = malloc(sizeof(void*)*2); ((int64_t*)__ev)[0] = "), discStr), "LL; ((void**)__ev)[1] = (void*)__pay_"), safeName), "; __ev; })");
+        return (const char*)(intptr_t)(payStr);
+    }
+    if (((strcmp(name, "print") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_print(", cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym)), ")"));
+    }
+    if (((strcmp(name, "print_int") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_print_int(", cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym)), ")"));
+    }
+    if (((strcmp(name, "print_bool") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_print_bool(", cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym)), ")"));
+    }
+    if (((strcmp(name, "print_float") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_print_float(", cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym)), ")"));
+    }
+    if (((strcmp(name, "int_to_string") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_int_to_string(", cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym)), ")"));
+    }
+    if (((strcmp(name, "bool_to_string") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_bool_to_string(", cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym)), ")"));
+    }
+    if (((strcmp(name, "string_length") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_string_length(", cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym)), ")"));
+    }
+    if ((strcmp(name, "panic") == 0)) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_panic(", cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym)), ")"));
+    }
+    if ((strcmp(name, "argv") == 0)) {
+        return (const char*)(intptr_t)("haki_argv()");
+    }
+    if ((strcmp(name, "readFile") == 0)) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_read_file(", cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym)), ")"));
+    }
+    if (((strcmp(name, "writeFile") == 0) && (haki_array_length(args) == ((int64_t)2LL)))) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_write_file(", cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym)), ", "), cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)1LL))))), depth, sc, sym)), ")"));
+    }
+    if ((strcmp(name, "fileExists") == 0)) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_file_exists(", cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym)), ")"));
+    }
+    if (((strcmp(name, "runCmd") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_run_cmd(", cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym)), ")"));
+    }
+    if (((haki_string_length(name) > ((int64_t)14LL)) && (strcmp(haki_string_substring(name, ((int64_t)0LL), ((int64_t)14LL)), "__typed_ctor__") == 0))) {
+        return (const char*)(intptr_t)("haki_array_new(sizeof(void*))");
+    }
+    if (((strcmp(name, "__spawn__") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+        const char* spC = (const char*)(intptr_t)(cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym));
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("({ void** __sp = (void**)(", spC), "); ((void (*)(void*))__sp[0])(__sp[1]); })"));
+    }
+    if (((strcmp(name, "run_async") == 0) && (haki_array_length(args) == ((int64_t)1LL)))) {
+        const char* raName = (const char*)(intptr_t)(({ void* __msc = (void*)(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL)))))); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 8LL) { const char* n = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(n); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        if ((haki_string_length(raName) > ((int64_t)0LL))) {
+            const char* raCall = (const char*)(intptr_t)(cemit__cName(raName));
+            void* raQual = (void*)(tinfer__scopeLookup(sc, haki_string_concat("__fnqual__", raName)));
+            if ((haki_string_length(raQual) > ((int64_t)0LL))) {
+                raCall = cemit__cName(raQual);
+            }
+            return (const char*)(intptr_t)(haki_string_concat(raCall, "()"));
+        }
+    }
+    if (((strcmp(name, "timeout") == 0) && (haki_array_length(args) == ((int64_t)2LL)))) {
+        const char* toOp = (const char*)(intptr_t)(cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym));
+        const char* toMs = (const char*)(intptr_t)(cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)1LL))))), depth, sc, sym));
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("({ int64_t __to_t0 = haki_time_now_ms(); void* __to_r = (void*)(intptr_t)(", toOp), "); ((haki_time_now_ms() - __to_t0) > ("), toMs), ")) ? NULL : __to_r; })"));
+    }
+    if (((strcmp(name, "Map") == 0) && (haki_array_length(args) == ((int64_t)0LL)))) {
+        return (const char*)(intptr_t)("haki_map_new(sizeof(void*))");
+    }
+    if (((strcmp(name, "Array") == 0) && (haki_array_length(args) == ((int64_t)0LL)))) {
+        return (const char*)(intptr_t)("haki_array_new(sizeof(void*))");
+    }
+    if ((strcmp(name, "Error") == 0)) {
+        if ((haki_array_length(args) == ((int64_t)1LL))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_error_new(", cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym)), ")"));
+        }
+    }
+    if ((haki_string_contains(name, "__append") && (haki_array_length(args) == ((int64_t)2LL)))) {
+        const char* av = (const char*)(intptr_t)(cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)1LL))))), depth, sc, sym));
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("({ void* __el = (void*)(", av), "); haki_array_append("), cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym)), ", &__el); })"));
+    }
+    if ((haki_string_contains(name, "__length") && (haki_array_length(args) == ((int64_t)1LL)))) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("haki_array_length(", cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym)), ")"));
+    }
+    if ((haki_string_contains(name, "__has") && (haki_array_length(args) == ((int64_t)2LL)))) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_map_has(", cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym)), ", "), cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)1LL))))), depth, sc, sym)), ")"));
+    }
+    if ((haki_string_contains(name, "__set") && (haki_array_length(args) == ((int64_t)3LL)))) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_map_set(", cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym)), ", "), cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)1LL))))), depth, sc, sym)), ", "), cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)2LL))))), depth, sc, sym)), ")"));
+    }
+    if ((haki_string_contains(name, "__getOrDefault") && (haki_array_length(args) == ((int64_t)3LL)))) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("haki_map_get_or_default(", cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)0LL))))), depth, sc, sym)), ", "), cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)1LL))))), depth, sc, sym)), ", "), cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ((int64_t)2LL))))), depth, sc, sym)), ")"));
+    }
+    void* structFieldsStr = (void*)(tinfer__scopeLookup(sc, haki_string_concat("__sf__", name)));
+    if ((haki_string_length(structFieldsStr) > ((int64_t)0LL))) {
+        const char* cn = (const char*)(intptr_t)(cemit__cName(name));
+        const char* ns = (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("({ ", cn), "* __c_"), cn), " = ("), cn), "*)malloc(sizeof("), cn), ")); "));
+        int64_t ai = (int64_t)(intptr_t)(((int64_t)0LL));
+        while ((ai < haki_array_length(args))) {
+            const char* fname = (const char*)(intptr_t)(cemit__getFieldAt(structFieldsStr, ai));
+            ns = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ns, "__c_"), cn), "->"), fname), " = "), cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, ai)))), depth, sc, sym)), "; ");
+            ai = (ai + ((int64_t)1LL));
+        }
+        ns = haki_string_concat(haki_string_concat(haki_string_concat(ns, "__c_"), cn), "; })");
+        return (const char*)(intptr_t)(ns);
+    }
+    void* genMeta = (void*)(tinfer__scopeLookup(sc, haki_string_concat("__gen__", name)));
+    if ((haki_string_length(genMeta) > ((int64_t)0LL))) {
+        void* metaParts = (void*)(tinfer__splitBars(genMeta));
+        if ((haki_array_length(metaParts) >= ((int64_t)2LL))) {
+            void* baseName = (void*)((*((void**)haki_array_get(metaParts, ((int64_t)0LL)))));
+            void* declTyStr = (void*)((*((void**)haki_array_get(metaParts, ((int64_t)1LL)))));
+            void* declTys = (void*)(mono__splitTags(declTyStr));
+            void* tags = (void*)(cemit__genericTagsForCall(declTys, args, depth, sc, sym));
+            const char* tagStr = (const char*)(intptr_t)("");
+            int64_t ti = (int64_t)(intptr_t)(((int64_t)0LL));
+            while ((ti < haki_array_length(tags))) {
+                if ((ti > ((int64_t)0LL))) {
+                    tagStr = haki_string_concat(tagStr, ",");
+                }
+                tagStr = haki_string_concat(tagStr, (*((void**)haki_array_get(tags, ti))));
+                ti = (ti + ((int64_t)1LL));
+            }
+            typeck__symRecordGeneric(sym, baseName, tagStr);
+            const char* gArgStr = (const char*)(intptr_t)("");
+            int64_t gi = (int64_t)(intptr_t)(((int64_t)0LL));
+            while ((gi < haki_array_length(args))) {
+                if ((gi > ((int64_t)0LL))) {
+                    gArgStr = haki_string_concat(gArgStr, ", ");
+                }
+                gArgStr = haki_string_concat(gArgStr, cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, gi)))), depth, sc, sym));
+                gi = (gi + ((int64_t)1LL));
+            }
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(cemit__cName(mono__genericMangle(baseName, tags)), "("), gArgStr), ")"));
+        }
+    }
+    void* localTy = (void*)(tinfer__scopeGet(sc, name));
+    if (((haki_string_length(localTy) > ((int64_t)4LL)) && (strcmp(haki_string_substring(localTy, ((int64_t)0LL), ((int64_t)3LL)), "fn(") == 0))) {
+        const char* fArgStr = (const char*)(intptr_t)("");
+        int64_t fi = (int64_t)(intptr_t)(((int64_t)0LL));
+        while ((fi < haki_array_length(args))) {
+            if ((fi > ((int64_t)0LL))) {
+                fArgStr = haki_string_concat(fArgStr, ", ");
+            }
+            fArgStr = haki_string_concat(fArgStr, cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, fi)))), depth, sc, sym));
+            fi = (fi + ((int64_t)1LL));
+        }
+        const char* sep = (const char*)(intptr_t)("");
+        if ((haki_string_length(fArgStr) > ((int64_t)0LL))) {
+            sep = ", ";
+        }
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("({ void** __cp = (void**)(", cemit__cName(name)), "); (("), cemit__fnPtrCTy(localTy)), ")__cp[0])(__cp[1]"), sep), fArgStr), "); })"));
+    }
+    const char* argStr = (const char*)(intptr_t)("");
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_array_length(args))) {
+        if ((i > ((int64_t)0LL))) {
+            argStr = haki_string_concat(argStr, ", ");
+        }
+        argStr = haki_string_concat(argStr, cemit__emitExpr(((compiler__Expr*)(*((void**)haki_array_get(args, i)))), depth, sc, sym));
+        i = (i + ((int64_t)1LL));
+    }
+    const char* callName = (const char*)(intptr_t)(cemit__cName(name));
+    void* qualName = (void*)(tinfer__scopeLookup(sc, haki_string_concat("__fnqual__", name)));
+    if ((haki_string_length(qualName) > ((int64_t)0LL))) {
+        callName = cemit__cName(qualName);
+    }
+    return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(callName, "("), argStr), ")"));
+}
+
+const char* cemit__emitStmt(compiler__Stmt* stmt, int64_t depth, tinfer__Scope* sc, typeck__SymTable* sym, int8_t inMain) {
+    const char* ind = (const char*)(intptr_t)(cemit__indent(depth));
+    const char* tag = (const char*)(intptr_t)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t isMut = *(int64_t*)((void**)__mpayload)[0]; const char* name = *(const char**)((void**)__mpayload)[1]; Expr* init = (Expr*)((void**)__mpayload)[2]; __mr = (void*)("let"); __mdone = 1; } if (!__mdone && __mtag == 1LL) { void* vals = (void*)((void**)__mpayload)[0]; __mr = (void*)("return"); __mdone = 1; } if (!__mdone && __mtag == 2LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)("yield"); __mdone = 1; } if (!__mdone && __mtag == 3LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)("defer"); __mdone = 1; } if (!__mdone && __mtag == 4LL) { __mr = (void*)("continue"); __mdone = 1; } if (!__mdone && __mtag == 5LL) { __mr = (void*)("break"); __mdone = 1; } if (!__mdone && __mtag == 6LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)("expr"); __mdone = 1; } if (!__mdone && __mtag == 10LL) { Expr* target = (Expr*)((void**)__mpayload)[0]; Expr* val = (Expr*)((void**)__mpayload)[1]; __mr = (void*)("assign"); __mdone = 1; } if (!__mdone && __mtag == 11LL) { Expr* target = (Expr*)((void**)__mpayload)[0]; const char* op = *(const char**)((void**)__mpayload)[1]; Expr* val = (Expr*)((void**)__mpayload)[2]; __mr = (void*)("compound"); __mdone = 1; } if (!__mdone && __mtag == 12LL) { void* attrs = (void*)((void**)__mpayload)[0]; Stmt* inner = (Stmt*)((void**)__mpayload)[1]; __mr = (void*)("annotated"); __mdone = 1; } if (!__mdone && __mtag == 7LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)("if"); __mdone = 1; } if (!__mdone && __mtag == 8LL) { Expr* cond = (Expr*)((void**)__mpayload)[0]; void* body = (void*)((void**)__mpayload)[1]; __mr = (void*)("while"); __mdone = 1; } if (!__mdone && __mtag == 9LL) { const char* v = *(const char**)((void**)__mpayload)[0]; Expr* iter = (Expr*)((void**)__mpayload)[1]; void* body = (void*)((void**)__mpayload)[2]; __mr = (void*)("for"); __mdone = 1; } if (!__mdone && __mtag == 13LL) { void* blk = (void*)((void**)__mpayload)[0]; __mr = (void*)("block"); __mdone = 1; } (void)__mdone; __mr;}));
+    if ((strcmp(tag, "let") == 0)) {
+        int64_t isMut = (int64_t)(intptr_t)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t isMut = *(int64_t*)((void**)__mpayload)[0]; const char* name = *(const char**)((void**)__mpayload)[1]; Expr* init = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(isMut); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* name = (const char*)(intptr_t)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t isMut = *(int64_t*)((void**)__mpayload)[0]; const char* name = *(const char**)((void**)__mpayload)[1]; Expr* init = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(name); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        Expr* init = (Expr*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t isMut = *(int64_t*)((void**)__mpayload)[0]; const char* name = *(const char**)((void**)__mpayload)[1]; Expr* init = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(init); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        return (const char*)(intptr_t)(cemit__emitLet(name, init, depth, sc, sym));
+    }
+    if ((strcmp(tag, "return") == 0)) {
+        void* vals = (void*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 1LL) { void* vals = (void*)((void**)__mpayload)[0]; __mr = (void*)(vals); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyExprs()); __mdone = 1; } (void)__mdone; __mr;}));
+        if ((haki_array_length(vals) == ((int64_t)0LL))) {
+            if (inMain) {
+                return (const char*)(intptr_t)(haki_string_concat(ind, "return 0;\n"));
+            }
+            return (const char*)(intptr_t)(haki_string_concat(ind, "return;\n"));
+        }
+        if ((haki_array_length(vals) == ((int64_t)1LL))) {
+            const char* rv = (const char*)(intptr_t)(cemit__emitExpr((*((void**)haki_array_get(vals, ((int64_t)0LL)))), depth, sc, sym));
+            void* rcty = (void*)(tinfer__scopeLookup(sc, "__retcty__"));
+            if (((haki_string_length(rcty) > ((int64_t)0LL)) && (strcmp(rcty, "void") != 0))) {
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(ind, "return "), cemit__castTo(rcty, rv)), ";\n"));
+            }
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(ind, "return "), rv), ";\n"));
+        }
+        const char* n = (const char*)(intptr_t)(haki_int_to_string(haki_array_length(vals)));
+        const char* s = (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ind, "__Tuple"), n), "* __ret = (__Tuple"), n), "*)malloc(sizeof(__Tuple"), n), "));\n"));
+        int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+        while ((i < haki_array_length(vals))) {
+            const char* ve = (const char*)(intptr_t)(cemit__emitExpr((*((void**)haki_array_get(vals, i))), depth, sc, sym));
+            const char* si = (const char*)(intptr_t)(haki_int_to_string(i));
+            void* vty = (void*)(tinfer__inferWithScope((*((void**)haki_array_get(vals, i))), sc, sym));
+            if (((strcmp(vty, "bool") == 0) || (strcmp(vty, "int") == 0))) {
+                s = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(s, ind), "__ret->f"), si), " = (void*)(int64_t)("), ve), ");\n");
+            }
+            else {
+                s = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(s, ind), "__ret->f"), si), " = (void*)("), ve), ");\n");
+            }
+            i = (i + ((int64_t)1LL));
+        }
+        s = haki_string_concat(haki_string_concat(s, ind), "return __ret;\n");
+        return (const char*)(intptr_t)(s);
+    }
+    if ((strcmp(tag, "yield") == 0)) {
+        return (const char*)(intptr_t)("/* yield — handled by parent */\n");
+    }
+    if ((strcmp(tag, "defer") == 0)) {
+        return (const char*)(intptr_t)("/* defer — handled by parent */\n");
+    }
+    if ((strcmp(tag, "continue") == 0)) {
+        return (const char*)(intptr_t)(haki_string_concat(ind, "continue;\n"));
+    }
+    if ((strcmp(tag, "break") == 0)) {
+        return (const char*)(intptr_t)(haki_string_concat(ind, "break;\n"));
+    }
+    if ((strcmp(tag, "expr") == 0)) {
+        Expr* e = (Expr*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 6LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)(e); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* es = (const char*)(intptr_t)(cemit__emitExpr(e, depth, sc, sym));
+        if ((haki_string_length(es) > ((int64_t)0LL))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(ind, es), ";\n"));
+        }
+        return (const char*)(intptr_t)("");
+    }
+    if ((strcmp(tag, "assign") == 0)) {
+        Expr* target = (Expr*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 10LL) { Expr* t = (Expr*)((void**)__mpayload)[0]; Expr* v = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(t); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        Expr* val = (Expr*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 10LL) { Expr* t = (Expr*)((void**)__mpayload)[0]; Expr* v = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(v); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        int8_t targetIsIndex = (int8_t)(intptr_t)(({ void* __msc = (void*)(target); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 14LL) { Expr* a = (Expr*)((void**)__mpayload)[0]; Expr* idx = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(1); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+        if (targetIsIndex) {
+            Expr* arrExpr = (Expr*)(({ void* __msc = (void*)(target); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 14LL) { Expr* a = (Expr*)((void**)__mpayload)[0]; Expr* idx = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(a); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+            Expr* idxExpr = (Expr*)(({ void* __msc = (void*)(target); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 14LL) { Expr* a = (Expr*)((void**)__mpayload)[0]; Expr* idx = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(idx); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+            const char* arrC = (const char*)(intptr_t)(cemit__emitExpr(arrExpr, depth, sc, sym));
+            const char* idxC = (const char*)(intptr_t)(cemit__emitExpr(idxExpr, depth, sc, sym));
+            const char* valC = (const char*)(intptr_t)(cemit__emitExpr(val, depth, sc, sym));
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ind, "*((void**)haki_array_get("), arrC), ", "), idxC), ")) = (void*)(intptr_t)("), valC), ");\n"));
+        }
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ind, cemit__emitExpr(target, depth, sc, sym)), " = "), cemit__emitExpr(val, depth, sc, sym)), ";\n"));
+    }
+    if ((strcmp(tag, "compound") == 0)) {
+        Expr* target = (Expr*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { Expr* t = (Expr*)((void**)__mpayload)[0]; const char* op = *(const char**)((void**)__mpayload)[1]; Expr* v = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(t); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* op = (const char*)(intptr_t)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { Expr* t = (Expr*)((void**)__mpayload)[0]; const char* op = *(const char**)((void**)__mpayload)[1]; Expr* v = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(op); __mdone = 1; } if (!__mdone) { __mr = (void*)("+"); __mdone = 1; } (void)__mdone; __mr;}));
+        Expr* val = (Expr*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { Expr* t = (Expr*)((void**)__mpayload)[0]; const char* op = *(const char**)((void**)__mpayload)[1]; Expr* v = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(v); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* te = (const char*)(intptr_t)(cemit__emitExpr(target, depth, sc, sym));
+        const char* ve = (const char*)(intptr_t)(cemit__emitExpr(val, depth, sc, sym));
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ind, te), " = "), te), " "), op), " "), ve), ";\n"));
+    }
+    if ((strcmp(tag, "annotated") == 0)) {
+        Stmt* inner = (Stmt*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 12LL) { void* attrs = (void*)((void**)__mpayload)[0]; Stmt* s = (Stmt*)((void**)__mpayload)[1]; __mr = (void*)(s); __mdone = 1; } if (!__mdone) { __mr = (void*)(stmt); __mdone = 1; } (void)__mdone; __mr;}));
+        return (const char*)(intptr_t)(cemit__emitStmt(inner, depth, sc, sym, inMain));
+    }
+    if ((strcmp(tag, "if") == 0)) {
+        Expr* cond = (Expr*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 7LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)(c); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        void* then = (void*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 7LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)(th); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+        void* els = (void*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 7LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)(el); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* s = (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(ind, "if ("), cemit__emitExpr(cond, depth, sc, sym)), ") {\n"));
+        { void* __arr_st = then;
+          int64_t __len_st = haki_array_length(__arr_st);
+          for (int64_t __i_st = 0; __i_st < __len_st; __i_st++) {
+                void* st = (void*)*(void**)haki_array_get(__arr_st, __i_st);
+                s = haki_string_concat(s, cemit__emitStmt(st, (depth + ((int64_t)1LL)), sc, sym, inMain));
+          }
+        }
+        s = haki_string_concat(haki_string_concat(s, ind), "}\n");
+        if ((haki_array_length(els) > ((int64_t)0LL))) {
+            s = haki_string_concat(haki_string_concat(s, ind), "else {\n");
+            { void* __arr_st = els;
+              int64_t __len_st = haki_array_length(__arr_st);
+              for (int64_t __i_st = 0; __i_st < __len_st; __i_st++) {
+                    void* st = (void*)*(void**)haki_array_get(__arr_st, __i_st);
+                    s = haki_string_concat(s, cemit__emitStmt(st, (depth + ((int64_t)1LL)), sc, sym, inMain));
+              }
+            }
+            s = haki_string_concat(haki_string_concat(s, ind), "}\n");
+        }
+        return (const char*)(intptr_t)(s);
+    }
+    if ((strcmp(tag, "while") == 0)) {
+        Expr* cond = (Expr*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 8LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* body = (void*)((void**)__mpayload)[1]; __mr = (void*)(c); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        void* body = (void*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 8LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* body = (void*)((void**)__mpayload)[1]; __mr = (void*)(body); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* s = (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(ind, "while ("), cemit__emitExpr(cond, depth, sc, sym)), ") {\n"));
+        { void* __arr_st = body;
+          int64_t __len_st = haki_array_length(__arr_st);
+          for (int64_t __i_st = 0; __i_st < __len_st; __i_st++) {
+                void* st = (void*)*(void**)haki_array_get(__arr_st, __i_st);
+                s = haki_string_concat(s, cemit__emitStmt(st, (depth + ((int64_t)1LL)), sc, sym, inMain));
+          }
+        }
+        s = haki_string_concat(haki_string_concat(s, ind), "}\n");
+        return (const char*)(intptr_t)(s);
+    }
+    if ((strcmp(tag, "for") == 0)) {
+        const char* varName = (const char*)(intptr_t)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 9LL) { const char* v = *(const char**)((void**)__mpayload)[0]; Expr* iter = (Expr*)((void**)__mpayload)[1]; void* body = (void*)((void**)__mpayload)[2]; __mr = (void*)(v); __mdone = 1; } if (!__mdone) { __mr = (void*)("__it"); __mdone = 1; } (void)__mdone; __mr;}));
+        Expr* iter = (Expr*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 9LL) { const char* v = *(const char**)((void**)__mpayload)[0]; Expr* iter = (Expr*)((void**)__mpayload)[1]; void* body = (void*)((void**)__mpayload)[2]; __mr = (void*)(iter); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        void* body = (void*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 9LL) { const char* v = *(const char**)((void**)__mpayload)[0]; Expr* iter = (Expr*)((void**)__mpayload)[1]; void* body = (void*)((void**)__mpayload)[2]; __mr = (void*)(body); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+        void* iterTyCheck = (void*)(tinfer__inferWithScope(iter, sc, sym));
+        if (((haki_string_length(iterTyCheck) > ((int64_t)4LL)) && (strcmp(haki_string_substring(iterTyCheck, ((int64_t)0LL), ((int64_t)4LL)), "Map<") == 0))) {
+            const char* mapInner = (const char*)(intptr_t)(haki_string_substring(iterTyCheck, ((int64_t)4LL), (haki_string_length(iterTyCheck) - ((int64_t)1LL))));
+            int64_t commaIdx = (int64_t)(intptr_t)(((int64_t)-1LL));
+            int64_t mci = (int64_t)(intptr_t)(((int64_t)0LL));
+            while ((mci < haki_string_length(mapInner))) {
+                if ((strcmp(haki_string_substring(mapInner, mci, (mci + ((int64_t)1LL))), ",") == 0)) {
+                    commaIdx = mci;
+                }
+                mci = (mci + ((int64_t)1LL));
+            }
+            const char* valTy = (const char*)(intptr_t)("int");
+            if ((commaIdx >= ((int64_t)0LL))) {
+                const char* rawValTy = (const char*)(intptr_t)(haki_string_substring(mapInner, (commaIdx + ((int64_t)1LL)), haki_string_length(mapInner)));
+                if (((haki_string_length(rawValTy) > ((int64_t)0LL)) && (strcmp(haki_string_substring(rawValTy, ((int64_t)0LL), ((int64_t)1LL)), " ") == 0))) {
+                    rawValTy = haki_string_substring(rawValTy, ((int64_t)1LL), haki_string_length(rawValTy));
+                }
+                valTy = rawValTy;
+            }
+            const char* vn = (const char*)(intptr_t)(cemit__cName(varName));
+            const char* ms = (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ind, "{ HakiMap* __mapit_"), vn), " = (HakiMap*)"), cemit__emitExpr(iter, depth, sc, sym)), ";\n"));
+            ms = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ms, ind), "  HakiArray* __keys_"), vn), " = haki_map_keys(__mapit_"), vn), ");\n");
+            ms = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ms, ind), "  int64_t __klen_"), vn), " = haki_array_length(__keys_"), vn), ");\n");
+            ms = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ms, ind), "  for (int64_t __ki_"), vn), " = 0; __ki_"), vn), " < __klen_"), vn), "; __ki_"), vn), "++) {\n");
+            ms = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ms, cemit__indent((depth + ((int64_t)2LL)))), "const char* __key_"), vn), " = (const char*)(*(void**)haki_array_get(__keys_"), vn), ", __ki_"), vn), "));\n");
+            const char* valLine = (const char*)(intptr_t)("");
+            if ((strcmp(valTy, "string") == 0)) {
+                valLine = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(cemit__indent((depth + ((int64_t)2LL))), "const char* "), vn), " = (const char*)haki_map_get(__mapit_"), vn), ", __key_"), vn), ");\n");
+                tinfer__scopeSet(sc, varName, "string");
+            }
+            else {
+                valLine = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(cemit__indent((depth + ((int64_t)2LL))), "int64_t "), vn), " = (int64_t)(intptr_t)haki_map_get(__mapit_"), vn), ", __key_"), vn), ");\n");
+                tinfer__scopeSet(sc, varName, "int");
+            }
+            ms = haki_string_concat(ms, valLine);
+            { void* __arr_st = body;
+              int64_t __len_st = haki_array_length(__arr_st);
+              for (int64_t __i_st = 0; __i_st < __len_st; __i_st++) {
+                    void* st = (void*)*(void**)haki_array_get(__arr_st, __i_st);
+                    ms = haki_string_concat(ms, cemit__emitStmt(st, (depth + ((int64_t)2LL)), sc, sym, inMain));
+              }
+            }
+            ms = haki_string_concat(haki_string_concat(ms, ind), "  }\n");
+            ms = haki_string_concat(haki_string_concat(ms, ind), "}\n");
+            return (const char*)(intptr_t)(ms);
+        }
+        const char* arrVar = (const char*)(intptr_t)(haki_string_concat("__arr_", cemit__cName(varName)));
+        const char* idxVar = (const char*)(intptr_t)(haki_string_concat("__i_", cemit__cName(varName)));
+        const char* s = (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ind, "{ void* "), arrVar), " = "), cemit__emitExpr(iter, depth, sc, sym)), ";\n"));
+        s = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(s, ind), "  int64_t __len_"), cemit__cName(varName)), " = haki_array_length("), arrVar), ");\n");
+        s = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(s, ind), "  for (int64_t "), idxVar), " = 0; "), idxVar), " < __len_"), cemit__cName(varName)), "; "), idxVar), "++) {\n");
+        void* iterTy = (void*)(tinfer__inferWithScope(iter, sc, sym));
+        const char* elemCType = (const char*)(intptr_t)("void*");
+        const char* elemHakiTy = (const char*)(intptr_t)("");
+        if (((haki_string_length(iterTy) > ((int64_t)6LL)) && (strcmp(haki_string_substring(iterTy, ((int64_t)0LL), ((int64_t)6LL)), "Array<") == 0))) {
+            const char* inner = (const char*)(intptr_t)(haki_string_substring(iterTy, ((int64_t)6LL), (haki_string_length(iterTy) - ((int64_t)1LL))));
+            elemHakiTy = inner;
+            const char* innerC = (const char*)(intptr_t)(cemit__cTy(inner));
+            if (((strcmp(innerC, "void*") != 0) && cemit__isSimpleCType(innerC))) {
+                elemCType = innerC;
+            }
+            else {
+                if (cemit__isSimpleCType(innerC)) {
+                    elemCType = innerC;
+                }
+                else {
+                    const char* innerName = (const char*)(intptr_t)(cemit__cName(inner));
+                    if (((haki_string_length(innerName) > ((int64_t)0LL)) && cemit__isSimpleCType(haki_string_concat(innerName, "*")))) {
+                        elemCType = haki_string_concat(innerName, "*");
+                    }
+                }
+            }
+        }
+        if ((haki_string_length(elemHakiTy) > ((int64_t)0LL))) {
+            tinfer__scopeSet(sc, varName, elemHakiTy);
+        }
+        s = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(s, cemit__indent((depth + ((int64_t)2LL)))), elemCType), " "), cemit__cName(varName)), " = ("), elemCType), ")*(void**)haki_array_get("), arrVar), ", "), idxVar), ");\n");
+        { void* __arr_st = body;
+          int64_t __len_st = haki_array_length(__arr_st);
+          for (int64_t __i_st = 0; __i_st < __len_st; __i_st++) {
+                void* st = (void*)*(void**)haki_array_get(__arr_st, __i_st);
+                s = haki_string_concat(s, cemit__emitStmt(st, (depth + ((int64_t)2LL)), sc, sym, inMain));
+          }
+        }
+        s = haki_string_concat(haki_string_concat(s, ind), "  }\n");
+        s = haki_string_concat(haki_string_concat(s, ind), "}\n");
+        return (const char*)(intptr_t)(s);
+    }
+    if ((strcmp(tag, "block") == 0)) {
+        void* blk = (void*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 13LL) { void* blk = (void*)((void**)__mpayload)[0]; __mr = (void*)(blk); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* s = (const char*)(intptr_t)("");
+        { void* __arr_st = blk;
+          int64_t __len_st = haki_array_length(__arr_st);
+          for (int64_t __i_st = 0; __i_st < __len_st; __i_st++) {
+                void* st = (void*)*(void**)haki_array_get(__arr_st, __i_st);
+                s = haki_string_concat(s, cemit__emitStmt(st, depth, sc, sym, inMain));
+          }
+        }
+        return (const char*)(intptr_t)(s);
+    }
+    return (const char*)(intptr_t)(haki_string_concat(ind, "/* unknown stmt */\n"));
+}
+
+const char* cemit__emitLet(const char* name, compiler__Expr* init, int64_t depth, tinfer__Scope* sc, typeck__SymTable* sym) {
+    const char* ind = (const char*)(intptr_t)(cemit__indent(depth));
+    const char* nm = (const char*)(intptr_t)(cemit__cName(name));
+    if ((strcmp(nm, "_") == 0)) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(ind, "(void)("), cemit__emitExpr(init, depth, sc, sym)), ");\n"));
+    }
+    int8_t isTypedArr = (int8_t)(intptr_t)(({ void* __msc = (void*)(init); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(((haki_string_length(n) > ((int64_t)15LL)) && (strcmp(haki_string_substring(n, ((int64_t)0LL), ((int64_t)15LL)), "__typed_array__") == 0))); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+    if (isTypedArr) {
+        const char* callN = (const char*)(intptr_t)(({ void* __msc = (void*)(init); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(n); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* elemTy = (const char*)(intptr_t)(haki_string_substring(callN, ((int64_t)15LL), haki_string_length(callN)));
+        tinfer__scopeSet(sc, name, haki_string_concat(haki_string_concat("Array<", elemTy), ">"));
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(ind, "void* "), nm), " = haki_array_new(sizeof(void*));\n"));
+    }
+    int8_t isTypedMap = (int8_t)(intptr_t)(({ void* __msc = (void*)(init); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(((haki_string_length(n) > ((int64_t)13LL)) && (strcmp(haki_string_substring(n, ((int64_t)0LL), ((int64_t)13LL)), "__typed_map__") == 0))); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+    if (isTypedMap) {
+        const char* callN2 = (const char*)(intptr_t)(({ void* __msc = (void*)(init); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(n); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* fullMapTy = (const char*)(intptr_t)(haki_string_substring(callN2, ((int64_t)13LL), haki_string_length(callN2)));
+        tinfer__scopeSet(sc, name, fullMapTy);
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(ind, "void* "), nm), " = haki_map_new(sizeof(void*));\n"));
+    }
+    int8_t isArr = (int8_t)(intptr_t)(({ void* __msc = (void*)(init); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 15LL) { void* elems = (void*)((void**)__mpayload)[0]; __mr = (void*)(1); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+    if (isArr) {
+        void* elems = (void*)(({ void* __msc = (void*)(init); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 15LL) { void* elems = (void*)((void**)__mpayload)[0]; __mr = (void*)(elems); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyExprs()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* s = (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(ind, "void* "), nm), " = haki_array_new(sizeof(void*));\n"));
+        const char* arrElemTy = (const char*)(intptr_t)("void");
+        if ((haki_array_length(elems) > ((int64_t)0LL))) {
+            void* ft = (void*)(tinfer__inferWithScope((*((void**)haki_array_get(elems, ((int64_t)0LL)))), sc, sym));
+            if ((haki_string_length(ft) > ((int64_t)0LL))) {
+                arrElemTy = ft;
+            }
+        }
+        tinfer__scopeSet(sc, name, haki_string_concat(haki_string_concat("Array<", arrElemTy), ">"));
+        { void* __arr_el = elems;
+          int64_t __len_el = haki_array_length(__arr_el);
+          for (int64_t __i_el = 0; __i_el < __len_el; __i_el++) {
+                void* el = (void*)*(void**)haki_array_get(__arr_el, __i_el);
+                const char* ev = (const char*)(intptr_t)(cemit__emitExpr(el, depth, sc, sym));
+                s = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(s, ind), "{ void* __el = (void*)(intptr_t)("), ev), "); haki_array_append("), nm), ", &__el); }\n");
+          }
+        }
+        return (const char*)(intptr_t)(s);
+    }
+    int8_t isCall = (int8_t)(intptr_t)(({ void* __msc = (void*)(init); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(1); __mdone = 1; } if (!__mdone) { __mr = (void*)(0); __mdone = 1; } (void)__mdone; __mr;}));
+    if (isCall) {
+        const char* callName = (const char*)(intptr_t)(({ void* __msc = (void*)(init); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(n); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        void* callArgs = (void*)(({ void* __msc = (void*)(init); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(args); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyExprs()); __mdone = 1; } (void)__mdone; __mr;}));
+        if (((strcmp(callName, "Error") == 0) && (haki_array_length(callArgs) == ((int64_t)1LL)))) {
+            return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ind, "void* "), nm), " = haki_error_new("), cemit__emitExpr((*((void**)haki_array_get(callArgs, ((int64_t)0LL)))), depth, sc, sym)), ");\n"));
+        }
+    }
+    const char* initStr = (const char*)(intptr_t)(cemit__emitExpr(init, depth, sc, sym));
+    void* inferredTy = (void*)(tinfer__inferWithScope(init, sc, sym));
+    const char* ctype = (const char*)(intptr_t)(cemit__cTy(inferredTy));
+    tinfer__scopeSet(sc, name, inferredTy);
+    if ((haki_string_length(tinfer__scopeLookup(sc, haki_string_concat("__boxed__", name))) > ((int64_t)0LL))) {
+        if ((!cemit__isSimpleCType(ctype))) {
+            ctype = "void*";
+        }
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ind, ctype), "* "), nm), " = ("), ctype), "*)malloc(sizeof("), ctype), ")); *"), nm), " = ("), ctype), ")("), initStr), ");\n"));
+    }
+    if ((strcmp(ctype, "int64_t") == 0)) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ind, "int64_t "), nm), " = "), cemit__castTo("int64_t", initStr)), ";\n"));
+    }
+    if ((strcmp(ctype, "double") == 0)) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ind, "double "), nm), " = "), initStr), ";\n"));
+    }
+    if ((strcmp(ctype, "int8_t") == 0)) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ind, "int8_t "), nm), " = "), cemit__castTo("int8_t", initStr)), ";\n"));
+    }
+    if ((strcmp(ctype, "const char*") == 0)) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ind, "const char* "), nm), " = "), cemit__castTo("const char*", initStr)), ";\n"));
+    }
+    if ((strcmp(ctype, "void*") == 0)) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ind, "void* "), nm), " = (void*)("), initStr), ");\n"));
+    }
+    if (cemit__isSimpleCType(ctype)) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ind, ctype), " "), nm), " = ("), ctype), ")("), initStr), ");\n"));
+    }
+    return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ind, "void* "), nm), " = (void*)("), initStr), ");\n"));
+}
+
+const char* cemit__emitFnProto(mono__MonoFn* f) {
+    const char* ret = (const char*)(intptr_t)(cemit__cRetTy(f->retTy));
+    const char* params = (const char*)(intptr_t)("");
+    if (cemit__isLiftedName(f->name)) {
+        params = "void* __env";
+    }
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_array_length(f->params))) {
+        if ((haki_string_length(params) > ((int64_t)0LL))) {
+            params = haki_string_concat(params, ", ");
+        }
+        params = haki_string_concat(haki_string_concat(haki_string_concat(params, cemit__cTy(((compiler__Param*)(*((void**)haki_array_get(f->params, i))))->ty)), " "), cemit__cName(((compiler__Param*)(*((void**)haki_array_get(f->params, i))))->name));
+        i = (i + ((int64_t)1LL));
+    }
+    if ((strcmp(f->name, "main") == 0)) {
+        return (const char*)(intptr_t)("int main(int argc, char** argv)");
+    }
+    if ((haki_string_length(params) == ((int64_t)0LL))) {
+        params = "void";
+    }
+    return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(ret, " "), cemit__cName(f->name)), "("), params), ")"));
+}
+
+const char* cemit__emitFn(mono__MonoFn* f, typeck__SymTable* sym, void* enums, void* structs, void* fns, void* generics) {
+    FnDef* fnDef = (FnDef*)(compiler__makeFnDef(f->name, f->params, f->retTy, f->body));
+    void* sc = (void*)(tinfer__buildFnScope(fnDef, sym));
+    { void* __arr_edef = enums;
+      int64_t __len_edef = haki_array_length(__arr_edef);
+      for (int64_t __i_edef = 0; __i_edef < __len_edef; __i_edef++) {
+            mono__EnumDef* edef = (mono__EnumDef*)*(void**)haki_array_get(__arr_edef, __i_edef);
+            int64_t vi = (int64_t)(intptr_t)(((int64_t)0LL));
+            while ((vi < haki_array_length(edef->variants))) {
+                const char* combined = (const char*)(intptr_t)((*((void**)haki_array_get(edef->variants, vi))));
+                const char* vname = (const char*)(intptr_t)(combined);
+                const char* vpayTy = (const char*)(intptr_t)("");
+                int64_t ci = (int64_t)(intptr_t)(((int64_t)0LL));
+                while ((ci < haki_string_length(combined))) {
+                    if ((strcmp(haki_string_substring(combined, ci, (ci + ((int64_t)1LL))), ":") == 0)) {
+                        vname = haki_string_substring(combined, ((int64_t)0LL), ci);
+                        vpayTy = haki_string_substring(combined, (ci + ((int64_t)1LL)), haki_string_length(combined));
+                        ci = haki_string_length(combined);
+                    }
+                    ci = (ci + ((int64_t)1LL));
+                }
+                tinfer__scopeSet(sc, haki_string_concat("__v__", vname), haki_int_to_string(vi));
+                if ((haki_string_length(vpayTy) > ((int64_t)0LL))) {
+                    tinfer__scopeSet(sc, haki_string_concat("__vt__", vname), vpayTy);
+                }
+                vi = (vi + ((int64_t)1LL));
+            }
+      }
+    }
+    { void* __arr_s = structs;
+      int64_t __len_s = haki_array_length(__arr_s);
+      for (int64_t __i_s = 0; __i_s < __len_s; __i_s++) {
+            compiler__StructDef* s = (compiler__StructDef*)*(void**)haki_array_get(__arr_s, __i_s);
+            const char* fieldStr = (const char*)(intptr_t)("");
+            int64_t fi = (int64_t)(intptr_t)(((int64_t)0LL));
+            const char* unqualSname = (const char*)(intptr_t)(s->name);
+            int64_t lastSepS = (int64_t)(intptr_t)(((int64_t)0LL));
+            int64_t sni = (int64_t)(intptr_t)(((int64_t)0LL));
+            int64_t snlen = (int64_t)(intptr_t)(haki_string_length(s->name));
+            while ((sni < (snlen - ((int64_t)1LL)))) {
+                if ((strcmp(haki_string_substring(s->name, sni, (sni + ((int64_t)2LL))), "__") == 0)) {
+                    lastSepS = (sni + ((int64_t)2LL));
+                }
+                sni = (sni + ((int64_t)1LL));
+            }
+            if ((lastSepS > ((int64_t)0LL))) {
+                unqualSname = haki_string_substring(s->name, lastSepS, snlen);
+            }
+            while ((fi < haki_array_length(s->fields))) {
+                if ((fi > ((int64_t)0LL))) {
+                    fieldStr = haki_string_concat(fieldStr, ",");
+                }
+                fieldStr = haki_string_concat(fieldStr, ((Param*)(*((void**)haki_array_get(s->fields, fi))))->name);
+                tinfer__scopeSet(sc, haki_string_concat(haki_string_concat(haki_string_concat("__sft__", s->name), "__"), ((Param*)(*((void**)haki_array_get(s->fields, fi))))->name), ((Param*)(*((void**)haki_array_get(s->fields, fi))))->ty);
+                if ((strcmp(unqualSname, s->name) != 0)) {
+                    tinfer__scopeSet(sc, haki_string_concat(haki_string_concat(haki_string_concat("__sft__", unqualSname), "__"), ((Param*)(*((void**)haki_array_get(s->fields, fi))))->name), ((Param*)(*((void**)haki_array_get(s->fields, fi))))->ty);
+                }
+                fi = (fi + ((int64_t)1LL));
+            }
+            tinfer__scopeSet(sc, haki_string_concat("__sf__", s->name), fieldStr);
+            if ((strcmp(unqualSname, s->name) != 0)) {
+                tinfer__scopeSet(sc, haki_string_concat("__sf__", unqualSname), fieldStr);
+            }
+      }
+    }
+    int64_t cmFirstSep = (int64_t)(intptr_t)(((int64_t)0LL));
+    int64_t cmsi = (int64_t)(intptr_t)(((int64_t)0LL));
+    int8_t cmFound = (int8_t)(intptr_t)(0);
+    int64_t cmFnLen = (int64_t)(intptr_t)(haki_string_length(f->name));
+    while ((cmsi < (cmFnLen - ((int64_t)1LL)))) {
+        if (((!cmFound) && (strcmp(haki_string_substring(f->name, cmsi, (cmsi + ((int64_t)2LL))), "__") == 0))) {
+            cmFirstSep = cmsi;
+            cmFound = 1;
+        }
+        cmsi = (cmsi + ((int64_t)1LL));
+    }
+    if ((cmFound && (cmFirstSep > ((int64_t)0LL)))) {
+        const char* maybeCls = (const char*)(intptr_t)(haki_string_substring(f->name, ((int64_t)0LL), cmFirstSep));
+        { void* __arr_s3 = structs;
+          int64_t __len_s3 = haki_array_length(__arr_s3);
+          for (int64_t __i_s3 = 0; __i_s3 < __len_s3; __i_s3++) {
+                compiler__StructDef* s3 = (compiler__StructDef*)*(void**)haki_array_get(__arr_s3, __i_s3);
+                if ((strcmp(s3->name, maybeCls) == 0)) {
+                    { void* __arr_fld3 = s3->fields;
+                      int64_t __len_fld3 = haki_array_length(__arr_fld3);
+                      for (int64_t __i_fld3 = 0; __i_fld3 < __len_fld3; __i_fld3++) {
+                            Param* fld3 = (Param*)*(void**)haki_array_get(__arr_fld3, __i_fld3);
+                            tinfer__scopeSet(sc, haki_string_concat("__selffld__", fld3->name), fld3->ty);
+                      }
+                    }
+                }
+          }
+        }
+    }
+    { void* __arr_mf = fns;
+      int64_t __len_mf = haki_array_length(__arr_mf);
+      for (int64_t __i_mf = 0; __i_mf < __len_mf; __i_mf++) {
+            mono__MonoFn* mf = (mono__MonoFn*)*(void**)haki_array_get(__arr_mf, __i_mf);
+            tinfer__scopeSet(sc, haki_string_concat("__fn__", mf->name), mf->retTy);
+            int64_t lastSep = (int64_t)(intptr_t)(((int64_t)0LL));
+            int64_t fni = (int64_t)(intptr_t)(((int64_t)0LL));
+            int64_t fnlen = (int64_t)(intptr_t)(haki_string_length(mf->name));
+            while ((fni < (fnlen - ((int64_t)1LL)))) {
+                if ((strcmp(haki_string_substring(mf->name, fni, (fni + ((int64_t)2LL))), "__") == 0)) {
+                    lastSep = (fni + ((int64_t)2LL));
+                }
+                fni = (fni + ((int64_t)1LL));
+            }
+            if ((lastSep > ((int64_t)0LL))) {
+                const char* unqualName = (const char*)(intptr_t)(haki_string_substring(mf->name, lastSep, fnlen));
+                tinfer__scopeSet(sc, haki_string_concat("__fn__", unqualName), mf->retTy);
+                tinfer__scopeSet(sc, haki_string_concat("__fnqual__", unqualName), mf->name);
+            }
+      }
+    }
+    const char* ownPrefix = (const char*)(intptr_t)("");
+    int64_t opi = (int64_t)(intptr_t)(((int64_t)0LL));
+    int64_t opLen = (int64_t)(intptr_t)(haki_string_length(f->name));
+    int8_t opFound = (int8_t)(intptr_t)(0);
+    while ((opi < (opLen - ((int64_t)1LL)))) {
+        if (((!opFound) && (strcmp(haki_string_substring(f->name, opi, (opi + ((int64_t)2LL))), "__") == 0))) {
+            if ((opi > ((int64_t)0LL))) {
+                ownPrefix = haki_string_substring(f->name, ((int64_t)0LL), opi);
+            }
+            opFound = 1;
+        }
+        opi = (opi + ((int64_t)1LL));
+    }
+    if ((haki_string_length(ownPrefix) > ((int64_t)0LL))) {
+        const char* pfx = (const char*)(intptr_t)(haki_string_concat(ownPrefix, "__"));
+        int64_t pfxLen = (int64_t)(intptr_t)(haki_string_length(pfx));
+        { void* __arr_mf2 = fns;
+          int64_t __len_mf2 = haki_array_length(__arr_mf2);
+          for (int64_t __i_mf2 = 0; __i_mf2 < __len_mf2; __i_mf2++) {
+                mono__MonoFn* mf2 = (mono__MonoFn*)*(void**)haki_array_get(__arr_mf2, __i_mf2);
+                if (((haki_string_length(mf2->name) > pfxLen) && (strcmp(haki_string_substring(mf2->name, ((int64_t)0LL), pfxLen), pfx) == 0))) {
+                    const char* own = (const char*)(intptr_t)(haki_string_substring(mf2->name, pfxLen, haki_string_length(mf2->name)));
+                    tinfer__scopeSet(sc, haki_string_concat("__fn__", own), mf2->retTy);
+                    tinfer__scopeSet(sc, haki_string_concat("__fnqual__", own), mf2->name);
+                }
+          }
+        }
+    }
+    { void* __arr_gf = generics;
+      int64_t __len_gf = haki_array_length(__arr_gf);
+      for (int64_t __i_gf = 0; __i_gf < __len_gf; __i_gf++) {
+            mono__MonoFn* gf = (mono__MonoFn*)*(void**)haki_array_get(__arr_gf, __i_gf);
+            const char* declTys = (const char*)(intptr_t)("");
+            int64_t gpi = (int64_t)(intptr_t)(((int64_t)0LL));
+            while ((gpi < haki_array_length(gf->params))) {
+                if ((gpi > ((int64_t)0LL))) {
+                    declTys = haki_string_concat(declTys, ",");
+                }
+                declTys = haki_string_concat(declTys, ((compiler__Param*)(*((void**)haki_array_get(gf->params, gpi))))->ty);
+                gpi = (gpi + ((int64_t)1LL));
+            }
+            const char* meta = (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(gf->name, "|"), declTys), "|"), gf->retTy));
+            tinfer__scopeSet(sc, haki_string_concat("__gen__", gf->name), meta);
+            void* gUnqual = (void*)(mono__unqualify(gf->name));
+            if ((strcmp(gUnqual, gf->name) != 0)) {
+                tinfer__scopeSet(sc, haki_string_concat("__gen__", gUnqual), meta);
+            }
+      }
+    }
+    void* litsHere = haki_array_new(sizeof(void*));
+    mono__collectLitsInStmts(f->body, litsHere);
+    { void* __arr_lit = litsHere;
+      int64_t __len_lit = haki_array_length(__arr_lit);
+      for (int64_t __i_lit = 0; __i_lit < __len_lit; __i_lit++) {
+            mono__MonoFn* lit = (mono__MonoFn*)*(void**)haki_array_get(__arr_lit, __i_lit);
+            void* litNm = (void*)(mono__monoFnName(lit));
+            FnDef* lfDef = (FnDef*)(compiler__makeFnDef(litNm, mono__monoFnParams(lit), mono__monoFnRetTy(lit), mono__monoFnBody(lit)));
+            const char* caps = (const char*)(intptr_t)(cemit__litCaptureList(lfDef, sc));
+            typeck__symRecordCaptures(sym, litNm, caps);
+            tinfer__scopeSet(sc, haki_string_concat("__caps__", litNm), caps);
+            int64_t ci3 = (int64_t)(intptr_t)(((int64_t)0LL));
+            int64_t nc3 = (int64_t)(intptr_t)(cemit__capCount(caps));
+            while ((ci3 < nc3)) {
+                tinfer__scopeSet(sc, haki_string_concat("__boxed__", cemit__capNameAt(caps, ci3)), "1");
+                ci3 = (ci3 + ((int64_t)1LL));
+            }
+      }
+    }
+    const char* litPrologue = (const char*)(intptr_t)("");
+    if (cemit__isLiftedName(f->name)) {
+        void* myCaps = (void*)(typeck__symCapturesFor(sym, f->name));
+        int64_t ci4 = (int64_t)(intptr_t)(((int64_t)0LL));
+        int64_t nc4 = (int64_t)(intptr_t)(cemit__capCount(myCaps));
+        while ((ci4 < nc4)) {
+            const char* cn4 = (const char*)(intptr_t)(cemit__capNameAt(myCaps, ci4));
+            const char* ct4 = (const char*)(intptr_t)(cemit__capTyAt(myCaps, ci4));
+            litPrologue = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(litPrologue, "    "), ct4), "* "), cemit__cName(cn4)), " = ("), ct4), "*)((void**)__env)["), haki_int_to_string(ci4)), "];\n");
+            tinfer__scopeSet(sc, haki_string_concat("__boxed__", cn4), "1");
+            tinfer__scopeSet(sc, cn4, cemit__capHakiTyAt(myCaps, ci4));
+            ci4 = (ci4 + ((int64_t)1LL));
+        }
+        if ((nc4 == ((int64_t)0LL))) {
+            litPrologue = "    (void)__env;\n";
+        }
+    }
+    if ((((haki_array_length(f->body) == ((int64_t)0LL)) && (haki_string_length(f->name) > ((int64_t)2LL))) && (strcmp(haki_string_substring(f->name, ((int64_t)0LL), ((int64_t)2LL)), "c_") == 0))) {
+        const char* cFnName = (const char*)(intptr_t)(haki_string_substring(f->name, ((int64_t)2LL), haki_string_length(f->name)));
+        const char* ps = (const char*)(intptr_t)("");
+        int64_t pi = (int64_t)(intptr_t)(((int64_t)0LL));
+        while ((pi < haki_array_length(f->params))) {
+            if ((pi > ((int64_t)0LL))) {
+                ps = haki_string_concat(ps, ", ");
+            }
+            ps = haki_string_concat(ps, cemit__cName(((compiler__Param*)(*((void**)haki_array_get(f->params, pi))))->name));
+            pi = (pi + ((int64_t)1LL));
+        }
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(cemit__emitFnProto(f), " { return "), cFnName), "("), ps), "); }\n\n"));
+    }
+    if ((haki_array_length(f->body) == ((int64_t)0LL))) {
+        if (((strcmp(f->retTy, "void") == 0) || (strcmp(f->retTy, "") == 0))) {
+            return (const char*)(intptr_t)(haki_string_concat(cemit__emitFnProto(f), " {}\n\n"));
+        }
+        return (const char*)(intptr_t)(haki_string_concat(cemit__emitFnProto(f), " { return 0; }\n\n"));
+    }
+    tinfer__scopeSet(sc, "__retcty__", cemit__cRetTy(f->retTy));
+    const char* s = (const char*)(intptr_t)(haki_string_concat(cemit__emitFnProto(f), " {\n"));
+    if ((strcmp(f->name, "main") == 0)) {
+        s = haki_string_concat(s, "    haki_runtime_init(argc, argv);\n");
+    }
+    s = haki_string_concat(s, litPrologue);
+    int8_t isMain = (int8_t)(intptr_t)((strcmp(f->name, "main") == 0));
+    { void* __arr_stmt = f->body;
+      int64_t __len_stmt = haki_array_length(__arr_stmt);
+      for (int64_t __i_stmt = 0; __i_stmt < __len_stmt; __i_stmt++) {
+            compiler__Stmt* stmt = (compiler__Stmt*)*(void**)haki_array_get(__arr_stmt, __i_stmt);
+            s = haki_string_concat(s, cemit__emitStmt(stmt, ((int64_t)1LL), sc, sym, isMain));
+      }
+    }
+    if (((strcmp(f->retTy, "void") == 0) || (strcmp(f->retTy, "") == 0))) {
+        if ((strcmp(f->name, "main") == 0)) {
+            s = haki_string_concat(s, "    return 0;\n");
+        }
+    }
+    s = haki_string_concat(s, "}\n\n");
+    return (const char*)(intptr_t)(s);
+}
+
+const char* cemit__castTo(const char* ct, const char* expr) {
+    if (((strcmp(ct, "void") == 0) || (haki_string_length(ct) == ((int64_t)0LL)))) {
+        return (const char*)(intptr_t)(expr);
+    }
+    if (((strcmp(ct, "double") == 0) || (strcmp(ct, "float") == 0))) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(", ct), ")("), expr), ")"));
+    }
+    if ((((strcmp(ct, "int64_t") == 0) || (strcmp(ct, "int8_t") == 0)) || (strcmp(ct, "int") == 0))) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(", ct), ")(intptr_t)("), expr), ")"));
+    }
+    int64_t n = (int64_t)(intptr_t)(haki_string_length(ct));
+    if (((n > ((int64_t)0LL)) && (strcmp(haki_string_substring(ct, (n - ((int64_t)1LL)), n), "*") == 0))) {
+        return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(", ct), ")(intptr_t)("), expr), ")"));
+    }
+    return (const char*)(intptr_t)(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat("(", ct), ")("), expr), ")"));
+}
+
+int8_t cemit__isSimpleCType(const char* ct) {
+    int64_t n = (int64_t)(intptr_t)(haki_string_length(ct));
+    if ((n == ((int64_t)0LL))) {
+        return (int8_t)(intptr_t)(0);
+    }
+    if ((strcmp(ct, "int64_t") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ct, "double") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ct, "int8_t") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ct, "const char*") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ct, "void*") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ct, "void") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < n)) {
+        const char* ch = (const char*)(intptr_t)(haki_string_substring(ct, i, (i + ((int64_t)1LL))));
+        if ((strcmp(ch, "(") == 0)) {
+            return (int8_t)(intptr_t)(0);
+        }
+        if ((strcmp(ch, ")") == 0)) {
+            return (int8_t)(intptr_t)(0);
+        }
+        if ((strcmp(ch, "<") == 0)) {
+            return (int8_t)(intptr_t)(0);
+        }
+        if ((strcmp(ch, ">") == 0)) {
+            return (int8_t)(intptr_t)(0);
+        }
+        if ((strcmp(ch, ",") == 0)) {
+            return (int8_t)(intptr_t)(0);
+        }
+        if ((strcmp(ch, "?") == 0)) {
+            return (int8_t)(intptr_t)(0);
+        }
+        if ((strcmp(ch, " ") == 0)) {
+            return (int8_t)(intptr_t)(0);
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    return (int8_t)(intptr_t)(1);
+}
+
+const char* cemit__cStructFieldTy(const char* ty) {
+    if ((strcmp(ty, "int") == 0)) {
+        return (const char*)(intptr_t)("int64_t");
+    }
+    if ((strcmp(ty, "float") == 0)) {
+        return (const char*)(intptr_t)("double");
+    }
+    if ((strcmp(ty, "bool") == 0)) {
+        return (const char*)(intptr_t)("int8_t");
+    }
+    if ((strcmp(ty, "string") == 0)) {
+        return (const char*)(intptr_t)("const char*");
+    }
+    return (const char*)(intptr_t)("void*");
+}
+
+const char* cemit__emitStructDef(compiler__StructDef* s) {
+    if ((haki_string_length(s->name) == ((int64_t)0LL))) {
+        return (const char*)(intptr_t)("");
+    }
+    const char* out = (const char*)(intptr_t)(haki_string_concat(haki_string_concat("struct ", cemit__cName(s->name)), " {\n"));
+    { void* __arr_f = s->fields;
+      int64_t __len_f = haki_array_length(__arr_f);
+      for (int64_t __i_f = 0; __i_f < __len_f; __i_f++) {
+            Param* f = (Param*)*(void**)haki_array_get(__arr_f, __i_f);
+            out = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(out, "    "), cemit__cStructFieldTy(f->ty)), " "), cemit__cName(f->name)), ";\n");
+      }
+    }
+    if ((haki_array_length(s->fields) == ((int64_t)0LL))) {
+        out = haki_string_concat(out, "    int _dummy;\n");
+    }
+    out = haki_string_concat(out, "};\n");
+    return (const char*)(intptr_t)(out);
+}
+
+const char* cemit__tupleStructs(void) {
+    const char* s = (const char*)(intptr_t)("/* Tuple structs for multi-return */\n");
+    int64_t n = (int64_t)(intptr_t)(((int64_t)2LL));
+    while ((n <= ((int64_t)4LL))) {
+        s = haki_string_concat(s, "typedef struct { ");
+        int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+        while ((i < n)) {
+            s = haki_string_concat(haki_string_concat(haki_string_concat(s, "void* f"), haki_int_to_string(i)), "; ");
+            i = (i + ((int64_t)1LL));
+        }
+        s = haki_string_concat(haki_string_concat(haki_string_concat(s, "} __Tuple"), haki_int_to_string(n)), ";\n");
+        n = (n + ((int64_t)1LL));
+    }
+    return (const char*)(intptr_t)(haki_string_concat(s, "\n"));
+}
+
+int8_t cemit__hasFnNamed(void* fns, const char* name) {
+    { void* __arr_f = fns;
+      int64_t __len_f = haki_array_length(__arr_f);
+      for (int64_t __i_f = 0; __i_f < __len_f; __i_f++) {
+            mono__MonoFn* f = (mono__MonoFn*)*(void**)haki_array_get(__arr_f, __i_f);
+            if ((strcmp(f->name, name) == 0)) {
+                return (int8_t)(intptr_t)(1);
+            }
+      }
+    }
+    return (int8_t)(intptr_t)(0);
+}
+
+const char* cemit__emitProgram(mono__MonoProgram* prog, const char* runtimeSrc) {
+    void* sym = (void*)(typeck__symNew());
+    mono__optimizeProgram(prog);
+    int64_t round = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((round < ((int64_t)4LL))) {
+        { void* __arr_df = prog->fns;
+          int64_t __len_df = haki_array_length(__arr_df);
+          for (int64_t __i_df = 0; __i_df < __len_df; __i_df++) {
+                MonoFn* df = (MonoFn*)*(void**)haki_array_get(__arr_df, __i_df);
+                const char* _dry = (const char*)(intptr_t)(cemit__emitFn(df, sym, prog->enums, prog->structs, prog->fns, prog->generics));
+          }
+        }
+        int8_t added = (int8_t)(intptr_t)(0);
+        int64_t gi = (int64_t)(intptr_t)(((int64_t)0LL));
+        while ((gi < typeck__symGenericCount(sym))) {
+            void* __mr_tmpl = (void*)(mono__findGeneric(prog, typeck__symGenericBaseAt(sym, gi)));
+            void* tmpl = (void*)((intptr_t)((void**)(__mr_tmpl))[0]);
+            void* found = (void*)((intptr_t)((void**)(__mr_tmpl))[1]);
+            if (found) {
+                void* spec = (void*)(mono__specializeFn(tmpl, mono__splitTags(typeck__symGenericTagsAt(sym, gi))));
+                if ((!cemit__hasFnNamed(prog->fns, mono__monoFnName(spec)))) {
+                    ({ void* __el = (void*)(intptr_t)(spec); haki_array_append(prog->fns, &__el); });
+                    added = 1;
+                }
+            }
+            gi = (gi + ((int64_t)1LL));
+        }
+        if ((!added)) {
+            round = ((int64_t)99LL);
+        }
+        round = (round + ((int64_t)1LL));
+    }
+    typeck__symClearErrors(sym);
+    const char* out = (const char*)(intptr_t)("/* Generated by hakic --emit-c (Haki bootstrap emitter) */\n");
+    out = haki_string_concat(out, "/* Compile: gcc -std=gnu11 -O2 -lpthread -lm -o out this.c */\n\n");
+    out = haki_string_concat(haki_string_concat(out, runtimeSrc), "\n");
+    out = haki_string_concat(out, cemit__tupleStructs());
+    out = haki_string_concat(out, "/* Enum typedefs (tagged unions represented as void*) */\n");
+    { void* __arr_edef = prog->enums;
+      int64_t __len_edef = haki_array_length(__arr_edef);
+      for (int64_t __i_edef = 0; __i_edef < __len_edef; __i_edef++) {
+            EnumDef* edef = (EnumDef*)*(void**)haki_array_get(__arr_edef, __i_edef);
+            if ((haki_string_length(edef->name) > ((int64_t)0LL))) {
+                const char* qualName = (const char*)(intptr_t)(cemit__cName(edef->name));
+                out = haki_string_concat(haki_string_concat(haki_string_concat(out, "typedef void* "), qualName), ";\n");
+                int64_t lastUs = (int64_t)(intptr_t)(((int64_t)0LL));
+                int64_t eni = (int64_t)(intptr_t)(((int64_t)0LL));
+                int64_t enlen = (int64_t)(intptr_t)(haki_string_length(edef->name));
+                while ((eni < (enlen - ((int64_t)1LL)))) {
+                    if ((strcmp(haki_string_substring(edef->name, eni, (eni + ((int64_t)2LL))), "__") == 0)) {
+                        lastUs = (eni + ((int64_t)2LL));
+                    }
+                    eni = (eni + ((int64_t)1LL));
+                }
+                const char* unqualEnumName = (const char*)(intptr_t)((((lastUs > ((int64_t)0LL))) ? (haki_string_substring(edef->name, lastUs, enlen)) : (edef->name)));
+                if ((strcmp(unqualEnumName, qualName) != 0)) {
+                    out = haki_string_concat(haki_string_concat(haki_string_concat(out, "typedef void "), unqualEnumName), ";\n");
+                }
+            }
+      }
+    }
+    out = haki_string_concat(out, "\n");
+    out = haki_string_concat(out, "/* Forward declarations */\n");
+    { void* __arr_s = prog->structs;
+      int64_t __len_s = haki_array_length(__arr_s);
+      for (int64_t __i_s = 0; __i_s < __len_s; __i_s++) {
+            compiler__StructDef* s = (compiler__StructDef*)*(void**)haki_array_get(__arr_s, __i_s);
+            if ((haki_string_length(s->name) > ((int64_t)0LL))) {
+                out = haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(haki_string_concat(out, "typedef struct "), cemit__cName(s->name)), " "), cemit__cName(s->name)), ";\n");
+            }
+      }
+    }
+    out = haki_string_concat(out, "typedef struct MonoProgram mono__MonoProgram;\n");
+    out = haki_string_concat(out, "typedef struct MonoFn mono__MonoFn;\n");
+    out = haki_string_concat(out, "typedef struct EnumDef mono__EnumDef;\n");
+    out = haki_string_concat(out, "typedef struct FnDef compiler__FnDef;\n");
+    out = haki_string_concat(out, "typedef struct StructDef compiler__StructDef;\n");
+    out = haki_string_concat(out, "typedef struct Param compiler__Param;\n");
+    out = haki_string_concat(out, "typedef struct MatchArm compiler__MatchArm;\n");
+    out = haki_string_concat(out, "typedef struct Token compiler__Token;\n");
+    out = haki_string_concat(out, "typedef struct SymTable typeck__SymTable;\n");
+    out = haki_string_concat(out, "typedef struct FnInfo typeck__FnInfo;\n");
+    out = haki_string_concat(out, "typedef struct Scope tinfer__Scope;\n");
+    out = haki_string_concat(out, "typedef struct TypedExpr tinfer__TypedExpr;\n");
+    out = haki_string_concat(out, "\n");
+    out = haki_string_concat(out, "/* Function prototypes */\n");
+    { void* __arr_f = prog->fns;
+      int64_t __len_f = haki_array_length(__arr_f);
+      for (int64_t __i_f = 0; __i_f < __len_f; __i_f++) {
+            MonoFn* f = (MonoFn*)*(void**)haki_array_get(__arr_f, __i_f);
+            out = haki_string_concat(haki_string_concat(out, cemit__emitFnProto(f)), ";\n");
+      }
+    }
+    out = haki_string_concat(out, "\n");
+    out = haki_string_concat(out, "/* Struct definitions */\n");
+    { void* __arr_s = prog->structs;
+      int64_t __len_s = haki_array_length(__arr_s);
+      for (int64_t __i_s = 0; __i_s < __len_s; __i_s++) {
+            compiler__StructDef* s = (compiler__StructDef*)*(void**)haki_array_get(__arr_s, __i_s);
+            out = haki_string_concat(out, cemit__emitStructDef(s));
+      }
+    }
+    out = haki_string_concat(out, "\n");
+    out = haki_string_concat(out, "/* Functions */\n");
+    { void* __arr_f = prog->fns;
+      int64_t __len_f = haki_array_length(__arr_f);
+      for (int64_t __i_f = 0; __i_f < __len_f; __i_f++) {
+            MonoFn* f = (MonoFn*)*(void**)haki_array_get(__arr_f, __i_f);
+            out = haki_string_concat(out, cemit__emitFn(f, sym, prog->enums, prog->structs, prog->fns, prog->generics));
+      }
+    }
+    return (const char*)(intptr_t)(out);
+}
+
+void* cemit__compileToC(const char* src, const char* runtimeSrc) {
+    void* __mr_prog = (void*)(mono__monoFromSource(src));
+    void* prog = (void*)((intptr_t)((void**)(__mr_prog))[0]);
+    void* err = (void*)((intptr_t)((void**)(__mr_prog))[1]);
+    if ((err != NULL)) {
+        __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+        __ret->f0 = (void*)("");
+        __ret->f1 = (void*)(err);
+        return __ret;
+    }
+    __Tuple2* __ret = (__Tuple2*)malloc(sizeof(__Tuple2));
+    __ret->f0 = (void*)(cemit__emitProgram(prog, runtimeSrc));
+    __ret->f1 = (void*)(NULL);
+    return __ret;
+}
+
+void cemit__test_c_name(void) {
+    if ((strcmp(cemit__cName("int"), "haki_int") != 0)) {
+        haki_panic("cName int wrong");
+    }
+    if ((strcmp(cemit__cName("foo"), "foo") != 0)) {
+        haki_panic("cName foo wrong");
+    }
+    if ((strcmp(cemit__cName("add"), "add") != 0)) {
+        haki_panic("cName add wrong");
+    }
+}
+
+void cemit__test_c_ty(void) {
+    if ((strcmp(cemit__cTy("int"), "int64_t") != 0)) {
+        haki_panic("cTy int wrong");
+    }
+    if ((strcmp(cemit__cTy("string"), "const char*") != 0)) {
+        haki_panic("cTy string wrong");
+    }
+    if ((strcmp(cemit__cTy("bool"), "int8_t") != 0)) {
+        haki_panic("cTy bool wrong");
+    }
+    if ((strcmp(cemit__cTy("void"), "void") != 0)) {
+        haki_panic("cTy void wrong");
+    }
+}
+
+void cemit__test_escape_str(void) {
+    const char* s = (const char*)(intptr_t)(cemit__escapeStr("hello\nworld"));
+    if ((strcmp(s, "hello\\nworld") != 0)) {
+        haki_panic(haki_string_concat("escapeStr wrong: ", s));
+    }
+}
+
+void cemit__test_emit_proto(void) {
+    void* params = haki_array_new(sizeof(void*));
+    void* body = haki_array_new(sizeof(void*));
+    void* mf = (void*)(mono__makeMonoFn("add", params, "int", body));
+    const char* proto = (const char*)(intptr_t)(cemit__emitFnProto(mf));
+    if ((strcmp(proto, "int64_t add(void)") != 0)) {
+        haki_panic(haki_string_concat("proto wrong: ", proto));
+    }
+}
+
+void cemit__main(void) {
+    const char* miniSrc = (const char*)(intptr_t)("fn add(a: int, b: int) -> int { return a + b }\nfn main() { print_int(add(1, 2)) }");
+    void* __mr_c = (void*)(cemit__compileToC(miniSrc, "/* runtime stub */"));
+    const char* c = (const char*)(intptr_t)((intptr_t)((void**)(__mr_c))[0]);
+    void* err = (void*)((intptr_t)((void**)(__mr_c))[1]);
+    if ((err != NULL)) {
+        haki_print(haki_string_concat("error: ", haki_error_message(err)));
+        return;
+    }
+    haki_print(haki_string_concat(haki_string_concat("emitted ", haki_int_to_string(haki_string_length(c))), " bytes of C"));
+    haki_print("done");
+}
+
+Scope* tinfer__scopeNew(void) {
+    return (Scope*)(intptr_t)(({ Scope* __c_Scope = (Scope*)malloc(sizeof(Scope)); __c_Scope->names = haki_array_new(sizeof(void*)); __c_Scope->types = haki_array_new(sizeof(void*)); __c_Scope; }));
+}
+
+void tinfer__scopeSet(Scope* sc, const char* name, const char* ty) {
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_array_length(sc->names))) {
+        if ((strcmp((*((void**)haki_array_get(sc->names, i))), name) == 0)) {
+            *((void**)haki_array_get(sc->types, i)) = (void*)(intptr_t)(ty);
+            return;
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    ({ void* __el = (void*)(intptr_t)(name); haki_array_append(sc->names, &__el); });
+    ({ void* __el = (void*)(intptr_t)(ty); haki_array_append(sc->types, &__el); });
+}
+
+const char* tinfer__scopeGet(Scope* sc, const char* name) {
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_array_length(sc->names))) {
+        if ((strcmp((*((void**)haki_array_get(sc->names, i))), name) == 0)) {
+            return (const char*)(intptr_t)((*((void**)haki_array_get(sc->types, i))));
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    return (const char*)(intptr_t)("void*");
+}
+
+const char* tinfer__scopeLookup(Scope* sc, const char* name) {
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_array_length(sc->names))) {
+        if ((strcmp((*((void**)haki_array_get(sc->names, i))), name) == 0)) {
+            return (const char*)(intptr_t)((*((void**)haki_array_get(sc->types, i))));
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    return (const char*)(intptr_t)("");
+}
+
+Scope* tinfer__scopeCopy(Scope* sc) {
+    Scope* copy = (Scope*)(tinfer__scopeNew());
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_array_length(sc->names))) {
+        ({ void* __el = (void*)(intptr_t)((*((void**)haki_array_get(sc->names, i)))); haki_array_append(copy->names, &__el); });
+        ({ void* __el = (void*)(intptr_t)((*((void**)haki_array_get(sc->types, i)))); haki_array_append(copy->types, &__el); });
+        i = (i + ((int64_t)1LL));
+    }
+    return (Scope*)(intptr_t)(copy);
+}
+
+int8_t tinfer__isIntTy(const char* ty) {
+    return (int8_t)(intptr_t)((strcmp(ty, "int") == 0));
+}
+
+int8_t tinfer__isFloatTy(const char* ty) {
+    return (int8_t)(intptr_t)((strcmp(ty, "float") == 0));
+}
+
+int8_t tinfer__isStringTy(const char* ty) {
+    return (int8_t)(intptr_t)((strcmp(ty, "string") == 0));
+}
+
+int8_t tinfer__isBoolTy(const char* ty) {
+    return (int8_t)(intptr_t)((strcmp(ty, "bool") == 0));
+}
+
+int8_t tinfer__isNumericTy(const char* ty) {
+    if ((strcmp(ty, "int") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    if ((strcmp(ty, "float") == 0)) {
+        return (int8_t)(intptr_t)(1);
+    }
+    return (int8_t)(intptr_t)(0);
+}
+
+const char* tinfer__binaryOpC(const char* op, const char* ty) {
+    if (((strcmp(op, "+") == 0) && tinfer__isNumericTy(ty))) {
+        return (const char*)(intptr_t)("+");
+    }
+    if (((strcmp(op, "-") == 0) && tinfer__isNumericTy(ty))) {
+        return (const char*)(intptr_t)("-");
+    }
+    if (((strcmp(op, "*") == 0) && tinfer__isNumericTy(ty))) {
+        return (const char*)(intptr_t)("*");
+    }
+    if (((strcmp(op, "/") == 0) && tinfer__isNumericTy(ty))) {
+        return (const char*)(intptr_t)("/");
+    }
+    if (((strcmp(op, "%") == 0) && tinfer__isNumericTy(ty))) {
+        return (const char*)(intptr_t)("%");
+    }
+    if (((strcmp(op, "<") == 0) && tinfer__isNumericTy(ty))) {
+        return (const char*)(intptr_t)("<");
+    }
+    if (((strcmp(op, ">") == 0) && tinfer__isNumericTy(ty))) {
+        return (const char*)(intptr_t)(">");
+    }
+    if (((strcmp(op, "<=") == 0) && tinfer__isNumericTy(ty))) {
+        return (const char*)(intptr_t)("<=");
+    }
+    if (((strcmp(op, ">=") == 0) && tinfer__isNumericTy(ty))) {
+        return (const char*)(intptr_t)(">=");
+    }
+    if (((strcmp(op, "==") == 0) && tinfer__isNumericTy(ty))) {
+        return (const char*)(intptr_t)("==");
+    }
+    if (((strcmp(op, "!=") == 0) && tinfer__isNumericTy(ty))) {
+        return (const char*)(intptr_t)("!=");
+    }
+    if (((strcmp(op, "==") == 0) && tinfer__isBoolTy(ty))) {
+        return (const char*)(intptr_t)("==");
+    }
+    if (((strcmp(op, "!=") == 0) && tinfer__isBoolTy(ty))) {
+        return (const char*)(intptr_t)("!=");
+    }
+    if ((strcmp(op, "&&") == 0)) {
+        return (const char*)(intptr_t)("&&");
+    }
+    if ((strcmp(op, "||") == 0)) {
+        return (const char*)(intptr_t)("||");
+    }
+    if (((strcmp(op, "<") == 0) && tinfer__isStringTy(ty))) {
+        return (const char*)(intptr_t)("string_lt");
+    }
+    if (((strcmp(op, ">") == 0) && tinfer__isStringTy(ty))) {
+        return (const char*)(intptr_t)("string_gt");
+    }
+    if (((strcmp(op, "<=") == 0) && tinfer__isStringTy(ty))) {
+        return (const char*)(intptr_t)("string_le");
+    }
+    if (((strcmp(op, ">=") == 0) && tinfer__isStringTy(ty))) {
+        return (const char*)(intptr_t)("string_ge");
+    }
+    if (((strcmp(op, "+") == 0) && tinfer__isStringTy(ty))) {
+        return (const char*)(intptr_t)("string_concat");
+    }
+    if (((strcmp(op, "==") == 0) && tinfer__isStringTy(ty))) {
+        return (const char*)(intptr_t)("string_eq");
+    }
+    if (((strcmp(op, "!=") == 0) && tinfer__isStringTy(ty))) {
+        return (const char*)(intptr_t)("string_neq");
+    }
+    if ((strcmp(op, "==") == 0)) {
+        return (const char*)(intptr_t)("ptr_eq");
+    }
+    if ((strcmp(op, "!=") == 0)) {
+        return (const char*)(intptr_t)("ptr_neq");
+    }
+    if ((strcmp(op, "+") == 0)) {
+        return (const char*)(intptr_t)("string_concat");
+    }
+    return (const char*)(intptr_t)(op);
+}
+
+const char* tinfer__builtinReturnTy(const char* name) {
+    if ((strcmp(name, "print") == 0)) {
+        return (const char*)(intptr_t)("void");
+    }
+    if ((strcmp(name, "print_int") == 0)) {
+        return (const char*)(intptr_t)("void");
+    }
+    if ((strcmp(name, "print_float") == 0)) {
+        return (const char*)(intptr_t)("void");
+    }
+    if ((strcmp(name, "print_bool") == 0)) {
+        return (const char*)(intptr_t)("void");
+    }
+    if ((strcmp(name, "int_to_string") == 0)) {
+        return (const char*)(intptr_t)("string");
+    }
+    if ((strcmp(name, "float_to_string") == 0)) {
+        return (const char*)(intptr_t)("string");
+    }
+    if ((strcmp(name, "bool_to_string") == 0)) {
+        return (const char*)(intptr_t)("string");
+    }
+    if ((strcmp(name, "string_length") == 0)) {
+        return (const char*)(intptr_t)("int");
+    }
+    if ((strcmp(name, "string_concat") == 0)) {
+        return (const char*)(intptr_t)("string");
+    }
+    if ((strcmp(name, "string_substring") == 0)) {
+        return (const char*)(intptr_t)("string");
+    }
+    if ((strcmp(name, "string_contains") == 0)) {
+        return (const char*)(intptr_t)("bool");
+    }
+    if ((strcmp(name, "string_split") == 0)) {
+        return (const char*)(intptr_t)("string");
+    }
+    if ((strcmp(name, "string_to_upper") == 0)) {
+        return (const char*)(intptr_t)("string");
+    }
+    if ((strcmp(name, "string_to_lower") == 0)) {
+        return (const char*)(intptr_t)("string");
+    }
+    if ((strcmp(name, "string_trim") == 0)) {
+        return (const char*)(intptr_t)("string");
+    }
+    if ((strcmp(name, "int_to_float") == 0)) {
+        return (const char*)(intptr_t)("float");
+    }
+    if ((strcmp(name, "float_to_int") == 0)) {
+        return (const char*)(intptr_t)("int");
+    }
+    if ((strcmp(name, "readFile") == 0)) {
+        return (const char*)(intptr_t)("void*");
+    }
+    if ((strcmp(name, "writeFile") == 0)) {
+        return (const char*)(intptr_t)("void*");
+    }
+    if ((strcmp(name, "haki_array_length") == 0)) {
+        return (const char*)(intptr_t)("int");
+    }
+    if ((strcmp(name, "argv") == 0)) {
+        return (const char*)(intptr_t)("Array<string>");
+    }
+    if ((strcmp(name, "panic") == 0)) {
+        return (const char*)(intptr_t)("void");
+    }
+    return (const char*)(intptr_t)("void*");
+}
+
+void* tinfer__splitBars(const char* s) {
+    void* parts = haki_array_new(sizeof(void*));
+    const char* cur = (const char*)(intptr_t)("");
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_string_length(s))) {
+        const char* ch = (const char*)(intptr_t)(haki_string_substring(s, i, (i + ((int64_t)1LL))));
+        if ((strcmp(ch, "|") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(cur); haki_array_append(parts, &__el); });
+            cur = "";
+        }
+        else {
+            cur = haki_string_concat(cur, ch);
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    ({ void* __el = (void*)(intptr_t)(cur); haki_array_append(parts, &__el); });
+    return (void*)(intptr_t)(parts);
+}
+
+void* tinfer__splitCommas(const char* s) {
+    void* parts = haki_array_new(sizeof(void*));
+    const char* cur = (const char*)(intptr_t)("");
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_string_length(s))) {
+        const char* ch = (const char*)(intptr_t)(haki_string_substring(s, i, (i + ((int64_t)1LL))));
+        if ((strcmp(ch, ",") == 0)) {
+            ({ void* __el = (void*)(intptr_t)(cur); haki_array_append(parts, &__el); });
+            cur = "";
+        }
+        else {
+            cur = haki_string_concat(cur, ch);
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    if ((haki_string_length(cur) > ((int64_t)0LL))) {
+        ({ void* __el = (void*)(intptr_t)(cur); haki_array_append(parts, &__el); });
+    }
+    return (void*)(intptr_t)(parts);
+}
+
+void* tinfer__splitOn(const char* s, const char* sep) {
+    void* parts = haki_array_new(sizeof(void*));
+    const char* cur = (const char*)(intptr_t)("");
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_string_length(s))) {
+        const char* ch = (const char*)(intptr_t)(haki_string_substring(s, i, (i + ((int64_t)1LL))));
+        if ((strcmp(ch, sep) == 0)) {
+            ({ void* __el = (void*)(intptr_t)(cur); haki_array_append(parts, &__el); });
+            cur = "";
+        }
+        else {
+            cur = haki_string_concat(cur, ch);
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    if ((haki_string_length(cur) > ((int64_t)0LL))) {
+        ({ void* __el = (void*)(intptr_t)(cur); haki_array_append(parts, &__el); });
+    }
+    return (void*)(intptr_t)(parts);
+}
+
+int8_t tinfer__isTypeParam(const char* ty) {
+    if ((haki_string_length(ty) != ((int64_t)1LL))) {
+        return (int8_t)(intptr_t)(0);
+    }
+    if ((((((strcmp(ty, "T") == 0) || (strcmp(ty, "U") == 0)) || (strcmp(ty, "V") == 0)) || (strcmp(ty, "K") == 0)) || (strcmp(ty, "E") == 0))) {
+        return (int8_t)(intptr_t)(1);
+    }
+    return (int8_t)(intptr_t)(0);
+}
+
+const char* tinfer__genericCallRetTy(const char* meta, void* args, Scope* sc, typeck__SymTable* sym) {
+    void* parts = (void*)(tinfer__splitBars(meta));
+    if ((haki_array_length(parts) < ((int64_t)3LL))) {
+        return (const char*)(intptr_t)("");
+    }
+    void* declTys = (void*)(tinfer__splitCommas((*((void**)haki_array_get(parts, ((int64_t)1LL))))));
+    const char* retTy = (const char*)(intptr_t)((*((void**)haki_array_get(parts, ((int64_t)2LL)))));
+    if ((!tinfer__isTypeParam(retTy))) {
+        return (const char*)(intptr_t)(retTy);
+    }
+    int64_t i = (int64_t)(intptr_t)(((int64_t)0LL));
+    while ((i < haki_array_length(declTys))) {
+        if (((strcmp((*((void**)haki_array_get(declTys, i))), retTy) == 0) && (i < haki_array_length(args)))) {
+            return (const char*)(intptr_t)(tinfer__inferExprTy(((compiler__Expr*)(*((void**)haki_array_get(args, i)))), sc, sym));
+        }
+        i = (i + ((int64_t)1LL));
+    }
+    return (const char*)(intptr_t)("");
+}
+
+const char* tinfer__inferExprTy(compiler__Expr* e, Scope* sc, typeck__SymTable* sym) {
+    const char* tag = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t n = *(int64_t*)((void**)__mpayload)[0]; __mr = (void*)("int_lit"); __mdone = 1; } if (!__mdone && __mtag == 1LL) { int64_t b = *(int64_t*)((void**)__mpayload)[0]; __mr = (void*)("bool_lit"); __mdone = 1; } if (!__mdone && __mtag == 2LL) { __mr = (void*)("null"); __mdone = 1; } if (!__mdone && __mtag == 3LL) { const char* s = *(const char**)((void**)__mpayload)[0]; __mr = (void*)("string_lit"); __mdone = 1; } if (!__mdone && __mtag == 8LL) { const char* n = *(const char**)((void**)__mpayload)[0]; __mr = (void*)("ident"); __mdone = 1; } if (!__mdone && __mtag == 9LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* inner = (Expr*)((void**)__mpayload)[1]; __mr = (void*)("unary"); __mdone = 1; } if (!__mdone && __mtag == 10LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* l = (Expr*)((void**)__mpayload)[1]; Expr* r = (Expr*)((void**)__mpayload)[2]; __mr = (void*)("binary"); __mdone = 1; } if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)("call"); __mdone = 1; } if (!__mdone && __mtag == 7LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)("namedcall"); __mdone = 1; } if (!__mdone && __mtag == 12LL) { Expr* recv = (Expr*)((void**)__mpayload)[0]; const char* f = *(const char**)((void**)__mpayload)[1]; __mr = (void*)("field"); __mdone = 1; } if (!__mdone && __mtag == 13LL) { Expr* r = (Expr*)((void**)__mpayload)[0]; const char* m = *(const char**)((void**)__mpayload)[1]; void* ma = (void*)((void**)__mpayload)[2]; __mr = (void*)("method"); __mdone = 1; } if (!__mdone && __mtag == 14LL) { Expr* a = (Expr*)((void**)__mpayload)[0]; Expr* idx = (Expr*)((void**)__mpayload)[1]; __mr = (void*)("index"); __mdone = 1; } if (!__mdone && __mtag == 15LL) { void* elems = (void*)((void**)__mpayload)[0]; __mr = (void*)("array"); __mdone = 1; } if (!__mdone && __mtag == 16LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)("if"); __mdone = 1; } if (!__mdone && __mtag == 17LL) { Expr* s = (Expr*)((void**)__mpayload)[0]; void* arms = (void*)((void**)__mpayload)[1]; __mr = (void*)("match"); __mdone = 1; } if (!__mdone && __mtag == 18LL) { void* stmts = (void*)((void**)__mpayload)[0]; __mr = (void*)("block"); __mdone = 1; } if (!__mdone && __mtag == 19LL) { Expr* inner = (Expr*)((void**)__mpayload)[0]; __mr = (void*)("async"); __mdone = 1; } if (!__mdone && __mtag == 20LL) { FnDef* lf = (FnDef*)((void**)__mpayload)[0]; __mr = (void*)("fnlit"); __mdone = 1; } if (!__mdone) { __mr = (void*)("unknown"); __mdone = 1; } (void)__mdone; __mr;}));
+    if ((strcmp(tag, "fnlit") == 0)) {
+        FnDef* lf = (FnDef*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 20LL) { FnDef* lf = (FnDef*)((void**)__mpayload)[0]; __mr = (void*)(lf); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyFnDef()); __mdone = 1; } (void)__mdone; __mr;}));
+        return (const char*)(intptr_t)(compiler__fnDefTyStr(lf));
+    }
+    if ((strcmp(tag, "int_lit") == 0)) {
+        return (const char*)(intptr_t)("int");
+    }
+    if ((strcmp(tag, "bool_lit") == 0)) {
+        return (const char*)(intptr_t)("bool");
+    }
+    if ((strcmp(tag, "null") == 0)) {
+        return (const char*)(intptr_t)("void*");
+    }
+    if ((strcmp(tag, "string_lit") == 0)) {
+        return (const char*)(intptr_t)("string");
+    }
+    if ((strcmp(tag, "namedcall") == 0)) {
+        const char* name = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 7LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(n); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        return (const char*)(intptr_t)(name);
+    }
+    if ((strcmp(tag, "ident") == 0)) {
+        const char* name = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 8LL) { const char* n = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(n); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* directTy = (const char*)(intptr_t)(tinfer__scopeGet(sc, name));
+        if ((strcmp(directTy, "void*") != 0)) {
+            return (const char*)(intptr_t)(directTy);
+        }
+        const char* sfTy = (const char*)(intptr_t)(tinfer__scopeLookup(sc, haki_string_concat("__selffld__", name)));
+        if ((haki_string_length(sfTy) > ((int64_t)0LL))) {
+            return (const char*)(intptr_t)(sfTy);
+        }
+        return (const char*)(intptr_t)("void*");
+    }
+    if ((strcmp(tag, "unary") == 0)) {
+        const char* op = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 9LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* inner = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(op); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        Expr* inner = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 9LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* inner = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(inner); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        if ((strcmp(op, "!") == 0)) {
+            return (const char*)(intptr_t)("bool");
+        }
+        if ((strcmp(op, "-") == 0)) {
+            const char* ity = (const char*)(intptr_t)(tinfer__inferExprTy(inner, sc, sym));
+            return (const char*)(intptr_t)(ity);
+        }
+        return (const char*)(intptr_t)("void*");
+    }
+    if ((strcmp(tag, "binary") == 0)) {
+        const char* op = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 10LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* l = (Expr*)((void**)__mpayload)[1]; Expr* r = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(op); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        Expr* l = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 10LL) { const char* op = *(const char**)((void**)__mpayload)[0]; Expr* l = (Expr*)((void**)__mpayload)[1]; Expr* r = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(l); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* lty = (const char*)(intptr_t)(tinfer__inferExprTy(l, sc, sym));
+        if (((strcmp(op, "&&") == 0) || (strcmp(op, "||") == 0))) {
+            return (const char*)(intptr_t)("bool");
+        }
+        if (((strcmp(op, "==") == 0) || (strcmp(op, "!=") == 0))) {
+            return (const char*)(intptr_t)("bool");
+        }
+        if (((strcmp(op, "<") == 0) || (strcmp(op, ">") == 0))) {
+            return (const char*)(intptr_t)("bool");
+        }
+        if (((strcmp(op, "<=") == 0) || (strcmp(op, ">=") == 0))) {
+            return (const char*)(intptr_t)("bool");
+        }
+        if ((((((strcmp(op, "+") == 0) || (strcmp(op, "-") == 0)) || (strcmp(op, "*") == 0)) || (strcmp(op, "/") == 0)) || (strcmp(op, "%") == 0))) {
+            return (const char*)(intptr_t)(lty);
+        }
+        return (const char*)(intptr_t)(lty);
+    }
+    if ((strcmp(tag, "call") == 0)) {
+        const char* name = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(n); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        void* args = (void*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 11LL) { const char* n = *(const char**)((void**)__mpayload)[0]; void* args = (void*)((void**)__mpayload)[1]; __mr = (void*)(args); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyExprs()); __mdone = 1; } (void)__mdone; __mr;}));
+        if (((haki_string_length(name) > ((int64_t)9LL)) && (strcmp(haki_string_substring(name, ((int64_t)0LL), ((int64_t)9LL)), "__mr_get_") == 0))) {
+            const char* idxStr = (const char*)(intptr_t)(haki_string_substring(name, ((int64_t)9LL), haki_string_length(name)));
+            int64_t idx = (int64_t)(intptr_t)(((int64_t)0LL));
+            int64_t si = (int64_t)(intptr_t)(((int64_t)0LL));
+            while ((si < haki_string_length(idxStr))) {
+                const char* ch = (const char*)(intptr_t)(haki_string_substring(idxStr, si, (si + ((int64_t)1LL))));
+                if ((strcmp(ch, "0") == 0)) {
+                    idx = ((idx * ((int64_t)10LL)) + ((int64_t)0LL));
+                }
+                else {
+                    if ((strcmp(ch, "1") == 0)) {
+                        idx = ((idx * ((int64_t)10LL)) + ((int64_t)1LL));
+                    }
+                    else {
+                        if ((strcmp(ch, "2") == 0)) {
+                            idx = ((idx * ((int64_t)10LL)) + ((int64_t)2LL));
+                        }
+                        else {
+                            if ((strcmp(ch, "3") == 0)) {
+                                idx = ((idx * ((int64_t)10LL)) + ((int64_t)3LL));
+                            }
+                            else {
+                                if ((strcmp(ch, "4") == 0)) {
+                                    idx = ((idx * ((int64_t)10LL)) + ((int64_t)4LL));
+                                }
+                                else {
+                                    if ((strcmp(ch, "5") == 0)) {
+                                        idx = ((idx * ((int64_t)10LL)) + ((int64_t)5LL));
+                                    }
+                                    else {
+                                        if ((strcmp(ch, "6") == 0)) {
+                                            idx = ((idx * ((int64_t)10LL)) + ((int64_t)6LL));
+                                        }
+                                        else {
+                                            if ((strcmp(ch, "7") == 0)) {
+                                                idx = ((idx * ((int64_t)10LL)) + ((int64_t)7LL));
+                                            }
+                                            else {
+                                                if ((strcmp(ch, "8") == 0)) {
+                                                    idx = ((idx * ((int64_t)10LL)) + ((int64_t)8LL));
+                                                }
+                                                else {
+                                                    if ((strcmp(ch, "9") == 0)) {
+                                                        idx = ((idx * ((int64_t)10LL)) + ((int64_t)9LL));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                si = (si + ((int64_t)1LL));
+            }
+            if ((haki_array_length(args) > ((int64_t)0LL))) {
+                const char* tupleVarName = (const char*)(intptr_t)(({ void* __msc = (void*)((*((void**)haki_array_get(args, ((int64_t)0LL))))); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 8LL) { const char* n = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(n); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+                if ((haki_string_length(tupleVarName) > ((int64_t)0LL))) {
+                    const char* tupleTy = (const char*)(intptr_t)(tinfer__scopeLookup(sc, tupleVarName));
+                    int64_t tn = (int64_t)(intptr_t)(haki_string_length(tupleTy));
+                    if (((tn > ((int64_t)2LL)) && (strcmp(haki_string_substring(tupleTy, ((int64_t)0LL), ((int64_t)1LL)), "(") == 0))) {
+                        const char* inner = (const char*)(intptr_t)(haki_string_substring(tupleTy, ((int64_t)1LL), (tn - ((int64_t)1LL))));
+                        int64_t count = (int64_t)(intptr_t)(((int64_t)0LL));
+                        int64_t elemStart = (int64_t)(intptr_t)(((int64_t)0LL));
+                        int64_t depth = (int64_t)(intptr_t)(((int64_t)0LL));
+                        int64_t ci = (int64_t)(intptr_t)(((int64_t)0LL));
+                        while ((ci < haki_string_length(inner))) {
+                            const char* ch2 = (const char*)(intptr_t)(haki_string_substring(inner, ci, (ci + ((int64_t)1LL))));
+                            if (((strcmp(ch2, "<") == 0) || (strcmp(ch2, "(") == 0))) {
+                                depth = (depth + ((int64_t)1LL));
+                            }
+                            else {
+                                if (((strcmp(ch2, ">") == 0) || (strcmp(ch2, ")") == 0))) {
+                                    depth = (depth - ((int64_t)1LL));
+                                }
+                                else {
+                                    if (((strcmp(ch2, ",") == 0) && (depth == ((int64_t)0LL)))) {
+                                        if ((count == idx)) {
+                                            return (const char*)(intptr_t)(haki_string_substring(inner, elemStart, ci));
+                                        }
+                                        count = (count + ((int64_t)1LL));
+                                        elemStart = (ci + ((int64_t)2LL));
+                                    }
+                                }
+                            }
+                            ci = (ci + ((int64_t)1LL));
+                        }
+                        if ((count == idx)) {
+                            return (const char*)(intptr_t)(haki_string_substring(inner, elemStart, haki_string_length(inner)));
+                        }
+                    }
+                }
+            }
+        }
+        const char* genMeta = (const char*)(intptr_t)(tinfer__scopeLookup(sc, haki_string_concat("__gen__", name)));
+        if ((haki_string_length(genMeta) > ((int64_t)0LL))) {
+            const char* gRet = (const char*)(intptr_t)(tinfer__genericCallRetTy(genMeta, args, sc, sym));
+            if ((haki_string_length(gRet) > ((int64_t)0LL))) {
+                return (const char*)(intptr_t)(gRet);
+            }
+        }
+        if (((haki_string_length(name) > ((int64_t)14LL)) && (strcmp(haki_string_substring(name, ((int64_t)0LL), ((int64_t)14LL)), "__typed_ctor__") == 0))) {
+            return (const char*)(intptr_t)(haki_string_substring(name, ((int64_t)14LL), haki_string_length(name)));
+        }
+        const char* bty = (const char*)(intptr_t)(tinfer__builtinReturnTy(name));
+        if ((strcmp(bty, "void*") != 0)) {
+            return (const char*)(intptr_t)(bty);
+        }
+        const char* metaTy = (const char*)(intptr_t)(tinfer__scopeLookup(sc, haki_string_concat("__fn__", name)));
+        if ((haki_string_length(metaTy) > ((int64_t)0LL))) {
+            return (const char*)(intptr_t)(metaTy);
+        }
+        void* retTyStr = (void*)(typeck__symLookupFnRetTyStr(sym, name));
+        if ((strcmp(retTyStr, "int") == 0)) {
+            return (const char*)(intptr_t)("int");
+        }
+        if ((strcmp(retTyStr, "float") == 0)) {
+            return (const char*)(intptr_t)("float");
+        }
+        if ((strcmp(retTyStr, "bool") == 0)) {
+            return (const char*)(intptr_t)("bool");
+        }
+        if ((strcmp(retTyStr, "string") == 0)) {
+            return (const char*)(intptr_t)("string");
+        }
+        if ((strcmp(retTyStr, "void") == 0)) {
+            return (const char*)(intptr_t)("void");
+        }
+        const char* sfStr = (const char*)(intptr_t)(tinfer__scopeLookup(sc, haki_string_concat("__sf__", name)));
+        if ((haki_string_length(sfStr) > ((int64_t)0LL))) {
+            return (const char*)(intptr_t)(name);
+        }
+        return (const char*)(intptr_t)("void*");
+    }
+    if ((strcmp(tag, "field") == 0)) {
+        Expr* recv = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 12LL) { Expr* recv = (Expr*)((void**)__mpayload)[0]; const char* f = *(const char**)((void**)__mpayload)[1]; __mr = (void*)(recv); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* f = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 12LL) { Expr* recv = (Expr*)((void**)__mpayload)[0]; const char* f = *(const char**)((void**)__mpayload)[1]; __mr = (void*)(f); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        if ((strcmp(f, "length") == 0)) {
+            return (const char*)(intptr_t)("int");
+        }
+        if ((strcmp(f, "message") == 0)) {
+            return (const char*)(intptr_t)("string");
+        }
+        const char* recvTy = (const char*)(intptr_t)(tinfer__inferExprTy(recv, sc, sym));
+        const char* baseTy = (const char*)(intptr_t)(recvTy);
+        int64_t di = (int64_t)(intptr_t)(((int64_t)0LL));
+        while ((di < haki_string_length(recvTy))) {
+            if ((strcmp(haki_string_substring(recvTy, di, (di + ((int64_t)1LL))), ".") == 0)) {
+                baseTy = haki_string_substring(recvTy, (di + ((int64_t)1LL)), haki_string_length(recvTy));
+            }
+            di = (di + ((int64_t)1LL));
+        }
+        int64_t blen = (int64_t)(intptr_t)(haki_string_length(baseTy));
+        if (((blen > ((int64_t)0LL)) && (strcmp(haki_string_substring(baseTy, (blen - ((int64_t)1LL)), blen), "*") == 0))) {
+            baseTy = haki_string_substring(baseTy, ((int64_t)0LL), (blen - ((int64_t)1LL)));
+        }
+        const char* fieldTy = (const char*)(intptr_t)(tinfer__scopeLookup(sc, haki_string_concat(haki_string_concat(haki_string_concat("__sft__", baseTy), "__"), f)));
+        if ((haki_string_length(fieldTy) > ((int64_t)0LL))) {
+            return (const char*)(intptr_t)(fieldTy);
+        }
+        return (const char*)(intptr_t)("void*");
+    }
+    if ((strcmp(tag, "method") == 0)) {
+        Expr* recv = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 13LL) { Expr* r = (Expr*)((void**)__mpayload)[0]; const char* m = *(const char**)((void**)__mpayload)[1]; void* ma = (void*)((void**)__mpayload)[2]; __mr = (void*)(r); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* m = (const char*)(intptr_t)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 13LL) { Expr* r = (Expr*)((void**)__mpayload)[0]; const char* m = *(const char**)((void**)__mpayload)[1]; void* ma = (void*)((void**)__mpayload)[2]; __mr = (void*)(m); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* recvStr = (const char*)(intptr_t)(({ void* __msc = (void*)(recv); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 8LL) { const char* n = *(const char**)((void**)__mpayload)[0]; __mr = (void*)(n); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+        if (((strcmp(recvStr, "http") == 0) && (strcmp(m, "Server") == 0))) {
+            return (const char*)(intptr_t)("HttpServer");
+        }
+        if (((strcmp(recvStr, "http") == 0) && (strcmp(m, "Client") == 0))) {
+            return (const char*)(intptr_t)("HttpClient");
+        }
+        if (((strcmp(recvStr, "compiler") == 0) && (strcmp(m, "fnDefParams") == 0))) {
+            return (const char*)(intptr_t)("Array<compiler.Param>");
+        }
+        if ((haki_string_length(recvStr) > ((int64_t)0LL))) {
+            const char* modName = (const char*)(intptr_t)(tinfer__scopeLookup(sc, haki_string_concat("__mod__", recvStr)));
+            if ((haki_string_length(modName) > ((int64_t)0LL))) {
+                const char* qualName = (const char*)(intptr_t)(haki_string_concat(haki_string_concat(modName, "__"), m));
+                const char* retTy = (const char*)(intptr_t)(tinfer__scopeLookup(sc, haki_string_concat("__fn__", qualName)));
+                if ((haki_string_length(retTy) > ((int64_t)0LL))) {
+                    return (const char*)(intptr_t)(retTy);
+                }
+            }
+        }
+        if ((strcmp(m, "length") == 0)) {
+            return (const char*)(intptr_t)("int");
+        }
+        if ((strcmp(m, "substring") == 0)) {
+            return (const char*)(intptr_t)("string");
+        }
+        if ((strcmp(m, "contains") == 0)) {
+            return (const char*)(intptr_t)("bool");
+        }
+        if ((strcmp(m, "toUpper") == 0)) {
+            return (const char*)(intptr_t)("string");
+        }
+        if ((strcmp(m, "toLower") == 0)) {
+            return (const char*)(intptr_t)("string");
+        }
+        if ((strcmp(m, "trim") == 0)) {
+            return (const char*)(intptr_t)("string");
+        }
+        const char* cRecvTy = (const char*)(intptr_t)(tinfer__inferExprTy(recv, sc, sym));
+        if (((haki_string_length(cRecvTy) > ((int64_t)5LL)) && (strcmp(haki_string_substring(cRecvTy, ((int64_t)0LL), ((int64_t)5LL)), "Chan<") == 0))) {
+            const char* chElem = (const char*)(intptr_t)(haki_string_substring(cRecvTy, ((int64_t)5LL), (haki_string_length(cRecvTy) - ((int64_t)1LL))));
+            if ((strcmp(m, "receive") == 0)) {
+                return (const char*)(intptr_t)(chElem);
+            }
+            if ((strcmp(m, "send") == 0)) {
+                return (const char*)(intptr_t)("void");
+            }
+        }
+        if (((haki_string_length(cRecvTy) > ((int64_t)10LL)) && (strcmp(haki_string_substring(cRecvTy, ((int64_t)0LL), ((int64_t)10LL)), "TaskGroup<") == 0))) {
+            const char* tgElem = (const char*)(intptr_t)(haki_string_substring(cRecvTy, ((int64_t)10LL), (haki_string_length(cRecvTy) - ((int64_t)1LL))));
+            if ((strcmp(m, "waitAll") == 0)) {
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("Array<", tgElem), ">"));
+            }
+            if ((strcmp(m, "add") == 0)) {
+                return (const char*)(intptr_t)("void");
+            }
+        }
+        const char* mRecvTy = (const char*)(intptr_t)(tinfer__inferExprTy(recv, sc, sym));
+        if (((strcmp(mRecvTy, "HttpClient") == 0) && ((strcmp(m, "get") == 0) || (strcmp(m, "post") == 0)))) {
+            return (const char*)(intptr_t)("HttpResponse");
+        }
+        if (((strcmp(mRecvTy, "HttpServer") == 0) && (strcmp(m, "listen_background") == 0))) {
+            return (const char*)(intptr_t)("int");
+        }
+        const char* mClass = (const char*)(intptr_t)(mRecvTy);
+        int64_t mcLen = (int64_t)(intptr_t)(haki_string_length(mClass));
+        if (((mcLen > ((int64_t)1LL)) && (strcmp(haki_string_substring(mClass, (mcLen - ((int64_t)1LL)), mcLen), "?") == 0))) {
+            mClass = haki_string_substring(mClass, ((int64_t)0LL), (mcLen - ((int64_t)1LL)));
+        }
+        if ((((((((haki_string_length(mClass) > ((int64_t)0LL)) && (strcmp(mClass, "void") != 0)) && (strcmp(mClass, "void*") != 0)) && (strcmp(mClass, "int") != 0)) && (strcmp(mClass, "bool") != 0)) && (strcmp(mClass, "float") != 0)) && (strcmp(mClass, "string") != 0))) {
+            const char* mRet = (const char*)(intptr_t)(tinfer__scopeLookup(sc, haki_string_concat(haki_string_concat(haki_string_concat("__fn__", mClass), "__"), m)));
+            if ((haki_string_length(mRet) > ((int64_t)0LL))) {
+                return (const char*)(intptr_t)(mRet);
+            }
+        }
+        return (const char*)(intptr_t)("void*");
+    }
+    if ((strcmp(tag, "index") == 0)) {
+        Expr* arrExpr = (Expr*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 14LL) { Expr* a = (Expr*)((void**)__mpayload)[0]; Expr* idx = (Expr*)((void**)__mpayload)[1]; __mr = (void*)(a); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        const char* arrTy = (const char*)(intptr_t)(tinfer__inferExprTy(arrExpr, sc, sym));
+        if (((haki_string_length(arrTy) > ((int64_t)6LL)) && (strcmp(haki_string_substring(arrTy, ((int64_t)0LL), ((int64_t)6LL)), "Array<") == 0))) {
+            return (const char*)(intptr_t)(haki_string_substring(arrTy, ((int64_t)6LL), (haki_string_length(arrTy) - ((int64_t)1LL))));
+        }
+        return (const char*)(intptr_t)("void*");
+    }
+    if ((strcmp(tag, "array") == 0)) {
+        void* elems = (void*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 15LL) { void* elems = (void*)((void**)__mpayload)[0]; __mr = (void*)(elems); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyExprs()); __mdone = 1; } (void)__mdone; __mr;}));
+        if ((haki_array_length(elems) > ((int64_t)0LL))) {
+            const char* elemTy = (const char*)(intptr_t)(tinfer__inferExprTy((*((void**)haki_array_get(elems, ((int64_t)0LL)))), sc, sym));
+            if (((haki_string_length(elemTy) > ((int64_t)0LL)) && (strcmp(elemTy, "void*") != 0))) {
+                return (const char*)(intptr_t)(haki_string_concat(haki_string_concat("Array<", elemTy), ">"));
+            }
+        }
+        return (const char*)(intptr_t)("void*");
+    }
+    if ((strcmp(tag, "async") == 0)) {
+        return (const char*)(intptr_t)("void*");
+    }
+    if ((strcmp(tag, "if") == 0)) {
+        void* th = (void*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 16LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)(th); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+        if ((haki_array_length(th) > ((int64_t)0LL))) {
+            void* last = (void*)((*((void**)haki_array_get(th, (haki_array_length(th) - ((int64_t)1LL))))));
+            const char* lastTy = (const char*)(intptr_t)(tinfer__inferStmtYieldTy(last, sc, sym));
+            if ((haki_string_length(lastTy) > ((int64_t)0LL))) {
+                return (const char*)(intptr_t)(lastTy);
+            }
+        }
+        return (const char*)(intptr_t)("void*");
+    }
+    if ((strcmp(tag, "match") == 0)) {
+        void* arms = (void*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 17LL) { Expr* s = (Expr*)((void**)__mpayload)[0]; void* arms = (void*)((void**)__mpayload)[1]; __mr = (void*)(arms); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyArms()); __mdone = 1; } (void)__mdone; __mr;}));
+        if ((haki_array_length(arms) > ((int64_t)0LL))) {
+            void* firstArm = (void*)((*((void**)haki_array_get(arms, ((int64_t)0LL)))));
+            const char* armTy = (const char*)(intptr_t)(tinfer__inferMatchArmTy(firstArm, sc, sym));
+            if ((haki_string_length(armTy) > ((int64_t)0LL))) {
+                return (const char*)(intptr_t)(armTy);
+            }
+        }
+        return (const char*)(intptr_t)("void*");
+    }
+    if ((strcmp(tag, "block") == 0)) {
+        void* stmts = (void*)(({ void* __msc = (void*)(e); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 18LL) { void* stmts = (void*)((void**)__mpayload)[0]; __mr = (void*)(stmts); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+        if ((haki_array_length(stmts) > ((int64_t)0LL))) {
+            void* last = (void*)((*((void**)haki_array_get(stmts, (haki_array_length(stmts) - ((int64_t)1LL))))));
+            const char* lastTy = (const char*)(intptr_t)(tinfer__inferStmtYieldTy(last, sc, sym));
+            if ((haki_string_length(lastTy) > ((int64_t)0LL))) {
+                return (const char*)(intptr_t)(lastTy);
+            }
+        }
+        return (const char*)(intptr_t)("void*");
+    }
+    return (const char*)(intptr_t)("void*");
+}
+
+const char* tinfer__inferStmtYieldTy(compiler__Stmt* stmt, Scope* sc, typeck__SymTable* sym) {
+    const char* tag = (const char*)(intptr_t)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t isMut = *(int64_t*)((void**)__mpayload)[0]; const char* name = *(const char**)((void**)__mpayload)[1]; Expr* init = (Expr*)((void**)__mpayload)[2]; __mr = (void*)("let"); __mdone = 1; } if (!__mdone && __mtag == 1LL) { void* vals = (void*)((void**)__mpayload)[0]; __mr = (void*)("return"); __mdone = 1; } if (!__mdone && __mtag == 2LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)("yield"); __mdone = 1; } if (!__mdone && __mtag == 6LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)("expr"); __mdone = 1; } if (!__mdone) { __mr = (void*)("other"); __mdone = 1; } (void)__mdone; __mr;}));
+    if ((strcmp(tag, "yield") == 0)) {
+        Expr* e = (Expr*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 2LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)(e); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        return (const char*)(intptr_t)(tinfer__inferExprTy(e, sc, sym));
+    }
+    if ((strcmp(tag, "expr") == 0)) {
+        Expr* e = (Expr*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 6LL) { Expr* e = (Expr*)((void**)__mpayload)[0]; __mr = (void*)(e); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+        return (const char*)(intptr_t)(tinfer__inferExprTy(e, sc, sym));
+    }
+    return (const char*)(intptr_t)("");
+}
+
+const char* tinfer__inferMatchArmTy(compiler__MatchArm* arm, Scope* sc, typeck__SymTable* sym) {
+    if ((haki_array_length(arm->body) > ((int64_t)0LL))) {
+        Stmt* last = (Stmt*)(((Stmt*)(*((void**)haki_array_get(arm->body, (haki_array_length(arm->body) - ((int64_t)1LL)))))));
+        return (const char*)(intptr_t)(tinfer__inferStmtYieldTy(last, sc, sym));
+    }
+    return (const char*)(intptr_t)("");
+}
+
+TypedExpr* tinfer__makeTyped(compiler__Expr* e, Scope* sc, typeck__SymTable* sym) {
+    const char* ty = (const char*)(intptr_t)(tinfer__inferExprTy(e, sc, sym));
+    return (TypedExpr*)(intptr_t)(({ TypedExpr* __c_TypedExpr = (TypedExpr*)malloc(sizeof(TypedExpr)); __c_TypedExpr->kind = e; __c_TypedExpr->ty = ty; __c_TypedExpr; }));
+}
+
+void tinfer__populateScopeFromParams(Scope* sc, void* params) {
+    { void* __arr_p = params;
+      int64_t __len_p = haki_array_length(__arr_p);
+      for (int64_t __i_p = 0; __i_p < __len_p; __i_p++) {
+            compiler__Param* p = (compiler__Param*)*(void**)haki_array_get(__arr_p, __i_p);
+            const char* ty = (const char*)(intptr_t)(tinfer__simplifyTy(p->ty));
+            tinfer__scopeSet(sc, p->name, ty);
+      }
+    }
+}
+
+const char* tinfer__simplifyTy(const char* ty) {
+    if ((strcmp(ty, "int") == 0)) {
+        return (const char*)(intptr_t)("int");
+    }
+    if ((strcmp(ty, "float") == 0)) {
+        return (const char*)(intptr_t)("float");
+    }
+    if ((strcmp(ty, "bool") == 0)) {
+        return (const char*)(intptr_t)("bool");
+    }
+    if ((strcmp(ty, "string") == 0)) {
+        return (const char*)(intptr_t)("string");
+    }
+    if ((strcmp(ty, "void") == 0)) {
+        return (const char*)(intptr_t)("void");
+    }
+    if (((haki_string_length(ty) > ((int64_t)5LL)) && (strcmp(haki_string_substring(ty, ((int64_t)0LL), ((int64_t)5LL)), "Array") == 0))) {
+        return (const char*)(intptr_t)(ty);
+    }
+    if (((haki_string_length(ty) > ((int64_t)3LL)) && (strcmp(haki_string_substring(ty, ((int64_t)0LL), ((int64_t)3LL)), "Map") == 0))) {
+        return (const char*)(intptr_t)(ty);
+    }
+    int64_t n = (int64_t)(intptr_t)(haki_string_length(ty));
+    if (((n > ((int64_t)1LL)) && (strcmp(haki_string_substring(ty, (n - ((int64_t)1LL)), n), "?") == 0))) {
+        return (const char*)(intptr_t)("void*");
+    }
+    return (const char*)(intptr_t)(ty);
+}
+
+void tinfer__inferFnScope(void* stmts, Scope* sc, typeck__SymTable* sym) {
+    { void* __arr_stmt = stmts;
+      int64_t __len_stmt = haki_array_length(__arr_stmt);
+      for (int64_t __i_stmt = 0; __i_stmt < __len_stmt; __i_stmt++) {
+            compiler__Stmt* stmt = (compiler__Stmt*)*(void**)haki_array_get(__arr_stmt, __i_stmt);
+            const char* tag = (const char*)(intptr_t)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t isMut = *(int64_t*)((void**)__mpayload)[0]; const char* name = *(const char**)((void**)__mpayload)[1]; Expr* init = (Expr*)((void**)__mpayload)[2]; __mr = (void*)("let"); __mdone = 1; } if (!__mdone && __mtag == 7LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)("if"); __mdone = 1; } if (!__mdone && __mtag == 8LL) { Expr* cond = (Expr*)((void**)__mpayload)[0]; void* body = (void*)((void**)__mpayload)[1]; __mr = (void*)("while"); __mdone = 1; } if (!__mdone && __mtag == 9LL) { const char* v = *(const char**)((void**)__mpayload)[0]; Expr* iter = (Expr*)((void**)__mpayload)[1]; void* body = (void*)((void**)__mpayload)[2]; __mr = (void*)("for"); __mdone = 1; } if (!__mdone && __mtag == 13LL) { void* blk = (void*)((void**)__mpayload)[0]; __mr = (void*)("block"); __mdone = 1; } if (!__mdone) { __mr = (void*)("other"); __mdone = 1; } (void)__mdone; __mr;}));
+            if ((strcmp(tag, "let") == 0)) {
+                const char* name = (const char*)(intptr_t)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t isMut = *(int64_t*)((void**)__mpayload)[0]; const char* name = *(const char**)((void**)__mpayload)[1]; Expr* init = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(name); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+                Expr* init = (Expr*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 0LL) { int64_t isMut = *(int64_t*)((void**)__mpayload)[0]; const char* name = *(const char**)((void**)__mpayload)[1]; Expr* init = (Expr*)((void**)__mpayload)[2]; __mr = (void*)(init); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+                const char* ty = (const char*)(intptr_t)(tinfer__inferExprTy(init, sc, sym));
+                tinfer__scopeSet(sc, name, ty);
+            }
+            if ((strcmp(tag, "if") == 0)) {
+                void* th = (void*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 7LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)(th); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+                void* el = (void*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 7LL) { Expr* c = (Expr*)((void**)__mpayload)[0]; void* th = (void*)((void**)__mpayload)[1]; void* el = (void*)((void**)__mpayload)[2]; __mr = (void*)(el); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+                tinfer__inferFnScope(th, sc, sym);
+                tinfer__inferFnScope(el, sc, sym);
+            }
+            if ((strcmp(tag, "while") == 0)) {
+                void* body = (void*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 8LL) { Expr* cond = (Expr*)((void**)__mpayload)[0]; void* body = (void*)((void**)__mpayload)[1]; __mr = (void*)(body); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+                tinfer__inferFnScope(body, sc, sym);
+            }
+            if ((strcmp(tag, "for") == 0)) {
+                const char* v = (const char*)(intptr_t)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 9LL) { const char* v = *(const char**)((void**)__mpayload)[0]; Expr* iter = (Expr*)((void**)__mpayload)[1]; void* body = (void*)((void**)__mpayload)[2]; __mr = (void*)(v); __mdone = 1; } if (!__mdone) { __mr = (void*)(""); __mdone = 1; } (void)__mdone; __mr;}));
+                Expr* iter = (Expr*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 9LL) { const char* v = *(const char**)((void**)__mpayload)[0]; Expr* iter = (Expr*)((void**)__mpayload)[1]; void* body = (void*)((void**)__mpayload)[2]; __mr = (void*)(iter); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__nullExpr()); __mdone = 1; } (void)__mdone; __mr;}));
+                void* body = (void*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 9LL) { const char* v = *(const char**)((void**)__mpayload)[0]; Expr* iter = (Expr*)((void**)__mpayload)[1]; void* body = (void*)((void**)__mpayload)[2]; __mr = (void*)(body); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+                const char* iterTy = (const char*)(intptr_t)(tinfer__inferExprTy(iter, sc, sym));
+                const char* elemTy = (const char*)(intptr_t)("void*");
+                if (((haki_string_length(iterTy) > ((int64_t)6LL)) && (strcmp(haki_string_substring(iterTy, ((int64_t)0LL), ((int64_t)6LL)), "Array<") == 0))) {
+                    const char* inner = (const char*)(intptr_t)(haki_string_substring(iterTy, ((int64_t)6LL), (haki_string_length(iterTy) - ((int64_t)1LL))));
+                    if ((haki_string_length(inner) > ((int64_t)0LL))) {
+                        elemTy = inner;
+                    }
+                }
+                tinfer__scopeSet(sc, v, elemTy);
+                tinfer__inferFnScope(body, sc, sym);
+            }
+            if ((strcmp(tag, "block") == 0)) {
+                void* blk = (void*)(({ void* __msc = (void*)(stmt); int64_t __mtag = ((int64_t*)__msc)[0]; void* __mpayload = ((void**)__msc)[1]; void* __mr = NULL; int __mdone = 0; if (!__mdone && __mtag == 13LL) { void* blk = (void*)((void**)__mpayload)[0]; __mr = (void*)(blk); __mdone = 1; } if (!__mdone) { __mr = (void*)(compiler__emptyStmts()); __mdone = 1; } (void)__mdone; __mr;}));
+                tinfer__inferFnScope(blk, sc, sym);
+            }
+      }
+    }
+}
+
+TypedExpr* tinfer__inferExpr(compiler__Expr* e, compiler__FnDef* fnDef, typeck__SymTable* sym) {
+    Scope* sc = (Scope*)(tinfer__scopeNew());
+    tinfer__populateScopeFromParams(sc, fnDef->params);
+    tinfer__inferFnScope(fnDef->body, sc, sym);
+    return (TypedExpr*)(intptr_t)(tinfer__makeTyped(e, sc, sym));
+}
+
+Scope* tinfer__buildFnScope(compiler__FnDef* fnDef, typeck__SymTable* sym) {
+    Scope* sc = (Scope*)(tinfer__scopeNew());
+    tinfer__populateScopeFromParams(sc, fnDef->params);
+    tinfer__inferFnScope(fnDef->body, sc, sym);
+    return (Scope*)(intptr_t)(sc);
+}
+
+const char* tinfer__inferWithScope(compiler__Expr* e, Scope* sc, typeck__SymTable* sym) {
+    return (const char*)(intptr_t)(tinfer__inferExprTy(e, sc, sym));
+}
+
